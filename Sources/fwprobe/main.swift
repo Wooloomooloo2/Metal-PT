@@ -9,6 +9,7 @@ let usage = """
 
     \(SMCCommands.usage)
     \(BatteryCommands.usage)
+    \(FanCommands.usage)
     """
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -20,6 +21,10 @@ do {
         try BatteryCommands.run(Array(args.dropFirst()))
     case "charge-test":
         try BatteryCommands.chargeTest(Array(args.dropFirst()))
+    case "fan-test":
+        try FanCommands.fanTest(Array(args.dropFirst()))
+    case "fan-release":
+        try FanCommands.fanRelease()
     default:
         print(usage)
         exit(args.isEmpty ? 0 : 64)

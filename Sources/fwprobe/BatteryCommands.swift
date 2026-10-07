@@ -2,7 +2,7 @@ import Foundation
 import FWCore
 
 /// Lock-protected failure counter shared with the lease's restore closure.
-private final class Counter: @unchecked Sendable {
+final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
     func increment() { lock.withLock { count += 1 } }
