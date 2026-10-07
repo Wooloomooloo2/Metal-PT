@@ -6,9 +6,19 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "FWCore", targets: ["FWCore"]),
+        .executable(name: "fwprobe", targets: ["fwprobe"]),
     ],
     targets: [
-        .target(name: "FWCore"),
+        .target(
+            name: "CMacPrivate",
+            linkerSettings: [
+                .linkedFramework("IOKit"),
+                .linkedFramework("CoreFoundation"),
+                .linkedLibrary("IOReport"),
+            ]
+        ),
+        .target(name: "FWCore", dependencies: ["CMacPrivate"]),
+        .executableTarget(name: "fwprobe", dependencies: ["FWCore"]),
         .testTarget(name: "FWCoreTests", dependencies: ["FWCore"]),
     ]
 )

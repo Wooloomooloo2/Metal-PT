@@ -1,0 +1,22 @@
+import Foundation
+import FWCore
+
+let usage = """
+    fwprobe — M0 hardware probe for fw-helper-mac. Write commands need sudo.
+
+    \(SMCCommands.usage)
+    """
+
+let args = Array(CommandLine.arguments.dropFirst())
+do {
+    switch args.first {
+    case "smc":
+        try SMCCommands.run(Array(args.dropFirst()))
+    default:
+        print(usage)
+        exit(args.isEmpty ? 0 : 64)
+    }
+} catch {
+    FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+    exit(1)
+}
