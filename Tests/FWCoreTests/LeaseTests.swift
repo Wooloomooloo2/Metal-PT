@@ -27,6 +27,23 @@ final class Counter: @unchecked Sendable {
         #expect(counter.value == 1)
     }
 
+    @Test func performRunsBodyBeforeRelease() throws {
+        let counter = Counter()
+        let lease = Lease {}
+        try lease.perform { counter.increment() }
+        #expect(counter.value == 1)
+    }
+
+    @Test func performAfterReleaseThrowsAndSkipsBody() {
+        let counter = Counter()
+        let lease = Lease {}
+        lease.release()
+        #expect(throws: LeaseError.released) {
+            try lease.perform { counter.increment() }
+        }
+        #expect(counter.value == 0)
+    }
+
     @Test func doesNotRestoreUntilReleased() {
         let counter = Counter()
         _ = Lease { counter.increment() }

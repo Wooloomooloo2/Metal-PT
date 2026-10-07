@@ -19,11 +19,11 @@ enum SMCCommands {
             guard !rest.isEmpty else { throw ProbeError(usage) }
             for name in rest { print(describe(smc, try smcKey(name))) }
         case "watch":
-            let keys = try positional(rest).map(smcKey)
             let intervalText = option("--interval", in: rest) ?? "5"
             guard let interval = Double(intervalText), interval.isFinite, interval > 0 else {
                 throw ProbeError("--interval must be a positive number of seconds, got '\(intervalText)'")
             }
+            let keys = try positional(rest).map(smcKey)
             guard !keys.isEmpty else { throw ProbeError(usage) }
             while true {
                 let battery = (try? SmartBatteryReader.read().summary) ?? "battery unreadable"
@@ -36,10 +36,10 @@ enum SMCCommands {
             guard rest.count == 2, let bytes = Hex.decode(rest[1]) else { throw ProbeError(usage) }
             let key = try smcKey(rest[0])
             let before = try smc.read(key)
-            try smc.write(key, bytes: bytes)
             print("before: \(line(before))")
-            print("after:  \(line(try smc.read(key)))")
             print("undo:   sudo fwprobe smc write \(key) \(before.bytes.map { String(format: "%02X", $0) }.joined())")
+            try smc.write(key, bytes: bytes)
+            print("after:  \(line(try smc.read(key)))")
         default:
             throw ProbeError(usage)
         }
