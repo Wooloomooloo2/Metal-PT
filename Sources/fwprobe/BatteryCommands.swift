@@ -26,7 +26,8 @@ enum BatteryCommands {
         let values = positional(args)
         guard values.count == 2, let inhibit = Hex.decode(values[1]) else { throw ProbeError(usage) }
         let key = try SMCCommands.smcKey(values[0])
-        let seconds = Int(option("--seconds", in: args) ?? "120") ?? 120
+        let secondsText = option("--seconds", in: args) ?? "120"
+        guard let seconds = Int(secondsText), seconds > 0 else { throw ProbeError("--seconds must be a positive integer, got '\(secondsText)'") }
 
         let smc = try SMCConnection()
         let original = try smc.read(key).bytes
@@ -34,12 +35,14 @@ enum BatteryCommands {
         print("\(timestamp())  battery: \(try SmartBatteryReader.read().summary)")
 
         let restoreFailed = Counter()
+        let undo = Hex.encode(original).replacingOccurrences(of: " ", with: "")
         let lease = Lease {
-            do {
-                try SMCConnection().write(key, bytes: original)
+            // Write first; report afterwards so a blocked stdout cannot hold up the restore.
+            let result = Result { try SMCConnection().write(key, bytes: original) }
+            switch result {
+            case .success:
                 print("\(timestamp())  restored \(key) = \(Hex.encode(original))")
-            } catch {
-                let undo = Hex.encode(original).replacingOccurrences(of: " ", with: "")
+            case .failure(let error):
                 restoreFailed.increment()
                 FileHandle.standardError.write(Data("RESTORE FAILED for \(key): \(error). Run: sudo fwprobe smc write \(key) \(undo)\n".utf8))
             }

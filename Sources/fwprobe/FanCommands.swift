@@ -29,23 +29,41 @@ enum FanCommands {
             }
         }
 
-        // Originals, read before anything is written; restore falls back to 00 for any that cannot be read.
-        let originalModes: [[UInt8]] = (0..<fanCount).map { (try? smc.read(fanKey($0, "Md")).bytes) ?? [0] }
+        // Originals, read before anything is written. Any that cannot be read fall back (with a warning) to a safe value.
+        let originalModes: [[UInt8]] = (0..<fanCount).map { original(smc, fanKey($0, "Md"), fallback: [0]) }
+        let originalTargets: [[UInt8]] = (0..<fanCount).map { original(smc, fanKey($0, "Tg"), fallback: [0, 0, 0, 0]) }
         let ftst: FourCC = "Ftst"
-        let originalFtst: [UInt8]? = (try? smc.keyInfo(ftst)) != nil ? ((try? smc.read(ftst).bytes) ?? [0]) : nil
+        let originalFtst: [UInt8]? = unlock ? original(smc, ftst, fallback: [0]) : nil
+
+        // Restore order: each Md, each Tg, then Ftst. Hints spell out the exact original bytes.
+        var steps: [(key: FourCC, bytes: [UInt8], label: String)] = []
+        for fan in 0..<fanCount { steps.append((fanKey(fan, "Md"), originalModes[fan], "fan \(fan) restore Md")) }
+        for fan in 0..<fanCount { steps.append((fanKey(fan, "Tg"), originalTargets[fan], "fan \(fan) restore Tg")) }
+        if let originalFtst { steps.append((ftst, originalFtst, "restore Ftst")) }
+        let undoCommands = steps.map { "sudo fwprobe smc write \($0.key) \(Hex.encode($0.bytes).replacingOccurrences(of: " ", with: ""))" }.joined(separator: "; ")
+        let hint = "Run: \(undoCommands)  (or: sudo fwprobe fan-release)"
+        let plannedSteps = steps
 
         let restoreFailed = Counter()
         let lease = Lease {
             guard let restoreSMC = try? SMCConnection() else {
                 restoreFailed.increment()
-                FileHandle.standardError.write(Data("RESTORE FAILED: cannot open the SMC. Run: sudo fwprobe fan-release\n".utf8))
+                FileHandle.standardError.write(Data("RESTORE FAILED: cannot open the SMC. \(hint)\n".utf8))
                 return
             }
-            for fan in 0..<fanCount where !writeAndReport(restoreSMC, fanKey(fan, "Md"), originalModes[fan], label: "fan \(fan) restore Md", failure: "RESTORE FAILED") {
-                restoreFailed.increment()
+            // Every write first; reporting (which can block on a stuck stdout) only afterwards.
+            var report: [(ok: Bool, text: String)] = []
+            for step in plannedSteps {
+                do {
+                    try restoreSMC.write(step.key, bytes: step.bytes)
+                    report.append((true, "\(timestamp())  \(step.label): \(step.key) = \(Hex.encode(step.bytes))"))
+                } catch {
+                    restoreFailed.increment()
+                    report.append((false, "RESTORE FAILED for \(step.label) (\(step.key)): \(error). \(hint)"))
+                }
             }
-            if let originalFtst, !writeAndReport(restoreSMC, ftst, originalFtst, label: "restore Ftst", failure: "RESTORE FAILED") {
-                restoreFailed.increment()
+            for line in report {
+                if line.ok { print(line.text) } else { FileHandle.standardError.write(Data((line.text + "\n").utf8)) }
             }
         }
         lease.releaseOnSignals()
@@ -75,8 +93,15 @@ enum FanCommands {
             failure = error
         }
         lease.release()
-        if restoreFailed.value > 0 { throw ProbeError("fan restore failed; see RESTORE FAILED lines above. Run: sudo fwprobe fan-release") }
+        if restoreFailed.value > 0 { throw ProbeError("fan restore failed; see RESTORE FAILED lines above. \(hint)") }
         if let failure { throw failure }
+    }
+
+    /// Reads a key's current bytes; on failure warns on stderr and returns `fallback`.
+    private static func original(_ smc: SMCConnection, _ key: FourCC, fallback: [UInt8]) -> [UInt8] {
+        if let bytes = try? smc.read(key).bytes { return bytes }
+        FileHandle.standardError.write(Data("WARNING: cannot read original \(key); restore will write fallback \(Hex.encode(fallback))\n".utf8))
+        return fallback
     }
 
     /// Writes `bytes` to `key` and reports the outcome; failures go to stderr. Returns success.

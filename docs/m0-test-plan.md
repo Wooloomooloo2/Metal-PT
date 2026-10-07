@@ -4,6 +4,7 @@ Machine: MacBook Pro 16" M4 Max (Mac16,5), macOS 26.6. Build first: `swift build
 `P=.build/debug/fwprobe`. Every write experiment restores on exit; if a restore ever reports
 `RESTORE FAILED`, run the printed command before doing anything else.
 Record every result in `docs/hardware-baseline.md` with the experiment ID and date.
+Never press Ctrl-Z during a write experiment (it suspends the process while charging or the fans are held); use Ctrl-C.
 
 ## E0 — AlDente (do first, AlDente still running)
 1. `mkdir -p docs/data && scripts/aldente-ids.sh > docs/data/aldente-ids.txt` — bundle id, helper label, process names.
@@ -12,12 +13,13 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
    helper is still enforcing: stop here and unload it before E2.
 
 ## E1 — SMC inventory
+CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on this machine (measured 2026-10-07).
 1. `$P smc list > docs/data/smc-keys-m4max.txt`
 2. Read the candidates: `$P smc read CHTE CH0B CH0C CHIE CH0J ACLC Ftst FNum F0Md F0Tg F0Mn F0Mx F0Ac F1Md F1Tg F1Mn F1Mx F1Ac TB0T TB1T TB2T`
 3. Record which exist, with type, size and current bytes.
 
 ## E2 — Charge inhibit (on AC, battery below 90%)
-1. Baseline: `$P battery` twice, 10 s apart. Expect positive mA (charging).
+1. Baseline: `$P battery` twice, 10 s apart. Expect positive mA (charging). If amperage is not positive on AC, macOS's own charge limit or Optimized Charging may be holding it: check System Settings > Battery > Charging, and note what was set.
 2. `sudo $P charge-test CHTE 01000000 --seconds 120`
    - Efficacy = amperage falls to about 0 (or slightly negative) while AC=true, within the run.
    - After the restore line, `$P battery` again: amperage positive again within ~30 s.
@@ -25,8 +27,10 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
    `CH0C`. Record the byte pattern that worked and the one(s) that did not.
 4. **Interrupt check:** repeat the working command and press Ctrl-C at ~30 s. Expect the `restored` line, and
    `$P smc read <KEY>` shows the original bytes. This checks that an interrupted experiment restores the key.
+   Repeat, and from another terminal run `sudo kill $(pgrep -x fwprobe)` (SIGTERM). Expect the restore lines.
 
 ## E3 — Adapter inhibit (for calibration; on AC)
+CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on this machine (measured 2026-10-07).
 1. `$P smc read CHIE CH0J` and record.
 2. `sudo $P charge-test CHIE 08 --seconds 60` (or `CH0J 20` if CHIE is missing).
    - Efficacy = amperage clearly negative (discharging) while AC is still physically connected.
@@ -39,6 +43,7 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
    Md/Tg are rewritten by the system during the run.
 4. After the release, watch `$P smc watch --interval 2 F0Md F0Tg F0Ac F1Ac Ftst` for 60 s: RPM returns to idle.
 5. **Interrupt check:** repeat step 3 and press Ctrl-C at ~10 s; expect the release lines.
+   Repeat, and from another terminal run `sudo kill $(pgrep -x fwprobe)` (SIGTERM). Expect the restore lines.
 6. **Crash check:** repeat step 3, then from another terminal `sudo kill -9 $(pgrep fwprobe)`. Watch for 2
    minutes: does macOS reclaim the fans on its own? Then `sudo $P fan-release` and confirm. This decides
    how hard the helper's startup release has to work.
@@ -51,6 +56,7 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
 
    Questions: does the system put Md back to `03` by itself, and do the fans respond to temperature rise? If Md stays `00` and the fans do not respond, record that. This determines ADR 0003 (which value means system control).
 8. Record min/max RPM per fan, and the lowest RPM that actually spins (try `--rpm` at the reported minimum).
+9. Before moving on: `$P smc read F0Md F1Md Ftst`. If F0Md/F1Md are not `03` or Ftst is not `00`, run `sudo $P smc write F0Md 03`, `sudo $P smc write F1Md 03`, `sudo $P smc write Ftst 00`, and confirm with `smc read`.
 
 ## E5 — Temperatures
 1. `$P temps > docs/data/hid-temps-idle.txt` and `$P smc list T > docs/data/smc-temps-idle.txt`. Several HID services share a Product name (e.g. two `PMU tdie1`, six `gas gauge battery`); record every row, do not assume names are unique.

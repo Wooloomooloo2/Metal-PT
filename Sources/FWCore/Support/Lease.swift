@@ -1,7 +1,7 @@
 import Foundation
 
 /// Something borrowed from the hardware (a charge key, the fans) with a guaranteed hand-back.
-/// `restore` runs exactly once: on `release()`, or on SIGINT/SIGTERM/SIGHUP after `releaseOnSignals()`.
+/// `restore` runs exactly once: on `release()`, or on SIGINT/SIGTERM/SIGHUP/SIGQUIT after `releaseOnSignals()`.
 /// SIGKILL cannot be caught; recovery from that is the next start's job (spec §2, fan lease).
 ///
 /// `restore` and `perform` bodies both run while holding the lease lock, so a signal can never restore
@@ -21,7 +21,7 @@ public final class Lease: @unchecked Sendable {
     public func releaseOnSignals() {
         // A dead pipe (e.g. `| tee` killed by Ctrl-C) must not kill us before restore runs.
         signal(SIGPIPE, SIG_IGN)
-        for signalNumber in [SIGINT, SIGTERM, SIGHUP] {
+        for signalNumber in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] {
             signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
             source.setEventHandler { [self] in
