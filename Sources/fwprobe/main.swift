@@ -5,6 +5,7 @@ let usage = """
     fwprobe — M0 hardware probe for fw-helper-mac. Write commands need sudo.
 
     \(SMCCommands.usage)
+    \(BatteryCommands.usage)
     """
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -12,6 +13,8 @@ do {
     switch args.first {
     case "smc":
         try SMCCommands.run(Array(args.dropFirst()))
+    case "battery":
+        try BatteryCommands.run(Array(args.dropFirst()))
     default:
         print(usage)
         exit(args.isEmpty ? 0 : 64)

@@ -17,6 +17,16 @@ enum SMCCommands {
         case "read":
             guard !rest.isEmpty else { throw ProbeError(usage) }
             for name in rest { print(describe(smc, try smcKey(name))) }
+        case "watch":
+            let keys = try positional(rest).map(smcKey)
+            let interval = Double(option("--interval", in: rest) ?? "5") ?? 5
+            guard !keys.isEmpty else { throw ProbeError(usage) }
+            while true {
+                let battery = (try? SmartBatteryReader.read().summary) ?? "battery unreadable"
+                let values = keys.map { describe(smc, $0) }.joined(separator: " | ")
+                print("\(timestamp())  \(values)  ||  \(battery)")
+                Thread.sleep(forTimeInterval: interval)
+            }
         default:
             throw ProbeError(usage)
         }
