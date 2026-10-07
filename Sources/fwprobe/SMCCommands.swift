@@ -6,6 +6,7 @@ enum SMCCommands {
         fwprobe smc list [PREFIX]                 every key (or keys starting with PREFIX): type, size, bytes, value
         fwprobe smc read KEY...                   read keys
         fwprobe smc watch [--interval S] KEY...   print keys and battery state every S seconds (default 5)
+        fwprobe smc write KEY HEX                 (sudo) write raw bytes; prints the command to undo it
         """
 
     static func run(_ args: [String]) throws {
@@ -19,7 +20,10 @@ enum SMCCommands {
             for name in rest { print(describe(smc, try smcKey(name))) }
         case "watch":
             let keys = try positional(rest).map(smcKey)
-            let interval = Double(option("--interval", in: rest) ?? "5") ?? 5
+            let intervalText = option("--interval", in: rest) ?? "5"
+            guard let interval = Double(intervalText), interval.isFinite, interval > 0 else {
+                throw ProbeError("--interval must be a positive number of seconds, got '\(intervalText)'")
+            }
             guard !keys.isEmpty else { throw ProbeError(usage) }
             while true {
                 let battery = (try? SmartBatteryReader.read().summary) ?? "battery unreadable"
@@ -27,6 +31,15 @@ enum SMCCommands {
                 print("\(timestamp())  \(values)  ||  \(battery)")
                 Thread.sleep(forTimeInterval: interval)
             }
+        case "write":
+            try requireRoot()
+            guard rest.count == 2, let bytes = Hex.decode(rest[1]) else { throw ProbeError(usage) }
+            let key = try smcKey(rest[0])
+            let before = try smc.read(key)
+            try smc.write(key, bytes: bytes)
+            print("before: \(line(before))")
+            print("after:  \(line(try smc.read(key)))")
+            print("undo:   sudo fwprobe smc write \(key) \(before.bytes.map { String(format: "%02X", $0) }.joined())")
         default:
             throw ProbeError(usage)
         }

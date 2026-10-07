@@ -60,5 +60,7 @@ import Testing
         #expect(Hex.decode("") == nil)
         #expect(Hex.decode("010") == nil)
         #expect(Hex.decode("zz") == nil)
+        #expect(Hex.decode("+1") == nil)
+        #expect(Hex.decode("-0") == nil)
     }
 }

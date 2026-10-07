@@ -1,6 +1,9 @@
 import Foundation
 import FWCore
 
+// Line-buffer stdout so logs survive kill/Ctrl-C when piped to a file.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 let usage = """
     fwprobe — M0 hardware probe for fw-helper-mac. Write commands need sudo.
 
@@ -15,6 +18,8 @@ do {
         try SMCCommands.run(Array(args.dropFirst()))
     case "battery":
         try BatteryCommands.run(Array(args.dropFirst()))
+    case "charge-test":
+        try BatteryCommands.chargeTest(Array(args.dropFirst()))
     default:
         print(usage)
         exit(args.isEmpty ? 0 : 64)

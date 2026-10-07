@@ -38,6 +38,8 @@ public final class SMCConnection {
     public func write(_ key: FourCC, bytes: [UInt8]) throws {
         let info = try keyInfo(key)
         try info.checkWrite(key: key, bytes: bytes)
+        // CSMCParam's data buffer is 32 bytes; refuse rather than overflow it.
+        guard bytes.count <= 32 else { throw SMCError.sizeMismatch(key: key, expected: 32, got: bytes.count) }
         var input = CSMCParam()
         input.key = key.rawValue
         input.keyInfo.dataSize = UInt32(info.size)
