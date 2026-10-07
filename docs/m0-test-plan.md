@@ -23,8 +23,8 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
    - After the restore line, `$P battery` again: amperage positive again within ~30 s.
 3. If CHTE is missing or has no effect: try `sudo $P charge-test CH0B 02 --seconds 120`, then the same with
    `CH0C`. Record the byte pattern that worked and the one(s) that did not.
-4. **Interrupt check (Review Focus 1):** repeat the working command and press Ctrl-C at ~30 s. Expect the
-   `restored` line, and `$P smc read <KEY>` shows the original bytes.
+4. **Interrupt check:** repeat the working command and press Ctrl-C at ~30 s. Expect the `restored` line, and
+   `$P smc read <KEY>` shows the original bytes. This checks that an interrupted experiment restores the key.
 
 ## E3 — Adapter inhibit (for calibration; on AC)
 1. `$P smc read CHIE CH0J` and record.
@@ -42,13 +42,20 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
 6. **Crash check:** repeat step 3, then from another terminal `sudo kill -9 $(pgrep fwprobe)`. Watch for 2
    minutes: does macOS reclaim the fans on its own? Then `sudo $P fan-release` and confirm. This decides
    how hard the helper's startup release has to work.
-7. What does `00` mean? After `sudo $P fan-release` (writes Md=00), watch `$P smc watch --interval 2 F0Md F1Md F0Ac F1Ac` for 2 minutes under load: does the system put Md back to `03` by itself, and do the fans still respond to temperature? If Md stays `00` and the fans do not respond, restore with `sudo $P smc write F0Md 03` and `sudo $P smc write F1Md 03`. Record which value means system control — ADR 0003 depends on it.
+7. What does `00` mean? Run this in three terminals:
+   - Terminal 1 (main): `sudo $P fan-release` (writes Md=00), then watch `$P smc watch --interval 2 F0Md F1Md F0Ac F1Ac` for 2 minutes.
+   - Terminal 2 (load): `for i in $(seq 16); do yes > /dev/null & done; sleep 120; killall yes`
+   - Terminal 3 (monitor temps): `$P temps --watch 5`
+
+   Abort immediately if any `PMU tdie` sensor exceeds 95 °C, or if F0Ac/F1Ac read 0 while any tdie > 70 °C: run `sudo $P smc write F0Md 03` and `sudo $P smc write F1Md 03` and `killall yes`.
+
+   Questions: does the system put Md back to `03` by itself, and do the fans respond to temperature rise? If Md stays `00` and the fans do not respond, record that. This determines ADR 0003 (which value means system control).
 8. Record min/max RPM per fan, and the lowest RPM that actually spins (try `--rpm` at the reported minimum).
 
 ## E5 — Temperatures
 1. `$P temps > docs/data/hid-temps-idle.txt` and `$P smc list T > docs/data/smc-temps-idle.txt`. Several HID services share a Product name (e.g. two `PMU tdie1`, six `gas gauge battery`); record every row, do not assume names are unique.
-2. Load the CPU for 60 s (`for i in $(seq 16); do yes > /dev/null & done; sleep 60; killall yes`) while running
-   `$P temps --watch 5`. Identify the sensors that rise fastest: CPU die candidates.
+2. Load the CPU for 60 s in a second terminal (`for i in $(seq 16); do yes > /dev/null & done; sleep 60; killall yes`)
+   while running `$P temps --watch 5` in the first terminal. Identify the sensors that rise fastest: CPU die candidates.
 3. Run a game (or a GPU benchmark) with `$P temps --watch 5`: GPU die candidates.
 4. Battery temperature: compare `$P battery` against `TB0T`/`TB1T`/`TB2T` and the HID battery sensors.
 
@@ -61,15 +68,20 @@ Record every result in `docs/hardware-baseline.md` with the experiment ID and da
    The spec target for 1 Hz telemetry is < 1% CPU.
 
 ## E7 — Power modes
-1. `pmset -g | grep powermode`; `sudo pmset -a powermode 1`, check with `pmset -g`, then `sudo pmset -a powermode 2`
-   (restore the original value). Record that both switch, and whether `-c`/`-b` (AC/battery) variants are distinct.
+1. Record originals: `pmset -g custom > docs/data/pmset-custom-before.txt`
+2. Query current mode: `pmset -g | grep powermode`
+3. Switch to powermode 1: `sudo pmset -c powermode 1` (AC), check with `pmset -g`, then `sudo pmset -b powermode 1` (battery).
+4. Switch to powermode 2: `sudo pmset -c powermode 2` (AC), check with `pmset -g`, then `sudo pmset -b powermode 2` (battery).
+5. Restore originals: extract the powermode values from `docs/data/pmset-custom-before.txt` and restore with separate
+   `sudo pmset -c powermode <value>` and `sudo pmset -b powermode <value>` commands.
+6. Confirm: `pmset -g custom` should match the before snapshot. Record whether both modes switch, and whether AC/battery variants are distinct.
 
 ## E8 — FPS spike
 1. `scripts/fps-spike.sh` then follow its prompt with a Metal game (and ARMSX2 if convenient).
-2. Analyse `metal.ndjson`: `grep -c . metal.ndjson`; inspect a few `eventMessage` values. Questions:
+2. Analyse `~/fps-spike-<timestamp>/metal.ndjson`: `grep -c . metal.ndjson`; inspect a few `eventMessage` values. Questions:
    - Are there periodic entries carrying FPS or frame time? How often (per frame, per second)?
    - Do they identify the process (`processImagePath`, `processID`)?
-   - What does `logstream-cpu.txt` show for the cost of `log stream`?
-3. If nothing useful is logged: retry with `defaults write -g MetalForceHudEnabled -bool YES` (undo with
-   `defaults delete -g MetalForceHudEnabled`) and with the predicate removed for the game's PID only
-   (`log stream --process <pid> --level debug`). Record what was tried even if it failed.
+   - What does `~/fps-spike-<timestamp>/logstream-cpu.txt` show for the cost of `log stream`?
+3. If nothing useful is logged: retry with `defaults write -g MetalForceHudEnabled -bool YES` (always run
+   `defaults delete -g MetalForceHudEnabled` afterwards to undo) and with a capture from only the game's process:
+   `log stream --process <pid> --level debug`. Record what was tried even if it failed.

@@ -6,15 +6,19 @@ set -uo pipefail
 OUT="${1:-$HOME/fps-spike-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$OUT"
 
-launchctl setenv MTL_HUD_ENABLED 1
-launchctl setenv MTL_HUD_LOG_ENABLED 1
+LOGPID=
+CPUPID=
 cleanup() {
     launchctl unsetenv MTL_HUD_ENABLED
     launchctl unsetenv MTL_HUD_LOG_ENABLED
-    kill "$LOGPID" "$CPUPID" 2>/dev/null
+    kill "${LOGPID:-}" "${CPUPID:-}" 2>/dev/null
     echo "Metal HUD environment cleared. Output in $OUT"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+launchctl setenv MTL_HUD_ENABLED 1
+launchctl setenv MTL_HUD_LOG_ENABLED 1
 
 log stream --style ndjson --level debug \
     --predicate 'subsystem BEGINSWITH "com.apple.Metal" OR category CONTAINS[c] "hud"' \
@@ -26,6 +30,7 @@ LOGPID=$!
   done ) &
 CPUPID=$!
 
-echo "Capturing to $OUT. Now quit Steam completely and relaunch it (or launch the game/emulator) so it"
-echo "inherits the environment. Play for about 60 s with the Metal HUD visible, then press Ctrl-C here."
+echo "Capturing to $OUT. Already-running GUI apps (Steam, games, emulators) are unaffected; quit and"
+echo "relaunch them completely so they inherit the Metal HUD environment. Play for about 60 s with"
+echo "the Metal HUD visible, then press Ctrl-C here."
 wait "$LOGPID"
