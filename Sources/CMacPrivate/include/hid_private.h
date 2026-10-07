@@ -17,6 +17,7 @@ static const int32_t kCHIDTemperatureLevelField = 15 << 16;
 static const int kCHIDSensorUsagePage = 0xFF00;
 static const int kCHIDTemperatureSensorUsage = 5;
 
+// Used instead of the public IOHIDEventSystemClientCreateSimpleClient: on M4 Max / macOS 26.6 the simple client returns services whose CopyEvent is always nil.
 IOHIDEventSystemClientRef _Nullable IOHIDEventSystemClientCreate(CFAllocatorRef _Nullable allocator) CF_RETURNS_RETAINED;
 
 IOHIDEventRef _Nullable IOHIDServiceClientCopyEvent(IOHIDServiceClientRef service, int64_t type, int32_t options,

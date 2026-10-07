@@ -10,6 +10,7 @@ public struct TemperatureReading: Sendable {
 /// Temperature sensors published through the HID event system (unprivileged).
 public enum HIDTemperatureReader {
     public static func read() -> [TemperatureReading] {
+        // Used instead of the public IOHIDEventSystemClientCreateSimpleClient: on M4 Max / macOS 26.6 the simple client returns services whose CopyEvent is always nil.
         let client = IOHIDEventSystemClientCreate(kCFAllocatorDefault)
         guard let client, let services = IOHIDEventSystemClientCopyServices(client) else { return [] }
         var readings: [TemperatureReading] = []
