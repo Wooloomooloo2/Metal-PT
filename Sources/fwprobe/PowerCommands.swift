@@ -8,7 +8,29 @@ enum PowerCommands {
                                                   1 s deltas for N s (default 10): watts for energy channels,
                                                   residency for performance-state channels, and sampling cost.
                                                   Default groups: Energy Model, CPU Stats, GPU Stats
+        fwprobe temps [--watch S]                 HID temperature sensors (repeat every S s with --watch)
         """
+
+    static func temps(_ args: [String]) throws {
+        var interval: Double?
+        if let text = option("--watch", in: args) {
+            guard let value = Double(text), value > 0, value.isFinite else {
+                throw ProbeError("--watch must be a positive number of seconds, got '\(text)'")
+            }
+            interval = value
+        } else if args.contains("--watch") {
+            throw ProbeError("--watch requires a number of seconds")
+        }
+        repeat {
+            let readings = HIDTemperatureReader.read()
+            guard !readings.isEmpty else { throw ProbeError("no HID temperature sensors returned") }
+            print("── \(timestamp())  \(readings.count) sensors")
+            for reading in readings {
+                print("   \(reading.name.padding(toLength: 28, withPad: " ", startingAt: 0)) \(String(format: "%6.1f", reading.celsius)) °C")
+            }
+            if let interval { Thread.sleep(forTimeInterval: interval) }
+        } while interval != nil
+    }
 
     static func ioreport(_ args: [String]) throws {
         let rest = Array(args.dropFirst())

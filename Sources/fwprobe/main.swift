@@ -28,6 +28,8 @@ do {
         try FanCommands.fanRelease()
     case "ioreport":
         try PowerCommands.ioreport(Array(args.dropFirst()))
+    case "temps":
+        try PowerCommands.temps(Array(args.dropFirst()))
     default:
         print(usage)
         exit(args.isEmpty ? 0 : 64)
