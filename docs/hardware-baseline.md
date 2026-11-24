@@ -57,6 +57,16 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
   [?] it may under-report or cover only part of the GPU; don't use it as the GPU's power until checked with a heavy game.
 - [M] At idle, P-core residency is mostly `IDLE` (PCPU000 IDLE ≈ 99 %), so busy = 1 − (IDLE+DOWN) share works; the
   100 % `V19P0` seen earlier was the game load.
+- [M] 2026-11-24 (macOS 27.0.1): GPU frequency table — IORegistry `pmgr` property `voltage-states9` (identical copies in
+  `voltage-states14/15/16`): 16 × (freq Hz u32 LE, voltage u32 LE); entry 0 = 0 (OFF), entries 1…15 MHz =
+  338, 618, 796, 924, 952, 1056, 1062, 1182, 1182, 1312, 1242, 1380, 1326, 1470, 1578. `GPU Stats / GPU Performance
+  States / GPUPH` has states OFF, P1…P15 → [?] P*n* ↔ entry *n* (table not monotonic at 1312/1242 and 1380/1326;
+  verify under a heavy game that the residency-weighted clock approaches 1578 MHz). Readable unprivileged
+  (`ioreg -rn pmgr -l`).
+- [M] 2026-11-24: memory pressure readable unprivileged — `sysctl kern.memorystatus_vm_pressure_level` (1 = normal,
+  2 = warn, 4 = critical), `vm.swapusage` (total/used/free), `host_statistics64` compressor pages and pageouts
+  (16 KB pages). During a Cyberpunk run: 32 of 48 GB used, swap used 4.6 GB (from earlier activity), level 1.
+
 ## Power modes (E7)
 ## FPS (E8)
 
