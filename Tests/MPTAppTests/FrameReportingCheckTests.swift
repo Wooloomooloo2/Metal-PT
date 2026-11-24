@@ -12,11 +12,13 @@ import MPTCore
         var launcher: [Int32: (name: String, pid: Int32)] = [game: (name: "Steam", pid: 500)]
         var envCalls = 0
         var launcherCalls = 0
+        var alive: Set<Int32> = [game, 901, selfPID]
     }
 
     private func check(_ l: Lookups) -> FrameReportingCheck {
         FrameReportingCheck(environment: { pid in l.envCalls += 1; return l.env[pid] },
-                            launcher: { pid in l.launcherCalls += 1; return l.launcher[pid] })
+                            launcher: { pid in l.launcherCalls += 1; return l.launcher[pid] },
+                            isAlive: { l.alive.contains($0) })
     }
 
     private func input(_ t: Double, pid: Int32? = game, app: String? = "Cyberpunk2077", gpu: Double? = 90,
@@ -117,7 +119,48 @@ import MPTCore
 
         run(&c, from: 22, 10) { input($0) }
         #expect(c.warning != nil)
-        #expect(c.tick(input(32, pid: nil, app: nil)) == nil)   // quit: nothing frontmost
+        l.alive.remove(Self.game)
+        #expect(c.tick(input(32, pid: nil, app: nil)) == nil)   // quit: nothing frontmost, the PID is gone
+    }
+
+    /// Clicking Metal-PT (to read the warning) must not dismiss it; another app in front does.
+    @Test func metalPTInFrontKeepsTheWarning() {
+        let l = Lookups()
+        var c = check(l)
+        let w = run(&c, 10) { input($0) }
+        #expect(w != nil)
+        #expect(run(&c, from: 10, 20) { input($0, pid: Self.selfPID, app: "Metal-PT", gpu: 3) } == w)
+        #expect(c.tick(input(30, pid: nil, app: nil)) == w)          // nothing frontmost: kept as well
+        #expect(c.tick(input(31, pid: 901, app: "Finder")) == nil)    // a different app in front: cleared
+        #expect(c.warning == nil)
+    }
+
+    @Test func metalPTInFrontClearsWhenTheWarnedAppQuitsOrReports() {
+        let l = Lookups()
+        var c = check(l)
+        run(&c, 10) { input($0) }
+        #expect(c.tick(input(10, pid: Self.selfPID, app: "Metal-PT", otherHUD: true)) == nil)  // its lines arrive
+        run(&c, from: 11, 10) { input($0) }
+        #expect(c.warning != nil)
+        #expect(c.tick(input(21, pid: Self.selfPID, app: "Metal-PT")) != nil)
+        l.alive.remove(Self.game)
+        #expect(c.tick(input(22, pid: Self.selfPID, app: "Metal-PT")) == nil)   // quit while Metal-PT in front
+        // Logging off or sampling stopped clears it too.
+        l.alive.insert(Self.game)
+        run(&c, from: 23, 10) { input($0) }
+        #expect(c.tick(input(33, pid: Self.selfPID, app: "Metal-PT", logging: false)) == nil)
+        run(&c, from: 34, 10) { input($0) }
+        #expect(c.tick(input(44, pid: Self.selfPID, app: "Metal-PT", sampling: false)) == nil)
+    }
+
+    /// While Metal-PT is in front the count neither runs nor starts over.
+    @Test func metalPTInFrontDoesNotCount() {
+        let l = Lookups()
+        var c = check(l)
+        run(&c, 5) { input($0) }
+        #expect(run(&c, from: 5, 20) { input($0, pid: Self.selfPID, app: "Metal-PT") } == nil)
+        #expect(run(&c, from: 25, 4) { input($0) } == nil)
+        #expect(c.tick(input(29)) != nil)
     }
 
     @Test func aGPUDipDoesNotClearAShownWarning() {

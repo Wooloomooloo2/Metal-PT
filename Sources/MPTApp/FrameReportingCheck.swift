@@ -9,8 +9,8 @@ import MPTCore
 /// make the app in front look busy), GPU busy ≥ `busyPct` for `ticksNeeded` consecutive ticks with no HUD line from
 /// that PID, and its environment is readable and lacks `MTL_HUD_LOG_ENABLED`. Says nothing for apps that have the
 /// variable (they are just not Metal games) or whose environment cannot be read. Clears when HUD lines arrive from it
-/// or from another process, the frontmost app changes (or quits), FPS logging goes off or sampling stops; a GPU dip
-/// only restarts the count.
+/// or from another process, a different app (not Metal-PT) comes to the front, the app quits, FPS logging goes off or
+/// sampling stops; a GPU dip only restarts the count. Metal-PT itself (or nothing) in front leaves the state as it is.
 ///
 /// Environment and launcher lookups (sysctl/proc_pidinfo) run at most once per PID per `lookupCacheSeconds`.
 /// The message names apps; it is shown in the UI only and never written to run bundles.
@@ -54,23 +54,32 @@ public struct FrameReportingCheck {
 
     private let environment: (Int32) -> [String: String]?
     private let launcher: (Int32) -> (name: String, pid: Int32)?
+    private let isAlive: (Int32) -> Bool
     private var pid: Int32?
     private var busyTicks = 0
     private var envCache: [Int32: (at: Double, env: [String: String]?)] = [:]
     private var launcherCache: [Int32: (at: Double, launcher: (name: String, pid: Int32)?)] = [:]
 
     public init(environment: @escaping (Int32) -> [String: String]? = { ProcessNames.environment(pid: $0) },
-                launcher: @escaping (Int32) -> (name: String, pid: Int32)? = { ProcessTree.launcher(of: $0) }) {
+                launcher: @escaping (Int32) -> (name: String, pid: Int32)? = { ProcessTree.launcher(of: $0) },
+                isAlive: @escaping (Int32) -> Bool = { kill($0, 0) == 0 || errno == EPERM }) {
         self.environment = environment
         self.launcher = launcher
+        self.isAlive = isAlive
     }
 
     /// One tick; returns the warning to show (nil: none).
     @discardableResult
     public mutating func tick(_ i: Input) -> String? {
-        guard i.fpsLoggingOn, i.sampling, let front = i.frontmostPID, front != i.selfPID else {
+        guard i.fpsLoggingOn, i.sampling else {
             reset(pid: nil)
             return nil
+        }
+        // Metal-PT in front (the user clicked it to read the warning) or nothing in front: keep the state as it
+        // is — no reset, no count — unless the tracked app has quit or a game is now reporting.
+        guard let front = i.frontmostPID, front != i.selfPID else {
+            if let p = pid, !isAlive(p) || i.otherHUDActive { reset(pid: nil) }
+            return warning
         }
         if front != pid { reset(pid: front) }
         if i.hudLive || i.otherHUDActive {
