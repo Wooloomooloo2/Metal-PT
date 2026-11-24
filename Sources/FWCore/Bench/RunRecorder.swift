@@ -200,6 +200,10 @@ public final class RunRecorder: @unchecked Sendable {
                 (name(of: pid)?.lowercased().contains(needle) ?? false)
                     || (imagePaths[pid]?.lowercased().contains(needle) ?? false)
             }
+            // Among the live matches (a restarted game has a new PID); all matches when none is live.
+            if let now = counter.latestTime, let live = counter.busiestLive(at: now, among: Array(matches)) {
+                return live
+            }
             return matches.max { a, b in
                 let (fa, fb) = (counter.totalFrames(pid: a), counter.totalFrames(pid: b))
                 return fa != fb ? fa < fb : a > b

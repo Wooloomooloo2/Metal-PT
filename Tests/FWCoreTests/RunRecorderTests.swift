@@ -124,6 +124,23 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         try byPID.finish(at: 1)
     }
 
+    // The --name rule picks among live matching processes: a restarted game (new PID) takes over from the old one.
+    @Test func nameRulePrefersLiveProcess() throws {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .nameContains("game"),
+                            argv0: { _ in nil })
+        for t in 0...10 { r.hud(event(pid: 1, frames: t * 600, at: Double(t), path: "/Apps/Game")) }
+        r.hud(event(pid: 2, frames: 0, at: 14, path: "/Apps/Game"))
+        r.hud(event(pid: 2, frames: 60, at: 15, path: "/Apps/Game"))
+        #expect(r.followedPID == 2)
+        try r.tick(at: 15.2)
+        try r.finish(at: 16)
+        let b = try RunBundle.load(dir)
+        #expect(b.rows[0]["fps"] == "60.0")
+        #expect(b.rows[0]["fps_pid"] == "2")
+    }
+
     @Test func nameRuleMatchesWindowsArgv0() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }

@@ -17,7 +17,8 @@ public struct HUDEvent: Sendable {
 }
 
 /// Turns cumulative per-process frame counts into per-second FPS and picks the
-/// process to follow (most frames gained so far).
+/// process to follow: the one with the most frames gained so far among the live ones. A process with no line for
+/// longer than `staleAfter` is gone (exited, or a launcher that handed off), so a restarted game takes over at once.
 public struct FrameCounter: Sendable {
     private struct State {
         var lastTime: Double
@@ -26,13 +27,15 @@ public struct FrameCounter: Sendable {
         var total: Int
     }
 
-    /// FPS older than this (seconds) is considered stale.
-    private static let staleAfter = 2.5
+    /// FPS older than this (seconds) is considered stale, and a process this quiet is treated as gone.
+    public static let staleAfter = 2.5
     /// Same count within this many seconds of the previous line = duplicate log entry.
     private static let duplicateWindow = 0.25
 
     private var states: [Int32: State] = [:]
     public private(set) var followedPID: Int32?
+    /// Time of the newest line seen from any process.
+    public private(set) var latestTime: Double?
 
     public init() {}
 
@@ -40,9 +43,10 @@ public struct FrameCounter: Sendable {
         let frames = event.line.frames
         guard frames >= 0, event.time.isFinite else { return }
         let pid = event.pid
+        latestTime = max(latestTime ?? event.time, event.time)
         guard var s = states[pid] else {
             states[pid] = State(lastTime: event.time, lastFrames: frames, lastFPS: nil, total: 0)
-            updateFollowed(pid)
+            updateFollowed(pid, at: event.time)
             return
         }
         guard event.time > s.lastTime else { return }
@@ -60,7 +64,7 @@ public struct FrameCounter: Sendable {
         s.lastTime = event.time
         s.lastFrames = frames
         states[pid] = s
-        updateFollowed(pid)
+        updateFollowed(pid, at: event.time)
     }
 
     public func fps(pid: Int32, at time: Double) -> Double? {
@@ -70,11 +74,29 @@ public struct FrameCounter: Sendable {
 
     public func totalFrames(pid: Int32) -> Int { states[pid]?.total ?? 0 }
 
-    private mutating func updateFollowed(_ pid: Int32) {
+    /// True when `pid` sent a line within `staleAfter` of `time`.
+    public func isLive(pid: Int32, at time: Double) -> Bool {
+        guard let s = states[pid] else { return false }
+        return time - s.lastTime <= Self.staleAfter
+    }
+
+    /// The live process with the most frames (ties: lower PID), optionally only among `candidates`.
+    public func busiestLive(at time: Double, among candidates: [Int32]? = nil) -> Int32? {
+        (candidates ?? Array(states.keys)).filter { isLive(pid: $0, at: time) }.max { a, b in
+            let (fa, fb) = (totalFrames(pid: a), totalFrames(pid: b))
+            return fa != fb ? fa < fb : a > b
+        }
+    }
+
+    private mutating func updateFollowed(_ pid: Int32, at time: Double) {
         guard let current = followedPID, let cs = states[current] else {
             followedPID = pid
             return
         }
-        if let s = states[pid], s.total > cs.total { followedPID = pid }
+        if isLive(pid: current, at: time) {
+            if let s = states[pid], s.total > cs.total { followedPID = pid }
+        } else {
+            followedPID = busiestLive(at: time) ?? current
+        }
     }
 }

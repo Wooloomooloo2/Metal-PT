@@ -75,4 +75,23 @@ import Testing
         c.add(event(7, 2.03, 121))
         #expect(c.fps(pid: 7, at: 2.1) == 0)
     }
+
+    // A game restart or launcher hand-off: the old process stops sending lines; the busiest live one takes over
+    // even though the old one has far more frames in total.
+    @Test func followedProcessExitsNewOneTakesOver() throws {
+        var c = FrameCounter()
+        for t in 0...10 { c.add(event(1, Double(t), t * 600)) }     // 600 fps, 6000 frames, then gone
+        #expect(c.followedPID == 1)
+        c.add(event(3, 11, 0)); c.add(event(3, 12, 5))               // a quiet launcher window
+        c.add(event(2, 12, 0))
+        c.add(event(2, 13, 60))
+        c.add(event(3, 13, 10))
+        #expect(c.followedPID == 2)
+        #expect(try #require(c.fps(pid: 2, at: 13.5)) == 60)
+        // Within staleAfter the old process still counts as live and keeps the lead.
+        var d = FrameCounter()
+        for t in 0...10 { d.add(event(1, Double(t), t * 600)) }
+        d.add(event(2, 11, 0)); d.add(event(2, 12, 60))
+        #expect(d.followedPID == 1)
+    }
 }
