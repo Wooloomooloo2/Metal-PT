@@ -140,6 +140,17 @@ import Foundation
         #expect(!out.contains("B run: 10.00 FPS/W"))
     }
 
+    @Test func mixedFrameTimesShowDashLowsInCompare() {
+        var i = info(fpsSource: "stderr")
+        i.warnings = [RunRecorder.mixedFramesWarning]
+        let frames = (0..<6000).map { TimedFrame(tMs: Double($0) * 15, intervalMs: 15, presentDelayMs: 1) }
+        let a0 = bundle("a.fwrun", i, fps: 60)
+        let a = RunBundle(url: a0.url, info: i, rows: a0.rows, frames: frames, warnings: i.warnings)
+        let project = CompareProject(name: "p", baseline: 0, runs: [.init(bundle: "a.fwrun", name: "A")])
+        let out = CompareReport.html(project: project, runs: [pair(a)])
+        #expect(out.contains("1 % low — (frame times mixed)"))
+    }
+
     @Test func runLabels() {
         let a = info(stack: Stack(runtime: "Protium", graphics: ["DXMT", "vkd3d"]))
         #expect(CompareReport.label(.init(bundle: "x.fwrun", name: "Mine"), a) == "Mine")

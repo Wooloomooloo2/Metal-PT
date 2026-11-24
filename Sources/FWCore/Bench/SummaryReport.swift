@@ -104,6 +104,8 @@ public enum SummaryReport {
                          body: body)
     }
 
+    /// Shown instead of the lows when frames.csv may mix several processes.
+    static let mixedHint = "frame times mixed"
     static let gpuOnlyWarning = "power is GPU-only (IOReport), FPS/W not comparable across runs"
     /// docs/hardware-baseline.md E6: IOReport GPU Energy read about 1.2 W where the SoC SMC keys rose about 12 W.
     static let gpuCaption = "IOReport GPU energy under-reads on this machine (≈1.2 W where the SoC keys rose ≈12 W); "
@@ -150,8 +152,8 @@ public enum SummaryReport {
 
     private static func tiles(_ info: RunInfo, _ s: RunSummary) -> String {
         let noFPS = s.medianFPS == nil ? "no FPS recorded" : ""
-        let lowHint = info.fpsSource == "stderr" ? "" : "needs fwbench run"
-        let lowDetail = info.fpsSource == "stderr" ? "from per-frame times" : ""
+        let lowHint = s.lowsMixed ? mixedHint : (info.fpsSource == "stderr" ? "" : "needs fwbench run")
+        let lowDetail = info.fpsSource == "stderr" && !s.lowsMixed ? "from per-frame times" : ""
         var out = "<div class=\"tiles\">"
         out += tile("Median FPS", HTML.number(s.medianFPS, digits: 1),
                     s.medianFPS == nil ? noFPS : "over \(s.steadySeconds.count) steady s")

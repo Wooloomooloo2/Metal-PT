@@ -31,6 +31,12 @@ public struct RecorderStatus: Sendable {
 /// Every time is epoch seconds. `hud` and `frames` may arrive on any queue; `tick` is called once per second from a
 /// timer. All of them are ignored after `finish`, which is idempotent.
 public final class RunRecorder: @unchecked Sendable {
+    /// Added to run.json when stderr frames look like they come from more than the followed process.
+    public static let mixedFramesWarning = "frame times may include more than one process"
+    /// Stderr frames per second above the followed process's log FPS by more than this fraction …
+    static let mixedExcess = 0.15
+    /// … for this many consecutive ticks flags mixed frame times.
+    static let mixedSeconds = 3
     private let writer: RunBundleWriter
     private let telemetry: TelemetrySource
     private let startTime: Double
@@ -51,6 +57,11 @@ public final class RunRecorder: @unchecked Sendable {
     private var finished = false
     private var writeWarnings: [String] = []
     private var identifiedExe: String?
+    // Mixed-frames detection (touched under `lock` from `tick`).
+    private var lastTickTime: Double?
+    private var lastTickTotals: [Int32: Int] = [:]
+    private var excessTicks = 0
+    private var framesMixed = false
 
     /// `argv0` looks up a live process's argv[0] (injectable for tests); the exe name is taken from it.
     public init(writer: RunBundleWriter, telemetry: TelemetrySource, startTime: Double, follow: FollowRule,
@@ -119,6 +130,7 @@ public final class RunRecorder: @unchecked Sendable {
         let frameTimes = pendingFrameTimes
         pendingFrameTimes.removeAll(keepingCapacity: true)
         let saw = sawHUD || sawFrames
+        checkMixedFrames(stderrCount: frameTimes.count, logFPS: fps, at: time)
         lock.unlock()
 
         var row: [String: String] = [
@@ -165,6 +177,7 @@ public final class RunRecorder: @unchecked Sendable {
         identifiedExe = exe
         var warnings = writeWarnings
         if exe == nil { warnings.append("game process never identified") }
+        if framesMixed { warnings.append(Self.mixedFramesWarning) }
         lock.unlock()
 
         let duration = max(0, time - startTime)
@@ -186,6 +199,30 @@ public final class RunRecorder: @unchecked Sendable {
     private func noteWriteFailure(_ message: String) {
         let file = message.prefix { $0 != " " }
         if !writeWarnings.contains(where: { $0.hasPrefix(file) }) { writeWarnings.append(message) }
+    }
+
+    /// Stderr frames carry no PID, so several Metal processes under a launched command can interleave in
+    /// frames.csv. Compares this tick's stderr frame rate with the followed process's log FPS, and flags when the
+    /// log shows more than one process gaining frames while stderr frames arrive.
+    private func checkMixedFrames(stderrCount: Int, logFPS: Double?, at time: Double) {
+        let previous = lastTickTime ?? startTime
+        lastTickTime = time
+        var gaining = 0
+        for pid in imagePaths.keys {
+            let total = counter.totalFrames(pid: pid)
+            if total > (lastTickTotals[pid] ?? 0) { gaining += 1 }
+            lastTickTotals[pid] = total
+        }
+        guard !framesMixed, stderrCount > 0 else { excessTicks = 0; return }
+        if gaining > 1 { framesMixed = true; return }
+        let dt = time - previous
+        guard dt > 0, let logFPS, logFPS > 0 else { excessTicks = 0; return }
+        if Double(stderrCount) / dt > logFPS * (1 + Self.mixedExcess) {
+            excessTicks += 1
+            if excessTicks >= Self.mixedSeconds { framesMixed = true }
+        } else {
+            excessTicks = 0
+        }
     }
 
     private func resolveFollowed() -> Int32? {

@@ -189,6 +189,50 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         #expect(frameWarnings.count == 1)
     }
 
+    // MARK: - Mixed stderr frames (several Metal processes under `fwbench run`)
+
+    private func frameBatch(_ n: Int) -> [FrameTime] {
+        [FrameTime](repeating: FrameTime(intervalMs: 1000 / Double(max(n, 1)), presentDelayMs: 1), count: n)
+    }
+
+    /// Log: pid 9 at 60 fps. Stderr: `stderrPerSecond[k]` frames in second k+1. Returns the run's warnings.
+    private func mixedRun(stderrPerSecond: [Int], extraLogPID: Bool = false) throws -> [String] {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in "g" })
+        r.hud(event(pid: 9, frames: 0, at: 0))
+        if extraLogPID { r.hud(event(pid: 10, frames: 0, at: 0, path: "/x/Launcher")) }
+        for (k, n) in stderrPerSecond.enumerated() {
+            let t = Double(k + 1)
+            r.hud(event(pid: 9, frames: 60 * (k + 1), at: t - 0.1))
+            if extraLogPID { r.hud(event(pid: 10, frames: 5 * (k + 1), at: t - 0.1, path: "/x/Launcher")) }
+            r.frames(frameBatch(n), pid: 77, at: t - 0.05)
+            try r.tick(at: t)
+        }
+        try r.finish(at: Double(stderrPerSecond.count + 1))
+        return try RunBundle.load(dir).info.warnings
+    }
+
+    @Test func stderrFramesAboveLogFPSForThreeSecondsAreFlagged() throws {
+        let w = try mixedRun(stderrPerSecond: [60, 120, 120, 120, 60, 120, 120, 120])
+        #expect(w.filter { $0 == RunRecorder.mixedFramesWarning }.count == 1)
+    }
+
+    @Test func briefOrSmallStderrExcessIsNotFlagged() throws {
+        // Two seconds over, then back; and 10 % over for a long time.
+        #expect(try mixedRun(stderrPerSecond: [60, 120, 120, 60, 120, 120, 60]).isEmpty)
+        #expect(try mixedRun(stderrPerSecond: [66, 66, 66, 66, 66]).isEmpty)
+    }
+
+    @Test func secondLogProcessGainingFramesWhileStderrArrivesIsFlagged() throws {
+        let w = try mixedRun(stderrPerSecond: [60, 60], extraLogPID: true)
+        #expect(w == [RunRecorder.mixedFramesWarning])
+    }
+
+    @Test func secondLogProcessWithoutStderrFramesIsNotFlagged() throws {
+        #expect(try mixedRun(stderrPerSecond: [0, 0, 0], extraLogPID: true).isEmpty)
+    }
+
     @Test func stackIsWrittenForFollowedPID() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }

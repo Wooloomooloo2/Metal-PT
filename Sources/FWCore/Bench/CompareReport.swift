@@ -234,6 +234,11 @@ public enum CompareReport {
                          body: body)
     }
 
+    /// "—" with a reason when frame times may mix several processes.
+    private static func lowText(_ s: RunSummary) -> String {
+        s.lowsMixed ? "\(dash) (\(SummaryReport.mixedHint))" : HTML.number(s.low1, digits: 1)
+    }
+
     private static func powerText(_ it: Item) -> String {
         guard let p = it.power else { return "power —" }
         return "\(HTML.number(p, digits: 1)) W" + (it.summary.powerColumn == "gpu_w" ? " GPU-only" : "")
@@ -276,7 +281,7 @@ public enum CompareReport {
         for it in items {
             let g = it.isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base?.summary.medianFPS)
             let line = "\(it.label): \(HTML.number(it.summary.medianFPS, digits: 1)) fps median (\(g)), "
-                + "1 % low \(HTML.number(it.summary.low1, digits: 1)), \(powerText(it))"
+                + "1 % low \(lowText(it.summary)), \(powerText(it))"
             lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(HTML.escape(line))"
                 + "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"))
         }
@@ -304,7 +309,7 @@ public enum CompareReport {
         out += "<div class=\"chart\"><h3>Median FPS</h3>"
         out += HTML.bars(items.map { it in
             (label: short(it.label), value: it.summary.medianFPS,
-             note: join(baseNote(it), "1 % low \(HTML.number(it.summary.low1, digits: 1))"))
+             note: join(baseNote(it), "1 % low \(lowText(it.summary))"))
         }, unit: "fps")
         out += "</div>\n"
 

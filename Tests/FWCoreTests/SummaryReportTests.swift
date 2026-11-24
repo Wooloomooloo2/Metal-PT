@@ -53,6 +53,14 @@ import Foundation
         #expect(out.contains("needs fwbench run"))
     }
 
+    @Test func mixedFrameTimesShowDashWithHint() {
+        let frames = (0..<500).map { TimedFrame(tMs: 12_000 + Double($0) * 16.67, intervalMs: 16.67, presentDelayMs: 1) }
+        let out = html(bundle(frames: frames, fpsSource: "stderr", warnings: [RunRecorder.mixedFramesWarning]))
+        #expect(out.contains("frame times mixed"))
+        #expect(out.contains(RunRecorder.mixedFramesWarning))
+        #expect(!out.contains("from per-frame times"))
+    }
+
     @Test func warningsAreDeduplicated() {
         let out = html(bundle(warnings: ["stack not detected", "stack not detected"]))
         #expect(out.components(separatedBy: "stack not detected").count == 2)

@@ -18,6 +18,8 @@ public struct RunSummary: Sendable {
     public let p5FPS: Double?
     public let low1: Double?
     public let low01: Double?
+    /// The recorder flagged frames.csv as possibly mixing several processes: lows are not computed.
+    public let lowsMixed: Bool
     public let fpsPerWatt: Double?
     public let powerColumn: String?
     public let notes: [String]
@@ -90,7 +92,8 @@ public struct RunSummary: Sendable {
         // Lows from frames in the steady window.
         var low1: Double?, low01: Double?
         let times = steady.compactMap(elapsed)
-        if let frames = bundle.frames, let first = times.min(), let last = times.max() {
+        lowsMixed = bundle.info.warnings.contains(RunRecorder.mixedFramesWarning)
+        if !lowsMixed, let frames = bundle.frames, let first = times.min(), let last = times.max() {
             let lo = first, hi = last + 1
             let intervals = frames.filter { $0.tMs / 1000 >= lo && $0.tMs / 1000 < hi }
                 .map(\.intervalMs).sorted()

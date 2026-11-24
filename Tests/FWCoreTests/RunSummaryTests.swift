@@ -50,6 +50,20 @@ import Foundation
         #expect(RunSummary(bundle(rows: r)).low1 == nil)
     }
 
+    @Test func mixedFrameTimesHideLows() {
+        let r = rows(60) { _ in ["fps": "60", "fps_app": "game"] }
+        let frames = (0..<1000).map { TimedFrame(tMs: 12_000 + Double($0) * 16.67, intervalMs: 16.67, presentDelayMs: 1) }
+        var b = bundle(rows: r, frames: frames)
+        #expect(!RunSummary(b).lowsMixed)
+        var info = b.info
+        info.warnings = [RunRecorder.mixedFramesWarning]
+        b = RunBundle(url: b.url, info: info, rows: b.rows, frames: b.frames, warnings: info.warnings)
+        let s = RunSummary(b)
+        #expect(s.lowsMixed)
+        #expect(s.low1 == nil && s.low01 == nil)
+        #expect(s.medianFPS == 60)
+    }
+
     @Test func fpsShorterThanWarmupTrimDoesNotCrash() {
         let r = rows(10) { _ in ["fps": "60", "fps_app": "game"] }
         let s = RunSummary(bundle(rows: r))
