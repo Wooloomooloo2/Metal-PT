@@ -67,7 +67,7 @@ enum RecordCommands {
         guard !names.isEmpty else { print("no runs in \(root.path)"); return }
         var rows: [[String]] = [["RUN", "GAME", "STACK", "FPS", "DURATION"]]
         for name in names {
-            guard let bundle = try? RunBundle.load(root.appendingPathComponent(name)) else {
+            guard let bundle = try? RunBundle.load(root.appendingPathComponent(name), frames: false) else {
                 rows.append([name, "?", "?", "?", "unreadable run.json"])
                 continue
             }

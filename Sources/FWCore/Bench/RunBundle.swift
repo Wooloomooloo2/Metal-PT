@@ -105,7 +105,8 @@ public struct RunBundle {
     public let frames: [TimedFrame]?
     public let warnings: [String]
 
-    public static func load(_ url: URL) throws -> RunBundle {
+    /// `frames: false` skips frames.csv (it can be large): for callers that show medians but not the lows.
+    public static func load(_ url: URL, frames loadFrames: Bool = true) throws -> RunBundle {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
         let info = try dec.decode(RunInfo.self, from: Data(contentsOf: url.appendingPathComponent("run.json")))
@@ -120,7 +121,7 @@ public struct RunBundle {
             warnings.append("samples.csv missing")
         }
         var frames: [TimedFrame]?
-        if let text = try? String(contentsOf: url.appendingPathComponent("frames.csv"), encoding: .utf8) {
+        if loadFrames, let text = try? String(contentsOf: url.appendingPathComponent("frames.csv"), encoding: .utf8) {
             frames = CSV.parse(text).compactMap { r in
                 guard let t = r["t_ms"].flatMap(Double.init), let i = r["interval_ms"].flatMap(Double.init),
                       let d = r["present_delay_ms"].flatMap(Double.init) else { return nil }

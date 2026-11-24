@@ -133,7 +133,7 @@ enum CompareCommands {
         for (i, entry) in project.runs.enumerated() {
             let url = CompareProject.bundleURL(entry, runsRoot: runsRoot)
             let mark = i == project.baseline ? "*" : " "
-            if let b = try? RunBundle.load(url) {
+            if let b = try? RunBundle.load(url, frames: false) {
                 let fps = HTML.number(RunSummary(b).medianFPS, digits: 1)
                 print("\(mark)\(i + 1)  \(CompareReport.label(entry, b.info))  \(fps) fps  \(entry.bundle)")
             } else {

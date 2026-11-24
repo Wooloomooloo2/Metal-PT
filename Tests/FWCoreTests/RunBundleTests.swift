@@ -90,6 +90,16 @@ import Foundation
         #expect(rows == [["p": "a", "q": "x,y", "r": "say \"hi\""]])
     }
 
+    @Test func loadCanSkipFrames() throws {
+        let dir = tempDir().appendingPathComponent("x.fwrun")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let w = try RunBundleWriter(directory: dir, info: info())
+        try w.append(frames: [FrameTime(intervalMs: 16, presentDelayMs: 1)], endingAtMs: 1000)
+        try w.finish { _ in }
+        #expect(try RunBundle.load(dir).frames?.count == 1)
+        #expect(try RunBundle.load(dir, frames: false).frames == nil)
+    }
+
     @Test func loadsBundleWithMissingPieces() throws {
         let dir = tempDir().appendingPathComponent("x.fwrun")
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
