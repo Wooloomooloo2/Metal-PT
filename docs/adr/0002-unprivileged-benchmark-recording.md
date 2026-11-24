@@ -25,3 +25,11 @@ temperatures, `log stream` and `lsof` of the user's own processes all work as th
 ## Consequences
 Benchmarking works with no helper installed. Recording stops when the CLI or app exits (no background survival); a
 benchmark run is short and supervised, so this is acceptable. The spec's §3 "Recording runs in the helper" is superseded.
+
+## Amendment (2026-11-24): recording cost
+The spec's target was under 1 % CPU while recording. Measured: about 2.6 % of one core (fwbench about 1.5 %, the
+`/usr/bin/log` reader about 1.1 %, with no HUD traffic; `docs/hardware-baseline.md` E8). The unified-log reader is the
+only unprivileged per-second FPS source, and the rest of the tick is HID/SMC/IOReport sampling that has already been
+trimmed (R9: no `--level debug`; R10: one HID client; R13: only the "PMU tdie*" sensors). Accepted because the cost
+exists only while a run is recording, and is about 0.16 % of the 16-core machine. Revisit if the per-tick cost can drop
+further.
