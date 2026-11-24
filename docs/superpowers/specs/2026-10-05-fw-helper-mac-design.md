@@ -1,3 +1,5 @@
+> Renamed to Metal-PT, see ADR 0003 (`docs/adr/0003-metal-pt-rename-and-split.md`).
+
 # fw-helper-mac — design
 
 Date: 2026-10-05. Status: approved in brainstorming, awaiting written-spec review.

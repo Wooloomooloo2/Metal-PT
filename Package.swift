@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "fw-helper-mac",
+    name: "metal-pt",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "FWCore", targets: ["FWCore"]),
-        .executable(name: "fwprobe", targets: ["fwprobe"]),
-        .executable(name: "fwbench", targets: ["fwbench"]),
+        .library(name: "MPTCore", targets: ["MPTCore"]),
+        .executable(name: "mptprobe", targets: ["mptprobe"]),
+        .executable(name: "mpt", targets: ["mpt"]),
     ],
     targets: [
         .target(
@@ -18,9 +18,9 @@ let package = Package(
                 .linkedLibrary("IOReport"),
             ]
         ),
-        .target(name: "FWCore", dependencies: ["CMacPrivate"]),
-        .executableTarget(name: "fwprobe", dependencies: ["FWCore"]),
-        .executableTarget(name: "fwbench", dependencies: ["FWCore"]),
-        .testTarget(name: "FWCoreTests", dependencies: ["FWCore"]),
+        .target(name: "MPTCore", dependencies: ["CMacPrivate"]),
+        .executableTarget(name: "mptprobe", dependencies: ["MPTCore"]),
+        .executableTarget(name: "mpt", dependencies: ["MPTCore"]),
+        .testTarget(name: "MPTCoreTests", dependencies: ["MPTCore"]),
     ]
 )

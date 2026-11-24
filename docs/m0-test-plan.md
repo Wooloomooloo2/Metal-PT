@@ -1,7 +1,7 @@
 # M0 test plan — hardware baseline
 
 Machine: MacBook Pro 16" M4 Max (Mac16,5), macOS 26.6. Build first: `swift build`.
-`P=.build/debug/fwprobe`. Every write experiment restores on exit; if a restore ever reports
+`P=.build/debug/mptprobe`. Every write experiment restores on exit; if a restore ever reports
 `RESTORE FAILED`, run the printed command before doing anything else.
 Record every result in `docs/hardware-baseline.md` with the experiment ID and date.
 Never press Ctrl-Z during a write experiment (it suspends the process while charging or the fans are held); use Ctrl-C.
@@ -27,7 +27,7 @@ CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on
    `CH0C`. Record the byte pattern that worked and the one(s) that did not.
 4. **Interrupt check:** repeat the working command and press Ctrl-C at ~30 s. Expect the `restored` line, and
    `$P smc read <KEY>` shows the original bytes. This checks that an interrupted experiment restores the key.
-   Repeat, and from another terminal run `sudo kill $(pgrep -x fwprobe)` (SIGTERM). Expect the restore lines.
+   Repeat, and from another terminal run `sudo kill $(pgrep -x mptprobe)` (SIGTERM). Expect the restore lines.
 
 ## E3 — Adapter inhibit (for calibration; on AC)
 CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on this machine (measured 2026-10-07).
@@ -43,8 +43,8 @@ CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on
    Md/Tg are rewritten by the system during the run.
 4. After the release, watch `$P smc watch --interval 2 F0Md F0Tg F0Ac F1Ac Ftst` for 60 s: RPM returns to idle.
 5. **Interrupt check:** repeat step 3 and press Ctrl-C at ~10 s; expect the release lines.
-   Repeat, and from another terminal run `sudo kill $(pgrep -x fwprobe)` (SIGTERM). Expect the restore lines.
-6. **Crash check:** repeat step 3, then from another terminal `sudo kill -9 $(pgrep fwprobe)`. Watch for 2
+   Repeat, and from another terminal run `sudo kill $(pgrep -x mptprobe)` (SIGTERM). Expect the restore lines.
+6. **Crash check:** repeat step 3, then from another terminal `sudo kill -9 $(pgrep mptprobe)`. Watch for 2
    minutes: does macOS reclaim the fans on its own? Then `sudo $P fan-release` and confirm. This decides
    how hard the helper's startup release has to work.
 7. What does `00` mean? Run this in three terminals:
@@ -92,16 +92,16 @@ CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on
    `defaults delete -g MetalForceHudEnabled` afterwards to undo) and with a capture from only the game's process:
    `log stream --process <pid> --level debug`. Record what was tried even if it failed.
 
-## B1 — fwbench in a real game (pending, needs the user)
+## B1 — mpt in a real game (pending, needs the user)
 Needs a Wine game that uses Metal (e.g. Horizon Zero Dawn Remastered) in **Protium** and in **CrossOver**.
-`F=.build/debug/fwbench`. Run each runtime in turn; record in `docs/hardware-baseline.md` E8 (tag `[M]`, date).
+`F=.build/debug/mpt`. Run each runtime in turn; record in `docs/hardware-baseline.md` E8 (tag `[M]`, date).
 1. Terminal 1: `$F hud on`. Leave it. Quit the launcher and the game completely, then relaunch the launcher from the
    Dock/Finder (it must start after `hud on`), then the game. Reach a repeatable scene.
 2. Terminal 2: `$F record --seconds 120 --warmup 15 --label "<runtime> <graphics>, <settings>"`. Watch the status line.
    - Do HUD lines arrive (an fps number appears, not `no Metal HUD lines yet`)? If not, note whether the launcher or the game was started after `hud on`.
    - From which process/PID and app name (`fps_app` in `samples.csv`)? Several Metal processes may exist (launcher, Steam, game); is the busiest one the game?
    - Stack detected: `$F stack <pid>` and `$F summary <run>`. Right runtime, Wine arch, translator, graphics layer (DXMT / D3DMetal)?
-   - Cost: in a third terminal during the run, `ps -o %cpu,time -p $(pgrep -x fwbench)` and the same for `/usr/bin/log`; take cumulative time over 60 s. Record fwbench % and log %.
+   - Cost: in a third terminal during the run, `ps -o %cpu,time -p $(pgrep -x mpt)` and the same for `/usr/bin/log`; take cumulative time over 60 s. Record mpt % and log %.
 3. `$F run --seconds 120 --warmup 15 --label "<...> run" -- <command>`. Finding the runtime's command line for the game
    is part of the test: try `ps -o command -p <game pid>` while the game runs under the launcher (or the runtime's `wine`
    binary inside its app bundle, with the game's exe and `WINEPREFIX`), and a Steam launch with `%command%` options if that is how it starts.
