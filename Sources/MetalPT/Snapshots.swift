@@ -517,26 +517,3 @@ private struct NoLaunchctl: LaunchctlRunning {
     func setenv(_ name: String, _ value: String) throws {}
     func unsetenv(_ name: String) throws {}
 }
-
-/// `UserDefaults` that keeps values in memory only (snapshot fixtures). Reads and writes that `@AppStorage` and
-/// `AppModel` use are overridden; the instance is never synchronised to a domain.
-final class MemoryDefaults: UserDefaults, @unchecked Sendable {
-    private var values: [String: Any] = [:]
-
-    init() { super.init(suiteName: "metal-pt.snapshots.memory")! }
-
-    override func object(forKey defaultName: String) -> Any? { values[defaultName] }
-    override func set(_ value: Any?, forKey defaultName: String) {
-        willChangeValue(forKey: defaultName)
-        values[defaultName] = value
-        didChangeValue(forKey: defaultName)
-    }
-    override func removeObject(forKey defaultName: String) { set(nil, forKey: defaultName) }
-    override func string(forKey defaultName: String) -> String? { values[defaultName] as? String }
-    override func bool(forKey defaultName: String) -> Bool { (values[defaultName] as? Bool) ?? false }
-    override func double(forKey defaultName: String) -> Double { (values[defaultName] as? Double) ?? 0 }
-    override func integer(forKey defaultName: String) -> Int { (values[defaultName] as? Int) ?? 0 }
-    override func set(_ value: Double, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
-    override func set(_ value: Bool, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
-    override func set(_ value: Int, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
-}

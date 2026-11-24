@@ -23,26 +23,17 @@ import Testing
         let model: AppModel
         let defaults: UserDefaults
         let launchctl: Launchctl
-        let suite: String
-        init(model: AppModel, defaults: UserDefaults, launchctl: Launchctl, suite: String) {
-            self.model = model; self.defaults = defaults; self.launchctl = launchctl; self.suite = suite
-        }
-        deinit {
-            UserDefaults().removePersistentDomain(forName: suite)
-            CFPreferencesAppSynchronize(suite as CFString)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suite).plist"))
+        init(model: AppModel, defaults: UserDefaults, launchctl: Launchctl) {
+            self.model = model; self.defaults = defaults; self.launchctl = launchctl
         }
     }
 
     private func make(env: [String: String] = [:]) -> Made {
-        let suite = "metal-pt.tests.settings.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
+        let defaults = MemoryDefaults()   // in memory: no plist in ~/Library/Preferences
         let launchctl = Launchctl()
         let model = AppModel(hub: TelemetryHub(dependencies: .inert), fpsLogging: FPSLogging(launchctl: launchctl),
                              live: true, usesAppKit: false, defaults: defaults, env: env)
-        return Made(model: model, defaults: defaults, launchctl: launchctl, suite: suite)
+        return Made(model: model, defaults: defaults, launchctl: launchctl)
     }
 
     @Test func hotkeyChangePersistsAndResets() {

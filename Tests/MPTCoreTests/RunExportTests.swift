@@ -270,6 +270,24 @@ import Testing
         #expect(m.app == MetalPTVersion.current)
     }
 
+    @Test func nonUTF8SamplesGiveAClearError() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle()
+        try Data([0x65, 0x6C, 0x61, 0xFF, 0xFE, 0x0A]).write(to: bundle.url.appendingPathComponent("samples.csv"))
+        #expect(throws: RunExport.Error.unreadableSamples("not UTF-8 text")) {
+            try RunExport.write(try RunBundle.load(bundle.url), includeNotes: false,
+                                to: root.appendingPathComponent("exports"))
+        }
+        let e = RunExport.Error.unreadableSamples("not UTF-8 text")
+        #expect(e.localizedDescription.contains("could not be read"))
+        #expect(!e.localizedDescription.contains("no samples.csv"))
+        try FileManager.default.removeItem(at: bundle.url.appendingPathComponent("samples.csv"))
+        #expect(throws: RunExport.Error.missingSamples) {
+            try RunExport.write(try RunBundle.load(bundle.url), includeNotes: false,
+                                to: root.appendingPathComponent("exports"))
+        }
+    }
+
     @Test func zipFailedCarriesDittoMessage() {
         let e = RunExport.Error.zipFailed(status: 1, message: "ditto: No space left on device")
         #expect(e.localizedDescription.contains("No space left on device"))

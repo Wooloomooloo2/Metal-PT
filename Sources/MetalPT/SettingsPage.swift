@@ -298,6 +298,18 @@ final class LoginItem: ObservableObject {
         status = SMAppService.mainApp.status
     }
 
+    /// For the launch log line: the login item's state without registering anything.
+    static func describeAtLaunch() -> String {
+        guard Bundle.main.bundleIdentifier != nil else { return "unavailable (unbundled)" }
+        switch SMAppService.mainApp.status {
+        case .notRegistered: return "not registered"
+        case .enabled: return "enabled"
+        case .requiresApproval: return "requires approval"
+        case .notFound: return "not found"
+        @unknown default: return "unknown"
+        }
+    }
+
     func set(_ on: Bool) {
         guard available else { return }
         do {

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SystemConfiguration
 @testable import MPTCore
 
 @Suite struct RunBundleTests {
@@ -175,12 +176,27 @@ import Foundation
         #expect(Privacy.scrubPaths("D:\\Users\\Bob\\x and c:\\users\\al\\y") == "D:\\Users\\~\\x and c:\\Users\\~\\y")
     }
 
+    @Test func localHostNamesNeedNoNetwork() {
+        let t = Date()
+        let names = Privacy.localHostNames()
+        #expect(!names.isEmpty)
+        #expect(Date().timeIntervalSince(t) < 1)
+        // The Bonjour name ("Marks-MacBook-Pro") is among the scrub candidates.
+        if let local = SCDynamicStoreCopyLocalHostName(nil) as String?, local.count >= 4 {
+            #expect(Privacy.hostVariants(of: names).contains(local))
+        }
+    }
+
     @Test func unixPathsIntoWinePrefixesAreScrubbed() {
         #expect(Privacy.scrubPaths("/Users/bob/.wine/drive_c/users/bob/AppData/x.log")
                 == "~/.wine/drive_c/users/~/AppData/x.log")
         #expect(Privacy.scrubPaths("/users/bob/y") == "~/y")
         #expect(Privacy.scrubPaths("pfx/drive_c/Users/crossover/Desktop") == "pfx/drive_c/Users/~/Desktop")
         #expect(Privacy.scrubPaths("/Applications/x/usersguide") == "/Applications/x/usersguide")
+        // Relative paths into a prefix (no leading slash), at the start and after a space.
+        #expect(Privacy.scrubPaths("drive_c/users/bob/AppData/x.log") == "drive_c/users/~/AppData/x.log")
+        #expect(Privacy.scrubPaths("saved to drive_c/Users/Bob") == "saved to drive_c/Users/~")
+        #expect(Privacy.scrubPaths("xdrive_c/users/bob") == "xdrive_c/users/bob")
     }
 
     @Test func samplesCSVScrubsFpsApp() throws {

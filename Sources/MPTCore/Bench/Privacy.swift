@@ -1,21 +1,35 @@
 import Foundation
+import SystemConfiguration
 
 public enum Privacy {
     /// `/Users/<name>` (any case) — not the `users/<name>` folder inside a Wine prefix, which `winePrefixRegex` keeps.
     private static let homeRegex = try! NSRegularExpression(pattern: "(?<!drive_c)/users/[^/]+",
                                                             options: .caseInsensitive)
-    /// Unix paths into a Wine prefix: `…/drive_c/users/<name>` becomes `…/drive_c/users/~`.
-    private static let winePrefixRegex = try! NSRegularExpression(pattern: "(/drive_c/users/)[^/]+",
+    /// Unix paths into a Wine prefix: `…/drive_c/users/<name>` (or a relative `drive_c/users/<name>`) becomes
+    /// `…/drive_c/users/~`.
+    private static let winePrefixRegex = try! NSRegularExpression(pattern: #"((?<![A-Za-z0-9_])drive_c/users/)[^/]+"#,
                                                                   options: .caseInsensitive)
     private static let wineRegex = try! NSRegularExpression(pattern: #"([A-Za-z]):\\[Uu][Ss][Ee][Rr][Ss]\\[^\\]+"#)
     private static let stoplist: Set<String> = ["localhost", "mac", "macbook"]
 
-    /// This machine's host-name variants, computed once (hostName can reverse-DNS and stall).
-    static let defaultHosts: [String] = {
-        var raw = [ProcessInfo.processInfo.hostName]
-        if let n = Host.current().localizedName { raw.append(n) }
-        return hostVariants(of: raw)
-    }()
+    /// This machine's host-name variants, computed once. Read locally (no DNS): `ProcessInfo.hostName` and
+    /// `Host.current()` resolve the name through NSHost, which in the bundled app waits on mDNS / Local Network
+    /// privacy and stalled a recording start (and quit) for over a minute.
+    static let defaultHosts: [String] = hostVariants(of: localHostNames())
+
+    /// `gethostname()`, the computer name ("Mark's MacBook Pro") and the Bonjour local host name
+    /// ("Marks-MacBook-Pro"); none of them touches the network.
+    static func localHostNames() -> [String] {
+        var raw: [String] = []
+        var buf = [CChar](repeating: 0, count: 256)
+        if gethostname(&buf, buf.count) == 0 {
+            let n = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            if !n.isEmpty { raw.append(n) }
+        }
+        if let n = SCDynamicStoreCopyComputerName(nil, nil) as String? { raw.append(n) }
+        if let n = SCDynamicStoreCopyLocalHostName(nil) as String? { raw.append(n) }
+        return raw
+    }
 
     /// Expands names into scrub candidates: minus ".local", first DNS label, and the LocalHostName-style
     /// form (apostrophes dropped, spaces to "-"). Names under 4 chars or on the stoplist are dropped.

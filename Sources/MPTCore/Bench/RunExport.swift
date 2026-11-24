@@ -42,6 +42,8 @@ public enum RunExport {
     public enum Error: Swift.Error, Equatable, LocalizedError {
         case tooLarge(bytes: Int)
         case missingSamples
+        /// samples.csv exists but is not UTF-8 text (or cannot be read).
+        case unreadableSamples(String)
         case zipFailed(status: Int32, message: String)
 
         public var errorDescription: String? {
@@ -50,6 +52,7 @@ public enum RunExport {
                 "This run is too large to submit (\(RunExport.sizeText(bytes)); the limit is 25 MB). "
                     + "Record a shorter run."
             case .missingSamples: "This run has no samples.csv, so there is nothing to send."
+            case .unreadableSamples(let why): "This run's samples.csv could not be read (\(why)), so it cannot be sent."
             case .zipFailed(let status, let message):
                 "Could not make the zip file (ditto exited with status \(status)"
                     + (message.isEmpty ? ")." : ": \(message)).")
@@ -140,7 +143,14 @@ public enum RunExport {
     /// scrubbed again; frames.csv re-written from the rows whose three columns are numbers.
     private static func stageCSVs(_ bundle: RunBundle, hosts: [String]?) throws -> StagedCSVs {
         let samplesURL = bundle.url.appendingPathComponent("samples.csv")
-        guard let text = try? String(contentsOf: samplesURL, encoding: .utf8) else { throw Error.missingSamples }
+        guard FileManager.default.fileExists(atPath: samplesURL.path) else { throw Error.missingSamples }
+        let raw: Data
+        do {
+            raw = try Data(contentsOf: samplesURL)
+        } catch {
+            throw Error.unreadableSamples(error.localizedDescription)
+        }
+        guard let text = String(data: raw, encoding: .utf8) else { throw Error.unreadableSamples("not UTF-8 text") }
         let records = CSV.records(text)
         let header = records.first ?? []
         var memo: [String: String] = [:]

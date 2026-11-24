@@ -1,63 +1,105 @@
 # Metal-PT
 
-**Metal Performance Telemetry** for Apple Silicon Macs. Two free, open-source apps are planned from this repo
-(https://github.com/Wooloomooloo2/Metal-PT):
+**Metal Performance Telemetry** for Apple Silicon Macs: a free, open-source (GPL-3.0) app for people playing Windows
+games on a Mac through CrossOver, Protium, Whisky and friends (with DXMT, D3DMetal, DXVK...).
 
-- **Metal-PT**: for people playing Windows games on Macs (CrossOver, Protium, Whisky, with DXMT, D3DMetal, DXVK...).
-  Live performance, hotkey-driven run recording, summaries and comparisons, and a submission file for a future
-  public performance database. Needs no root and no helper.
-- **Metal-PT Helper**: battery charge limiting and fan control via a root helper. Not yet built.
+- **Live**: FPS, frame times, CPU/GPU load, power, temperatures and fans for the game you are playing, in the window,
+  the menu bar or a small in-game overlay. Metal-PT also shows which stack the game runs on (runtime, translator,
+  graphics layer).
+- **Record** a run with a hotkey, then get a summary (average FPS, lows, steady-state power and temperatures).
+- **Compare** runs: CrossOver vs Protium, DXMT vs D3DMetal, one in-game setting vs another.
+- **Export** a run as one file for a future public performance database. You see exactly what it contains first.
 
-Today the repo holds the shared core (`MPTCore`), the `mpt` command-line recorder and `mptprobe`, a hardware probe
-for development. The SwiftUI app is in progress. Design: `docs/superpowers/specs/2026-11-24-metal-pt-design.md`.
+Metal-PT runs as you. It never needs administrator rights or a helper, and it never changes fan or battery settings.
+Repo: https://github.com/Wooloomooloo2/Metal-PT. Needs macOS 15 or later on an Apple Silicon Mac. Built and tested on
+a MacBook Pro 16" M4 Max (Mac16,5), macOS 26.
 
-> **Status: M0 — hardware baseline.** Nothing user-facing yet. `mptprobe` is a developer tool for
-> measuring what this hardware exposes. See `docs/superpowers/specs/` for the design.
+## Install
 
-Built and tested on a MacBook Pro 16" M4 Max (Mac16,5), macOS 26.6.
+1. Download `Metal-PT-<version>.zip` from the repo's
+   [GitHub Releases](https://github.com/Wooloomooloo2/Metal-PT/releases) page.
+2. Unzip it (double-click) and move **Metal-PT.app** to your **Applications** folder.
+3. Open it. The first time, macOS refuses ("Apple could not verify Metal-PT..."). Click **Done**, then open
+   **System Settings → Privacy & Security**, scroll to the message about Metal-PT and click **Open Anyway**, then
+   confirm. You only do this once per version.
 
-## What Apple Silicon does not allow
+Why: Metal-PT is signed ad hoc, not with an Apple Developer ID, because the author has no Apple Developer Program
+membership. macOS therefore cannot check who made it and asks you to approve it yourself. The source is all here;
+you can build it yourself instead (below).
 
-There is no TDP / power-limit interface and no undervolting on Apple Silicon. Metal-PT will not
-pretend otherwise. Performance modes are macOS's Low Power / Automatic / High Power modes.
+## Using it
 
-## Build
+- **FPS logging** (Settings, or the menu bar): FPS comes from Apple's Metal HUD. Turning FPS logging on sets the
+  HUD variables for apps you launch from now on. Then **quit and relaunch the game, and its launcher** (CrossOver,
+  Protium...) so they pick the variables up. The HUD is drawn in the game while FPS logging is on. Turning it off,
+  or quitting Metal-PT, removes the variables again; games already running keep the HUD until they restart.
+- **⌃⇧F6** starts and stops a recording. It works without a game detected (telemetry only); FPS fills in once a
+  game with FPS logging appears. A notification says when the run is saved.
+- **⌃⇧F7** shows or hides the in-game overlay. Its style, corner and opacity are in Settings. Both hotkeys can
+  be changed in Settings; Metal-PT needs no Accessibility permission.
+- **Runs**: every recording, newest first, with its summary. Add in-game settings and notes, show it in Finder,
+  or move it to the Trash.
+- **Compare**: tick runs in Runs and choose "Compare selected…", or add runs to a project in Compare. Pick a
+  baseline; the report shows each run against it.
+- **Export**: on a run, "Submit…" shows exactly what would be sent, then "Export file…" writes one
+  `<run>.mptrun.zip` to the `exports` folder. The website that will take these files does not exist yet.
+- Files live in `~/Documents/Metal-PT/` (`runs/`, `projects/`, `exports/`); Settings can move the data folder.
+  Metal-PT can open at login (Settings).
+
+## Privacy
+
+Nothing leaves your Mac unless you send it; there is no network code and no analytics. An export contains the run's
+`run.json` (game executable and title, the stack, your Mac's model, chip, memory and macOS version, power mode,
+display, the run's settings and label, warnings), `samples.csv` (one row per second of telemetry), `frames.csv` when
+per-frame times were recorded, and a `manifest.json` listing those files with their sizes and checksums. Your notes
+are left out unless you tick "Also send my notes". Before export Metal-PT scrubs again: home folder paths
+(`/Users/<name>`, Wine's `C:\Users\<name>` and `drive_c/users/<name>`) become `~`, and this Mac's names (its
+computer name and host name) become `<host>`. The summary page is not exported. No user name, home folder, computer
+name or serial number is included.
+
+## Build from source
+
+Needs Xcode 16 or later (Swift 6).
 
     swift build
     swift test
-    .build/debug/mptprobe            # usage
+    scripts/make-app.sh metal-pt        # build/Metal-PT.app and build/Metal-PT-<version>.zip (signed ad hoc)
+
+`make-app.sh metal-pt --sign "IDENTITY"` signs with a certificate of yours instead. The version comes from the
+`VERSION` file, which must equal `MetalPTVersion.current` (the script and `swift test` check this). The icon is
+drawn by `scripts/make-icon.swift`. `.build/debug/MetalPT` runs the app unbundled for development (no
+notifications or login item).
+
+## What Apple Silicon does not allow
+
+There is no TDP / power-limit interface and no undervolting on Apple Silicon. Metal-PT will not pretend otherwise.
+Performance modes are macOS's Low Power / Automatic / High Power modes.
+
+## Metal-PT Helper (coming later)
+
+A second app, **Metal-PT Helper**, will add battery charge limiting and fan control through a root helper. It is not
+built yet. `mptprobe` (`.build/debug/mptprobe`) is the developer tool used to measure what this hardware exposes;
+see `docs/hardware-baseline.md`.
 
 ## Command-line recorder (mpt)
 
-`mpt` records a game run (FPS, frame times, power, temperatures, fans, the Wine/Metal stack in use) and compares
-runs: CrossOver vs Protium, DXMT vs D3DMetal, one in-game setting vs another. It runs as you, never as root, and needs
-no helper. Details: `docs/adr/0002-unprivileged-benchmark-recording.md`.
-
-Five-minute workflow:
+`mpt` (`.build/debug/mpt` after `swift build`) records and compares runs from Terminal, writing the same run folders
+as the app. It runs as you and needs no helper. Details: `docs/adr/0002-unprivileged-benchmark-recording.md`.
 
     F=.build/debug/mpt
     $F hud on                      # terminal 1: leave running; Ctrl-C unsets the HUD variables
-    # relaunch the launcher / game so it picks the variables up, get to a repeatable scene
-    $F record --warmup 15 --seconds 120 --label "CrossOver DXMT" --settings "High, 1440p"   # terminal 2;
-                                   # writes summary.html at the end
+    # relaunch the launcher / game, get to a repeatable scene, then in terminal 2:
+    $F record --warmup 15 --seconds 120 --label "CrossOver DXMT" --settings "High, 1440p"
     $F ls                          # run names
-    $F summary <run> --open        # open the summary
+    $F summary <run> --open
     $F compare hzd add <run1> <run2>
     $F compare hzd report --open
 
-`$F run --seconds 120 -- <command…>` launches the game itself with the HUD variables set and captures per-frame
-times from its stderr, which adds 1 % / 0.1 % lows; it also writes summary.html at the end. Both `record` and `run`
-take `--settings TEXT` (in-game settings) and `--notes TEXT`; the main display's size and refresh rate are recorded
-too. `--warmup` must be shorter than `--seconds`. `$F ls` lists runs; `$F` alone prints all commands.
+`$F run --seconds 120 -- <command…>` launches the game itself with the HUD variables set and also captures
+per-frame times (1 % / 0.1 % lows). `$F` alone prints every command. Runs go to `$MPT_DATA_ROOT` (default
+`~/Documents/Metal-PT`) `/runs/`; format: `docs/run-bundle-format.md`. Recording costs about 2.6 % of one core
+(`docs/hardware-baseline.md`).
 
-- Files: runs in ``$MPT_DATA_ROOT` (default `~/Documents/Metal-PT`) `/runs/<UTC timestamp>-<game>.mptrun/`, compare projects in
-  `.../projects/`. Format: `docs/run-bundle-format.md`. No user name, home path or host name is written.
-- Cost (measured, `docs/hardware-baseline.md`): about 2.6 % of one core while recording (mpt about 1.5 %, `log` about 1.1 %;
-  measured with no HUD traffic).
-- Limits: FPS comes from Apple's Metal HUD, which is drawn on screen while `hud on` is active; no HUD, no FPS (telemetry still records).
-  Per-frame lows exist only for runs started with `mpt run`. `gpu_w` is IOReport and may under-read; use the
-  SMC power columns for load. Metal games only; the SMC columns are measured on one Mac model.
+## Licence
 
-## License
-
-GPL-3.0.
+GPL-3.0. See `LICENSE`.

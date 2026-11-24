@@ -90,7 +90,7 @@ final class HotkeyRecorder: ObservableObject {
                 self.stop()
             })
         for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stop() }
             })
         }

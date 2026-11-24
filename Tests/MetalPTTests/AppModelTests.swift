@@ -61,13 +61,11 @@ private final class Fixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("mptapp-\(UUID().uuidString)")
     let launchctl = FakeLaunchctl()
     let notifier = FakeNotifier()
-    let defaults: UserDefaults
-    let suite = "metal-pt.tests.\(UUID().uuidString)"
+    let defaults: UserDefaults = MemoryDefaults()   // in memory: no plist in ~/Library/Preferences
     let hub: TelemetryHub
     let model: AppModel
 
     init(fpsLogging: Bool = false) {
-        defaults = UserDefaults(suiteName: suite)!
         defaults.set(fpsLogging, forKey: SettingsKey.fpsLogging)
         let deps = TelemetryHub.Dependencies(
             makeSampler: { CountingSampler() },
@@ -92,7 +90,6 @@ private final class Fixture {
 
     deinit {
         try? FileManager.default.removeItem(at: root)
-        UserDefaults().removePersistentDomain(forName: suite)
     }
 
     var hudHolds: Int { hub.holdCountForTesting(.hud) }

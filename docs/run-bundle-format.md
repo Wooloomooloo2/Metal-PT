@@ -161,7 +161,7 @@ other files. The zip is made with `ditto -c -k --norsrc --noextattr --noqtn --no
 
 ```json
 {
-  "app" : "0.2.0-dev",
+  "app" : "0.2.0",
   "files" : [
     { "bytes" : 196712, "path" : "frames.csv", "sha256" : "<64 lowercase hex>" },
     { "bytes" : 1180, "path" : "run.json", "sha256" : "…" },

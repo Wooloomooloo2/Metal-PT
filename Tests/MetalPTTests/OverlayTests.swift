@@ -95,9 +95,8 @@ import Testing
         var deps = TelemetryHub.Dependencies.inert
         deps.scheduler = NoScheduler()
         let hub = TelemetryHub(dependencies: deps)
-        let suite = "metal-pt.tests.overlay.\(UUID().uuidString)"
         let model = AppModel(hub: hub, fpsLogging: FPSLogging(launchctl: NoLaunchctl()), live: true,
-                             usesAppKit: false, defaults: UserDefaults(suiteName: suite)!, env: [:])
+                             usesAppKit: false, defaults: MemoryDefaults(), env: [:])
         return (model, hub)
     }
 

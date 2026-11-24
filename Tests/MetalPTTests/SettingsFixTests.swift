@@ -151,14 +151,7 @@ import MPTCore
     }
 
     @Test func refusedWhileRecording() {
-        let suite = "metal-pt.tests.datafolder.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer {
-            UserDefaults().removePersistentDomain(forName: suite)
-            CFPreferencesAppSynchronize(suite as CFString)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suite).plist"))
-        }
+        let defaults = MemoryDefaults()
         let model = AppModel(hub: TelemetryHub(dependencies: .inert), fpsLogging: FPSLogging(launchctl: NoLaunchctl()),
                              live: true, usesAppKit: false, defaults: defaults, env: [:])
         model.showFixture(recordState: .recording, fpsLoggingOn: false, recentRuns: [])

@@ -1,5 +1,6 @@
 import AppKit
 import MPTApp
+import MPTCore
 import SwiftUI
 
 /// Process entry: refuses root, handles `--render-snapshots DIR`, else runs the app.
@@ -68,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let bundle = Bundle.main.bundleIdentifier ?? "none (unbundled executable)"
+        FileHandle.standardError.write(Data(("Metal-PT: launched \(MetalPTVersion.current); bundle \(bundle); "
+            + "login item \(LoginItem.describeAtLaunch())\n").utf8))
         model.launch()
         // SIGINT (Ctrl-C under `swift run`), SIGTERM and SIGHUP (terminal closed) quit through `terminate`, so the
         // quit path runs (variables handed back, recording finished).

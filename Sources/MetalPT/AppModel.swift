@@ -29,6 +29,8 @@ enum SettingsKey {
 @MainActor
 final class AppModel: ObservableObject {
     static let appVersion = MetalPTVersion.current
+    #if DEBUG
+    // Debug builds only (compiled out of release builds), and only with `MPT_DEBUG=1`.
     /// Dev/test only, honoured when `MPT_DEBUG=1`: a distributed notification with this name toggles recording
     /// (the Carbon hotkey cannot be pressed from a script).
     static let debugToggleRecording = "io.github.wooloomooloo2.metal-pt.debug.toggleRecording"
@@ -44,6 +46,7 @@ final class AppModel: ObservableObject {
     /// Dev/test only, as `debugToggleRecording`: turns FPS logging on (object "1") or off (anything else) through
     /// the same path as the Settings toggle. `MPT_DEBUG_PAGE=settings` opens Settings at launch.
     static let debugSetFPSLogging = "io.github.wooloomooloo2.metal-pt.debug.setFPSLogging"
+    #endif
 
     enum RecordState: Equatable {
         case idle
@@ -146,8 +149,14 @@ final class AppModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// `MPT_DEBUG=1`: extra logging (and the debug notifications).
-    var debugLogging: Bool { env["MPT_DEBUG"] == "1" }
+    /// `MPT_DEBUG=1` in a debug build: extra logging (and the debug notifications). Always false in release builds.
+    var debugLogging: Bool {
+        #if DEBUG
+        env["MPT_DEBUG"] == "1"
+        #else
+        false
+        #endif
+    }
 
     // MARK: - Settings
 
@@ -238,7 +247,8 @@ final class AppModel: ObservableObject {
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
         registerHotkeys()
-        if usesAppKit, env["MPT_DEBUG"] == "1" {
+        #if DEBUG
+        if usesAppKit, debugLogging {
             let center = DistributedNotificationCenter.default()
             debugObservers.append(center.addObserver(
                 forName: Notification.Name(Self.debugToggleRecording), object: nil, queue: .main) { [weak self] _ in
@@ -278,6 +288,7 @@ final class AppModel: ObservableObject {
             Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay), "
                      + "\(Self.debugEditRun), \(Self.debugCompareBaseline), \(Self.debugSetFPSLogging)")
         }
+        #endif
     }
 
     /// At quit, once: hand the HUD variables back first (quick, and must happen even if the stop below hangs),
@@ -439,16 +450,19 @@ final class AppModel: ObservableObject {
         guard usesAppKit else { return }
         if overlayOn {
             let controller = overlay ?? OverlayController(model: self, defaults: defaults)
-            if overlay == nil, env["MPT_DEBUG"] == "1" {
+            #if DEBUG
+            if overlay == nil, debugLogging {
                 controller.onDebugEvent = { Self.log("debug: \($0)") }
             }
+            #endif
             overlay = controller
             controller.show()
         } else {
             overlay?.hide()
         }
         Self.log("overlay \(overlayOn ? "on" : "off"); \(overlay?.describe() ?? "no panel")")
-        if overlayOn, env["MPT_DEBUG"] == "1" {
+        #if DEBUG
+        if overlayOn, debugLogging {
             // Once laid out and ordered in: the state a user would see.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 MainActor.assumeIsolated {
@@ -457,8 +471,10 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+        #endif
     }
 
+    #if DEBUG
     private func debugEditNewestRun(notes: String) {
         guard let run = runs.entries.first else { Self.log("debug: no run to edit"); return }
         Task {
@@ -482,6 +498,7 @@ final class AppModel: ObservableObject {
             }
         }
     }
+    #endif
 
     private func postStarted() {
         let status = hub.recording
