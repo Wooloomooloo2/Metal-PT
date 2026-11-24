@@ -234,7 +234,8 @@ private struct LimitedByChip: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 5)
                 .background(Capsule().fill(Color.primary.opacity(0.05)))
-                .help("How the last 30 seconds were classified, by the same rules as a run's \"What held it back\".")
+                .help("How the last 30 seconds were classified (last 30 s, includes loading screens), by the same rules "
+                    + "as a run's \"What held it back\".")
             }
         }
         .task { topMHz = await Task.detached(priority: .utility) { GPUTopClock.mhz }.value }

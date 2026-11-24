@@ -343,4 +343,28 @@ import MPTCore
         _ = try index.summary(dir: dir.lastPathComponent)
         #expect(try String(contentsOf: file, encoding: .utf8) == current)
     }
+
+    @Test func olderSummaryIsKeptWhenItCannotBeRewritten() throws {
+        let root = tempRoot()
+        let dir = try makeRun(in: root, game: "ro.exe", start: 1_800_000_000)
+        let file = dir.appendingPathComponent(SummaryReport.fileName)
+        let old = "<html><head><meta name=\"mpt-run\" content=\"x\"></head>OLD</html>"
+        try old.write(to: file, atomically: true, encoding: .utf8)
+        let fm = FileManager.default
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)   // read-only run folder
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+            try? fm.removeItem(at: root)
+        }
+        let index = RunIndex(root: root)
+        let url = try index.summary(dir: dir.lastPathComponent)
+        #expect(url.standardizedFileURL.path == file.standardizedFileURL.path)
+        #expect(try String(contentsOf: file, encoding: .utf8) == old)
+
+        // No summary at all and none can be written: still an error.
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+        try fm.removeItem(at: file)
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        #expect(throws: (any Error).self) { try index.summary(dir: dir.lastPathComponent) }
+    }
 }

@@ -148,15 +148,25 @@ public final class RunIndex: @unchecked Sendable {
     }
 
     /// Returns `<dir>/summary.html`, writing it first if missing or older than `SummaryReport.version` (so a run
-    /// recorded before a report change shows the new report), under the index lock (so it never races an edit).
+    /// recorded before a report change shows the new report; an older one that cannot be rewritten is returned as it
+    /// is), under the index lock (so it never races an edit).
     /// Refuses a run in progress (a summary of half a run would stay behind).
     public func summary(dir: String) throws -> URL {
         try lock.withLock {
             guard !inProgressLocked(dir, finished: nil) else { throw RunIndexError.inProgress }
             let url = root.appendingPathComponent(dir)
             let file = url.appendingPathComponent(SummaryReport.fileName)
-            if let v = SummaryReport.fileVersion(at: file), v >= SummaryReport.version { return file }
-            return try SummaryReport.write(bundleAt: url)
+            let existing = SummaryReport.fileVersion(at: file)
+            if let v = existing, v >= SummaryReport.version { return file }
+            do {
+                return try SummaryReport.write(bundleAt: url)
+            } catch where existing != nil {
+                // An older report beats none: the bundle may be unreadable now (newer schema, read-only or synced
+                // folder, damaged samples), and the run opened before this version.
+                try? FileHandle.standardError.write(contentsOf: Data(
+                    "Metal-PT: kept the older summary of \(dir): \(error)\n".utf8))
+                return file
+            }
         }
     }
 

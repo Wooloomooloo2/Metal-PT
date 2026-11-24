@@ -9,7 +9,8 @@ public enum SummaryReport {
     public static let version = 2
     static let versionMeta = "mpt-summary-version"
 
-    /// The version a summary.html was written with; 1 for summaries from before the tag.
+    /// The version a summary.html was written with; 1 for summaries from before the tag. A missing tag (also an
+    /// empty or damaged file) counts as 1 on purpose: such a summary is rewritten.
     public static func fileVersion(of html: String) -> Int {
         let tag = "<meta name=\"\(versionMeta)\" content=\""
         guard let r = html.range(of: tag) else { return 1 }
