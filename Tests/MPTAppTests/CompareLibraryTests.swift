@@ -34,6 +34,26 @@ import MPTCore
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    /// The list and the detail read each run's run.json only (through the info loader), never its samples.
+    @Test func listAndDetailReadOnlyRunJSON() throws {
+        final class Count: @unchecked Sendable {
+            let lock = NSLock(); var n = 0
+            func load(_ url: URL) throws -> RunInfo { lock.withLock { n += 1 }; return try RunBundle.loadInfo(url) }
+        }
+        let s = setup()
+        defer { try? FileManager.default.removeItem(at: s.root) }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "Protium")
+        let b = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_100, runtime: "CrossOver")
+        try CompareProject(name: "HZD", runs: [.init(bundle: a.lastPathComponent), .init(bundle: b.lastPathComponent)])
+            .save(to: s.projects.appendingPathComponent("hzd.json"))
+        let count = Count()
+        let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs, infoLoader: count.load)
+        #expect(lib.projects().first?.game == "hzd")
+        #expect(count.n == 2)
+        #expect(try lib.detail("hzd.json").runs.allSatisfy { $0.missing == nil })
+        #expect(count.n == 4)
+    }
+
     @Test func listsProjectsWithRunCountGameAndDate() throws {
         let s = setup()
         defer { try? FileManager.default.removeItem(at: s.root) }

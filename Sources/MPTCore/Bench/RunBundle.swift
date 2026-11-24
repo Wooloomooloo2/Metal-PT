@@ -114,13 +114,30 @@ public struct RunBundle: Sendable {
     public let frames: [TimedFrame]?
     public let warnings: [String]
 
-    /// `frames: false` skips frames.csv (it can be large): for callers that show medians but not the lows.
-    public static func load(_ url: URL, frames loadFrames: Bool = true) throws -> RunBundle {
+    /// The warning for a bundle written by a newer Metal-PT.
+    static func schemaWarning(_ schema: Int) -> String? {
+        schema > RunInfo.currentSchema ? "newer bundle format (schema \(schema))" : nil
+    }
+
+    private static func decodeInfo(_ url: URL) throws -> RunInfo {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        let info = try dec.decode(RunInfo.self, from: Data(contentsOf: url.appendingPathComponent("run.json")))
+        return try dec.decode(RunInfo.self, from: Data(contentsOf: url.appendingPathComponent("run.json")))
+    }
+
+    /// run.json alone (samples.csv and frames.csv are not read), decoded as `load` decodes it. A newer schema's
+    /// warning is appended to `warnings` (such a run is never rewritten: edits refuse a newer format).
+    public static func loadInfo(_ url: URL) throws -> RunInfo {
+        var info = try decodeInfo(url)
+        if let w = schemaWarning(info.schema) { info.warnings.append(w) }
+        return info
+    }
+
+    /// `frames: false` skips frames.csv (it can be large): for callers that show medians but not the lows.
+    public static func load(_ url: URL, frames loadFrames: Bool = true) throws -> RunBundle {
+        let info = try decodeInfo(url)
         var warnings = info.warnings
-        if info.schema > RunInfo.currentSchema { warnings.append("newer bundle format (schema \(info.schema))") }
+        if let w = schemaWarning(info.schema) { warnings.append(w) }
 
         let rows: [[String: String]]
         if let text = try? String(contentsOf: url.appendingPathComponent("samples.csv"), encoding: .utf8) {

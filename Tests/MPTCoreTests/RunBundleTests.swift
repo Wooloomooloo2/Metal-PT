@@ -36,6 +36,27 @@ import SystemConfiguration
         #expect(b.info.machine.gpuCores == 14)
     }
 
+    /// `loadInfo` reads run.json only: an unreadable samples.csv does not matter (and adds no warning), while the
+    /// newer-schema warning is kept.
+    @Test func loadInfoReadsOnlyRunJSON() throws {
+        let dir = tempDir().appendingPathComponent("x.mptrun")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        var newer = info()
+        newer.schema = RunInfo.currentSchema + 1
+        let w = try RunBundleWriter(directory: dir, info: newer)
+        try w.append(sample: ["fps": "60"])
+        try w.finish { _ in }
+        let samples = dir.appendingPathComponent("samples.csv")
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: samples.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: samples.path) }
+        #expect(try RunBundle.load(dir).warnings.contains("samples.csv missing"))
+        let loaded = try RunBundle.loadInfo(dir)
+        #expect(loaded.game.exe == "hzd.exe")
+        #expect(loaded.user.gameSettings == "high")
+        #expect(loaded.warnings == ["newer bundle format (schema \(RunInfo.currentSchema + 1))"])
+        #expect(throws: (any Error).self) { try RunBundle.loadInfo(dir.appendingPathComponent("nope")) }
+    }
+
     @Test func framesGetTimesBackwardsFromArrival() throws {
         let dir = tempDir().appendingPathComponent("x.mptrun")
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }

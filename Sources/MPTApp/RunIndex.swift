@@ -72,6 +72,8 @@ public enum RunIndexError: LocalizedError, CustomStringConvertible {
 /// Thread-safe (one lock; all calls are synchronous and may touch hundreds of bundles): call off the main actor.
 public final class RunIndex: @unchecked Sendable {
     public typealias Loader = @Sendable (URL, Bool) throws -> RunBundle
+    /// run.json only (`RunBundle.loadInfo`): for user fields, edits and the in-progress check.
+    public typealias InfoLoader = @Sendable (URL) throws -> RunInfo
     public typealias Trash = @Sendable (URL) throws -> Void
 
     public static let cacheFileName = ".index.json"
@@ -97,6 +99,7 @@ public final class RunIndex: @unchecked Sendable {
 
     public let root: URL
     private let loader: Loader
+    private let infoLoader: InfoLoader
     private let trash: Trash
     private let lock = NSLock()
     private var records: [String: Record]?
@@ -110,9 +113,11 @@ public final class RunIndex: @unchecked Sendable {
 
     public init(root: URL,
                 loader: @escaping Loader = { try RunBundle.load($0, frames: $1) },
+                infoLoader: @escaping InfoLoader = { try RunBundle.loadInfo($0) },
                 trash: @escaping Trash = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) {
         self.root = root
         self.loader = loader
+        self.infoLoader = infoLoader
         self.trash = trash
     }
 
@@ -134,7 +139,7 @@ public final class RunIndex: @unchecked Sendable {
 
     /// The run's user fields as stored (for the edit sheet; notes are not in `RunEntry`).
     public func userFields(dir: String) throws -> RunInfo.UserFields {
-        try loader(root.appendingPathComponent(dir), false).info.user
+        try infoLoader(root.appendingPathComponent(dir)).user
     }
 
     /// Whether the run is being recorded now (see the type's notes).
@@ -159,7 +164,7 @@ public final class RunIndex: @unchecked Sendable {
     public func update(dir: String, settings: String, notes: String, label: String) throws {
         try lock.withLock {
             let url = root.appendingPathComponent(dir)
-            var info = try loader(url, false).info
+            var info = try infoLoader(url)
             guard !inProgressLocked(dir, finished: info.end != nil) else { throw RunIndexError.inProgress }
             guard info.schema <= RunInfo.currentSchema else { throw RunIndexError.newerFormat(info.schema) }
             info.user.gameSettings = settings
@@ -203,9 +208,9 @@ public final class RunIndex: @unchecked Sendable {
             // The record may be stale: re-read run.json when it changed since.
             let attrs = try? FileManager.default.attributesOfItem(atPath: url.appendingPathComponent("run.json").path)
             let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970
-            done = mtime == r.mtime ? r.finished : ((try? loader(url, false))?.info.end != nil)
+            done = mtime == r.mtime ? r.finished : ((try? infoLoader(url))?.end != nil)
         } else {
-            done = (try? loader(url, false))?.info.end != nil
+            done = (try? infoLoader(url))?.end != nil
         }
         guard !done else { return false }
         let samples = url.appendingPathComponent("samples.csv")

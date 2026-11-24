@@ -16,6 +16,17 @@ import MPTCore
         }
     }
 
+    /// Counts run.json-only loads.
+    private final class CountingInfoLoader: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        var count: Int { lock.withLock { n } }
+        func load(_ url: URL) throws -> RunInfo {
+            lock.withLock { n += 1 }
+            return try RunBundle.loadInfo(url)
+        }
+    }
+
     private func tempRoot() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("mpt-index-\(UUID().uuidString)")
     }
@@ -176,6 +187,28 @@ import MPTCore
         let fresh = RunIndex(root: root, loader: counter2.load)
         #expect(fresh.entries() == first)
         #expect(counter2.total == 0)
+    }
+
+    /// The user fields, an edit's read and the in-progress check read run.json only, never the samples.
+    @Test func userFieldsAndEditsReadOnlyRunJSON() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "hzd.exe", start: 1_800_000_000, notes: "n")
+        let (unfinished, _) = try makeUnfinished(in: root)
+        let counter = CountingLoader()
+        let infos = CountingInfoLoader()
+        let index = RunIndex(root: root, loader: counter.load, infoLoader: infos.load)
+        let name = dir.lastPathComponent
+        #expect(try index.userFields(dir: name).notes == "n")
+        #expect(!index.isInProgress(dir: name))
+        #expect(index.isInProgress(dir: unfinished.lastPathComponent))
+        #expect(counter.total == 0)
+        #expect(infos.count == 3)
+        _ = index.entries()
+        let afterIndex = counter.total
+        try index.update(dir: name, settings: "s", notes: "", label: "")
+        #expect(counter.total == afterIndex + 1)   // only the re-index of the edited run
+        #expect(infos.count == 4)
     }
 
     @Test func updateRewritesUserFieldsAndSummary() throws {

@@ -69,16 +69,21 @@ public enum CompareLibraryError: Error, Equatable, CustomStringConvertible, Loca
 /// Thread-safe (one lock; calls are synchronous and load run bundles): call off the main actor.
 public final class CompareLibrary: @unchecked Sendable {
     public typealias Trash = @Sendable (URL) throws -> Void
+    /// run.json only (`RunBundle.loadInfo`): the list and the detail need the run's identity, not its samples.
+    public typealias InfoLoader = @Sendable (URL) throws -> RunInfo
 
     public let projectsRoot: URL
     public let runsRoot: URL
     private let trash: Trash
+    private let infoLoader: InfoLoader
     private let lock = NSLock()
 
     public init(projectsRoot: URL, runsRoot: URL,
+                infoLoader: @escaping InfoLoader = { try RunBundle.loadInfo($0) },
                 trash: @escaping Trash = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) {
         self.projectsRoot = projectsRoot
         self.runsRoot = runsRoot
+        self.infoLoader = infoLoader
         self.trash = trash
     }
 
@@ -207,10 +212,8 @@ public final class CompareLibrary: @unchecked Sendable {
         }
         var games: [String] = []
         for entry in project.runs {
-            guard let b = try? RunBundle.load(CompareProject.bundleURL(entry, runsRoot: runsRoot), frames: false) else {
-                continue
-            }
-            let g = RunEntry.displayGame(b.info)
+            guard let info = try? infoLoader(CompareProject.bundleURL(entry, runsRoot: runsRoot)) else { continue }
+            let g = RunEntry.displayGame(info)
             if !games.contains(g) { games.append(g) }
         }
         let game = games.count > 1 ? "\(games.count) games" : games.first ?? ""
@@ -221,8 +224,8 @@ public final class CompareLibrary: @unchecked Sendable {
         let runs = project.runs.enumerated().map { i, entry -> ProjectDetail.Run in
             let url = CompareProject.bundleURL(entry, runsRoot: runsRoot)
             do {
-                let b = try RunBundle.load(url, frames: false)
-                return .init(index: i, label: CompareReport.label(entry, b.info), bundle: entry.bundle, missing: nil,
+                let info = try infoLoader(url)
+                return .init(index: i, label: CompareReport.label(entry, info), bundle: entry.bundle, missing: nil,
                              isBaseline: i == project.baseline)
             } catch {
                 return .init(index: i, label: entry.name.isEmpty ? (entry.bundle as NSString).lastPathComponent : entry.name,
