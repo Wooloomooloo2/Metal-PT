@@ -111,7 +111,9 @@ private final class Fixture {
     let hub: TelemetryHub
     let model: AppModel
 
-    init(fpsLogging: Bool = false) {
+    /// `dataRoot`: the data root instead of `root` (a file there makes every recording start fail). `env`: extra
+    /// environment.
+    init(fpsLogging: Bool = false, dataRoot: URL? = nil, env: [String: String] = [:]) {
         defaults.set(fpsLogging, forKey: SettingsKey.fpsLogging)
         let deps = TelemetryHub.Dependencies(
             makeSampler: { CountingSampler() },
@@ -133,7 +135,9 @@ private final class Fixture {
         hub = TelemetryHub(dependencies: deps)
         let clock = clock
         model = AppModel(hub: hub, fpsLogging: FPSLogging(launchctl: launchctl), live: true, usesAppKit: false,
-                         defaults: defaults, env: ["MPT_DATA_ROOT": root.path], notifier: notifier,
+                         defaults: defaults,
+                         env: env.merging(["MPT_DATA_ROOT": (dataRoot ?? root).path]) { a, _ in a },
+                         notifier: notifier,
                          sounds: sounds, clock: { clock.read() },
                          notificationStatus: FakeNotificationStatus(value: .denied))
     }
@@ -384,14 +388,43 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(f.model.recentRuns.count == 1)
     }
 
+    /// A start that fails plays no Tink (the sound means "recording").
+    @Test func failedStartPlaysNoSound() async throws {
+        let blocker = FileManager.default.temporaryDirectory.appendingPathComponent("mpt-blocker-\(UUID().uuidString)")
+        try Data("x".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        let f = Fixture(dataRoot: blocker)   // runs/ cannot be created under a file
+        f.model.launch()
+        f.model.toggleRecording()
+        try await waitUntil("the refused start") { f.model.recordState == .idle && f.model.recordingProblem != nil }
+        #expect(f.model.recordingProblem?.hasPrefix("Could not start recording") == true)
+        #expect(f.sounds.played.isEmpty)
+    }
+
+    /// `MPT_ALLOW_SECOND_INSTANCE=1` (debug): this instance never changes the launchctl variables — not at launch,
+    /// not from Settings, not at quit — so it cannot pull them from under the first instance.
+    @Test func secondInstanceNeverTouchesLaunchctl() {
+        let f = Fixture(fpsLogging: false, env: ["MPT_ALLOW_SECOND_INSTANCE": "1"])
+        for n in both { f.launchctl.env[n] = "1" }   // held by the first instance
+        f.model.launch()
+        f.model.setFPSLogging(true)
+        f.model.setFPSLogging(false)
+        f.model.quit()
+        #expect(f.launchctl.calls.isEmpty)
+        for n in both { #expect(f.launchctl.env[n] == "1") }
+        #expect(f.model.fpsLoggingError?.contains("another Metal-PT") == true)
+    }
+
     /// Tink on start, Pop on stop; none when the setting is off; none on a quit-driven stop.
     @Test func soundsFollowTheSettingAndNotQuit() async throws {
         let f = Fixture()
         f.model.launch()
         #expect(f.model.soundOnRecord)   // default on
         f.model.toggleRecording()
-        try await waitUntil("recording") { f.model.recordState == .recording }
+        #expect(f.sounds.played.isEmpty)   // Tink once the start has succeeded, not at the press
+        try await waitUntil("recording") { f.model.recordState == .recording && f.sounds.played == [.start] }
         f.model.toggleRecording()
+        #expect(f.sounds.played == [.start, .stop])   // Pop at the press
         try await waitUntil("idle") { f.model.recordState == .idle }
         #expect(f.sounds.played == [.start, .stop])
         #expect(RecordSound.start.name == "Tink" && RecordSound.stop.name == "Pop")
@@ -406,7 +439,9 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
 
         f.defaults.set(true, forKey: SettingsKey.soundOnRecord)
         f.model.toggleRecording()
-        try await waitUntil("recording a third time") { f.model.recordState == .recording }
+        try await waitUntil("recording a third time") {
+            f.model.recordState == .recording && f.sounds.played.count == 3
+        }
         #expect(f.sounds.played == [.start, .stop, .start])
         f.model.quit()
         #expect(f.sounds.played == [.start, .stop, .start])
@@ -430,6 +465,13 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(MenuBarLabel.title(state: .saving, status: status(151, fps: 35), snapshot: nil)
                 == MenuBarLabel.Title(text: "saving…", recording: true))
         #expect(MenuBarLabel.title(state: .idle, status: nil, snapshot: nil) == nil)
+        // VoiceOver: the status button's title comes from the image's accessibility description.
+        #expect(rec?.spoken == "Recording 02:31 · 35 fps")
+        #expect(MenuBarLabel.title(state: .saving, status: nil, snapshot: nil)?.spoken == "Saving the recording…")
+        let image = MenuBarLabel.redImage("● 02:31", spoken: "Recording 02:31", scale: 2)
+        #expect(image.accessibilityDescription == "Recording 02:31")
+        #expect(!image.isTemplate)
+        #expect(image.representations.first?.pixelsWide == Int(image.size.width * 2))
         let snap = HubSnapshot(time: 0, sample: TelemetrySample(), fps: 58, followedPID: 1, followedApp: "x",
                                stack: nil)
         #expect(MenuBarLabel.title(state: .idle, status: nil, snapshot: snap)
@@ -449,6 +491,37 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(NotificationStatus.unavailable.text == "Available in the installed app")
         #expect(NotificationStatus.settingsURL.absoluteString
                 == "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.wooloomooloo2.metal-pt")
+    }
+}
+
+@Suite struct SingleInstanceTests {
+    private typealias R = SingleInstance.Running
+
+    @Test func handsOffToAnotherInstance() {
+        let me = R(pid: 10, bundleID: nil, executablePath: "/x/.build/debug/MetalPT")
+        let installed = R(pid: 20, bundleID: SingleInstance.bundleID,
+                          executablePath: "/Applications/Metal-PT.app/Contents/MacOS/Metal-PT")
+        let devRun = R(pid: 30, bundleID: nil, executablePath: "/y/.build/release/MetalPT")
+        let other = R(pid: 40, bundleID: "com.example.other", executablePath: "/Applications/Other.app/Contents/MacOS/Other")
+        let lookalike = R(pid: 50, bundleID: nil, executablePath: "/bin/NotMetalPT")
+        // Alone (only itself and unrelated apps): run normally.
+        #expect(SingleInstance.decide(selfPID: 10, running: [me, other, lookalike], allowSecond: false) == .run)
+        #expect(SingleInstance.decide(selfPID: 10, running: [me, installed], allowSecond: false) == .handOff(to: 20))
+        #expect(SingleInstance.decide(selfPID: 10, running: [me, devRun], allowSecond: false) == .handOff(to: 30))
+        // A bundled copy whose executable was renamed is still found by bundle id.
+        let renamed = R(pid: 60, bundleID: SingleInstance.bundleID, executablePath: "/tmp/x")
+        #expect(SingleInstance.decide(selfPID: 10, running: [renamed], allowSecond: false) == .handOff(to: 60))
+        // The debug override: runs, but without launchctl changes (also when alone).
+        #expect(SingleInstance.decide(selfPID: 10, running: [me, installed], allowSecond: true) == .runWithoutLaunchctl)
+        #expect(SingleInstance.decide(selfPID: 10, running: [me], allowSecond: true) == .runWithoutLaunchctl)
+    }
+
+    @Test func overrideIsDebugOnlyEnv() {
+        #if DEBUG
+        #expect(SingleInstance.allowSecond(env: ["MPT_ALLOW_SECOND_INSTANCE": "1"]))
+        #endif
+        #expect(!SingleInstance.allowSecond(env: [:]))
+        #expect(!SingleInstance.allowSecond(env: ["MPT_ALLOW_SECOND_INSTANCE": "0"]))
     }
 }
 

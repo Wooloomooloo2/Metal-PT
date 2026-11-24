@@ -9,11 +9,20 @@ import SwiftUI
 struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
+    /// The scale of the screen the status item is on.
+    @Environment(\.displayScale) private var displayScale
 
     struct Title: Equatable {
         let text: String
         /// Drawn red (the recording states).
         let recording: Bool
+
+        /// For VoiceOver: "Recording 02:31 · 35 fps", "Recording starting…", "Saving the recording…".
+        var spoken: String {
+            if text.hasPrefix("● ") { return "Recording " + text.dropFirst(2) }
+            if text == "saving…" { return "Saving the recording…" }
+            return text
+        }
     }
 
     static func title(state: AppModel.RecordState, status: SessionStatus?, snapshot: HubSnapshot?) -> Title? {
@@ -36,22 +45,26 @@ struct MenuBarLabel: View {
 
     /// `text` drawn red as a non-template image. A `MenuBarExtra` label's `Text` becomes the status item's plain
     /// title and an SF Symbol's palette colours reach only the symbol, so a red title needs an image with
-    /// `isTemplate == false` (checked on the real status item: macOS 26, see the task-4 report).
-    static func redImage(_ text: String) -> NSImage {
+    /// `isTemplate == false` (checked on the real status item: macOS 26, see the task-4 report). `spoken` becomes the
+    /// image's accessibility description, which the status button reports as its title (SwiftUI's
+    /// `.accessibilityLabel` on the label does not reach the button).
+    static func redImage(_ text: String, spoken: String, scale: CGFloat) -> NSImage {
         let r = ImageRenderer(content: Text(text)
             .font(Font(NSFont.menuBarFont(ofSize: 0)))
             .monospacedDigit()
             .foregroundStyle(Color(nsColor: .systemRed)))
-        r.scale = NSScreen.main?.backingScaleFactor ?? 2
+        r.scale = scale
         let image = r.nsImage ?? NSImage()
         image.isTemplate = false
+        image.accessibilityDescription = spoken
         return image
     }
 
     var body: some View {
         if let title = Self.title(state: model.recordState, status: hub.recording, snapshot: hub.latest) {
             if title.recording {
-                Image(nsImage: Self.redImage(title.text)).accessibilityLabel(title.text)
+                Image(nsImage: Self.redImage(title.text, spoken: title.spoken, scale: displayScale))
+                    .accessibilityLabel(title.spoken)
             } else {
                 Text(title.text).monospacedDigit()
             }

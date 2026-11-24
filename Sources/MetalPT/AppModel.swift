@@ -190,6 +190,10 @@ final class AppModel: ObservableObject {
         #endif
     }
 
+    /// Debug only (`MPT_ALLOW_SECOND_INSTANCE=1`, see `SingleInstance`): another instance owns the launchctl
+    /// variables, so this one never changes them.
+    var launchctlDisabled: Bool { SingleInstance.allowSecond(env: env) }
+
     // MARK: - Settings
 
     var recordCombo: HotkeyCombo {
@@ -290,7 +294,11 @@ final class AppModel: ObservableObject {
         guard live else { return }
         hub.onSamplingChange = { on in Self.log("sampler \(on ? "on" : "off")") }
         hub.onRecordingMessage = { [weak self] m in self?.recordingMessage(m) }
-        fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
+        if launchctlDisabled {
+            Self.log("\(SingleInstance.allowSecondKey)=1: second instance; FPS logging (launchctl) is left alone")
+        } else {
+            fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
+        }
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
         registerHotkeys()
@@ -347,7 +355,7 @@ final class AppModel: ObservableObject {
         for o in debugObservers { DistributedNotificationCenter.default().removeObserver(o) }
         debugObservers.removeAll()
         overlayOn = false
-        if live { fpsLogging.releaseAtQuit() }
+        if live, !launchctlDisabled { fpsLogging.releaseAtQuit() }
         let wasRecording = hub.isRecording || hub.isFinishingRecording || startTask != nil
         let run = hub.stopRecordingNow()
         hudToken?.release()
@@ -358,13 +366,19 @@ final class AppModel: ObservableObject {
             line += "recording stopped" + (run.map { " (saved \($0.directory.lastPathComponent))" } ?? " (no run saved)")
                 + ", "
         }
-        line += "FPS logging released (on: \(fpsLogging.isOn))"
+        line += launchctlDisabled ? "FPS logging left alone (second instance)"
+            : "FPS logging released (on: \(fpsLogging.isOn))"
         if live { Self.log(line) }
     }
 
     /// Turns FPS logging on or off. The preference is saved first, whatever happens next: it is the user's choice,
     /// and the next launch reconciles to it (adopt or retry). Failures are shown via `fpsLoggingError`.
     func setFPSLogging(_ on: Bool) {
+        if launchctlDisabled {
+            fpsLoggingError = "FPS logging is left to another Metal-PT (\(SingleInstance.allowSecondKey)=1)."
+            Self.log(fpsLoggingError ?? "")
+            return
+        }
         defaults.set(on, forKey: SettingsKey.fpsLogging)
         guard live else { return }
         var unexpected: Error?
@@ -474,8 +488,7 @@ final class AppModel: ObservableObject {
         } else {
             lastAcceptedToggle = now
             if usesAppKit { Self.log("record toggle: start") }
-            playSound(.start)
-            startRecording()
+            startRecording()   // Tink once the start has succeeded
         }
     }
 
@@ -517,7 +530,10 @@ final class AppModel: ObservableObject {
             }
             guard let self else { return }
             self.startTask = nil
-            if started, !self.stopping, !self.quitDone { self.postStarted() }
+            if started, !self.stopping, !self.quitDone {
+                self.playSound(.start)
+                self.postStarted()
+            }
             self.hubChanged()
         }
     }

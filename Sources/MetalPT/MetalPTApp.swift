@@ -20,6 +20,16 @@ enum MetalPTMain {
             }
             exit(Snapshots.render(to: URL(fileURLWithPath: args[i + 1], isDirectory: true)) ? 0 : 1)
         }
+        // Two instances would fight over the launchctl HUD variables: hand off before anything touches them (the
+        // app delegate, and with it the model and its FPS-logging lease, does not exist yet).
+        let decision = SingleInstance.decide(selfPID: getpid(), running: SingleInstance.runningInstances(),
+                                             allowSecond: SingleInstance.allowSecond(env: ProcessInfo.processInfo.environment))
+        if case .handOff(let pid) = decision {
+            try? FileHandle.standardError.write(contentsOf: Data(
+                "Metal-PT: already running (pid \(pid)); activating it and exiting\n".utf8))
+            NSRunningApplication(processIdentifier: pid)?.activate(from: .current, options: [.activateAllWindows])
+            exit(0)
+        }
         MetalPTApp.main()
     }
 
