@@ -247,6 +247,14 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
 }
 
 @Suite struct MachineInfoTests {
+    @Test func displaySettingsTreatZeroAsUnknown() {
+        let s = MachineInfo.displaySettings(width: 1728, height: 1117, refreshHz: 120, base: .init(powerMode: "high"))
+        #expect(s.displayWidth == 1728 && s.displayHeight == 1117 && s.refreshHz == 120)
+        #expect(s.powerMode == "high")
+        let unknown = MachineInfo.displaySettings(width: 0, height: 0, refreshHz: 0, base: .init())
+        #expect(unknown.displayWidth == nil && unknown.displayHeight == nil && unknown.refreshHz == nil)
+    }
+
     @Test func parsesPowerMode() {
         #expect(MachineInfo.powerMode(fromPMSet: "System-wide power settings:\n sleep  1\n powermode            0\n") == "automatic")
         #expect(MachineInfo.powerMode(fromPMSet: " powermode 2") == "high")

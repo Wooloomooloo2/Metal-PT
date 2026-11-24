@@ -196,6 +196,16 @@ import Foundation
         #expect(out.contains("missing: old.fwrun — run 3, run.json unreadable or incompatible: missing &quot;machine&quot;; it is left out"))
     }
 
+    @Test func displayIsACompareField() {
+        var a = info(), b = info()
+        a.settings.displayWidth = 1728; a.settings.displayHeight = 1117; a.settings.refreshHz = 120
+        b.settings.displayWidth = 1728; b.settings.displayHeight = 1117; b.settings.refreshHz = 60
+        let d = CompareReport.differences([a, b])
+        #expect(d.map(\.field) == ["display"])
+        #expect(d[0].values == ["1728×1117 @ 120 Hz", "1728×1117 @ 60 Hz"])
+        #expect(CompareReport.differences([info(), info()]).isEmpty)
+    }
+
     @Test func runLabels() {
         let a = info(stack: Stack(runtime: "Protium", graphics: ["DXMT", "vkd3d"]))
         #expect(CompareReport.label(.init(bundle: "x.fwrun", name: "Mine"), a) == "Mine")

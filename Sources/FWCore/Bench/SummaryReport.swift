@@ -24,6 +24,12 @@ public enum SummaryReport {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// "1728×1117 @ 120 Hz"; nil when the size is unknown.
+    public static func displayText(_ s: RunInfo.Settings) -> String? {
+        guard let w = s.displayWidth, let h = s.displayHeight else { return nil }
+        return "\(w)×\(h)" + (s.refreshHz.map { " @ \(HTML.number($0, digits: 0)) Hz" } ?? "")
+    }
+
     public static func fpsSourceText(_ source: String) -> String {
         switch source {
         case "log": return "per-second (system log)"
@@ -137,9 +143,7 @@ public enum SummaryReport {
         if let p = info.settings.powerMode { power.append("\(p) power mode") }
         if let ac = info.settings.onACAtStart { power.append(ac ? "on AC" : "on battery") }
         rows.append(("Power", power.isEmpty ? "unknown" : power.joined(separator: " · ")))
-        if let w = info.settings.displayWidth, let h = info.settings.displayHeight {
-            rows.append(("Display", "\(w)×\(h)" + (info.settings.refreshHz.map { " @ \(HTML.number($0, digits: 0)) Hz" } ?? "")))
-        }
+        if let display = displayText(info.settings) { rows.append(("Display", display)) }
         rows.append(("FPS source", fpsSourceText(info.fpsSource)))
         return rows
     }

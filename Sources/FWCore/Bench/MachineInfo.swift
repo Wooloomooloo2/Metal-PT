@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import CoreGraphics
 
 /// Small readers for the `machine` and `settings` parts of run.json. No serial number, hostname or user name.
 public enum MachineInfo {
@@ -15,6 +16,24 @@ public enum MachineInfo {
             memoryGB: Int((Double(bytes) / 1_073_741_824).rounded()),
             osVersion: os,
             osBuild: sysctlString("kern.osversion") ?? "")
+    }
+
+    /// `base` with the main display's size (CGDisplayPixelsWide/High) and refresh rate (its current mode).
+    public static func withMainDisplay(_ base: RunInfo.Settings) -> RunInfo.Settings {
+        let id = CGMainDisplayID()
+        let refresh = CGDisplayCopyDisplayMode(id)?.refreshRate ?? 0
+        return displaySettings(width: CGDisplayPixelsWide(id), height: CGDisplayPixelsHigh(id), refreshHz: refresh,
+                               base: base)
+    }
+
+    /// `base` with the display fields set; 0 (what CoreGraphics reports when it does not know) becomes nil.
+    public static func displaySettings(width: Int, height: Int, refreshHz: Double,
+                                       base: RunInfo.Settings) -> RunInfo.Settings {
+        var s = base
+        s.displayWidth = width > 0 ? width : nil
+        s.displayHeight = height > 0 ? height : nil
+        s.refreshHz = refreshHz > 0 && refreshHz.isFinite ? refreshHz : nil
+        return s
     }
 
     /// `pmset -g` "powermode" (0 automatic, 1 low, 2 high); nil if absent or unreadable.

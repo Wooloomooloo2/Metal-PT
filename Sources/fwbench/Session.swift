@@ -7,6 +7,9 @@ final class Session: @unchecked Sendable {
     private let follow: FollowRule
     /// Directory-name seed; nil means the placeholder "run" (renamed at finish once the game is known).
     private let game: String?
+    /// The seed is only a guess (`run`'s command[0], often a launcher or wine): rename at finish to the identified
+    /// exe as with the placeholder.
+    private let seedIsGuess: Bool
     private let seconds: Double?
     private let warmup: Double
     private let root: URL
@@ -42,19 +45,24 @@ final class Session: @unchecked Sendable {
     private let stderrEOF = DispatchSemaphore(value: 0)
 
     /// Validates options and does the slow reads (pmset, battery, machine) before the run's start time is taken.
-    init(options o: [String: String], follow: FollowRule, game: String?) throws {
+    init(options o: [String: String], follow: FollowRule, game: String?, seedIsGuess: Bool = false) throws {
         options = o
         self.follow = follow
         self.game = game
+        self.seedIsGuess = seedIsGuess
         seconds = try number(o, "--seconds")
         if let seconds, seconds <= 0 { throw UsageError("--seconds needs a number > 0") }
         warmup = try number(o, "--warmup") ?? 0
+        if let seconds, warmup >= seconds {
+            throw UsageError("--warmup (\(CSV.number(warmup, digits: 1)) s) must be shorter than --seconds "
+                             + "(\(CSV.number(seconds, digits: 1)) s)")
+        }
         root = try RecordCommands.runsRoot(o["--out"], create: true)
         sampler = TelemetrySampler()
         _ = sampler.sample()   // prime IOReport so the first row has power and utilisation
         machine = MachineInfo.current()
-        settings = .init(powerMode: MachineInfo.powerMode(),
-                         onACAtStart: (try? SmartBatteryReader.read())?.externalConnected)
+        settings = MachineInfo.withMainDisplay(.init(powerMode: MachineInfo.powerMode(),
+                                                      onACAtStart: (try? SmartBatteryReader.read())?.externalConnected))
         timer = DispatchSource.makeTimerSource(queue: queue)
     }
 
@@ -69,6 +77,8 @@ final class Session: @unchecked Sendable {
                 var info = RunInfo(appVersion: RecordCommands.appVersion, machine: machine, game: .init(exe: ""),
                                    settings: settings, start: startDate)
                 info.user.label = options["--label"] ?? ""
+                info.user.gameSettings = options["--settings"] ?? ""
+                info.user.notes = options["--notes"] ?? ""
                 let dir = RunBundle.availableDirectory(in: root, start: startDate, game: game ?? "run")
                 let writer = try RunBundleWriter(directory: dir, info: info)
                 let recorder = RunRecorder(writer: writer, telemetry: sampler,
@@ -104,7 +114,7 @@ final class Session: @unchecked Sendable {
         // Let a stack detection that is under way land in run.json (lsof is bounded at 5 s; wait at most 2).
         _ = detections.wait(timeout: .now() + 2)
         do { try recorder.finish() } catch { printError("error finishing run: \(error)") }
-        if game == nil, let exe = recorder.gameExe {
+        if game == nil || seedIsGuess, let exe = recorder.gameExe {
             do { dir = try RunBundle.rename(dir, start: start, game: exe) } catch {
                 printError("could not rename the run folder: \(error)")
             }

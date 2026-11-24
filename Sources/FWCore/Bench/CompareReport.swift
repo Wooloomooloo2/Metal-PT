@@ -53,6 +53,7 @@ public enum CompareReport {
             ("label", v(i.user.label)),
             ("power mode", v(i.settings.powerMode)),
             ("AC/battery", v(i.settings.onACAtStart.map { $0 ? "AC" : "battery" })),
+            ("display", v(SummaryReport.displayText(i.settings))),
             ("macOS build", v(build)),
             ("machine", v(machine.joined(separator: " · "))),
             ("FPS source", SummaryReport.fpsSourceText(i.fpsSource)),

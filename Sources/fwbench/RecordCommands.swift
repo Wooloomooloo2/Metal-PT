@@ -3,10 +3,12 @@ import FWCore
 
 enum RecordCommands {
     static let usage = """
-        record [--pid P | --name S] [--seconds N] [--warmup S] [--label TEXT]
+        record [--pid P | --name S] [--seconds N] [--warmup S] [--label TEXT] [--settings TEXT] [--notes TEXT]
                                        record telemetry + Metal HUD FPS until N seconds pass or Ctrl-C;
-                                       follows the Metal process with the most frames unless --pid/--name
-        run [--seconds N] [--warmup S] [--label TEXT] -- CMD ARGS...
+                                       follows the Metal process with the most frames unless --pid/--name;
+                                       --warmup must be shorter than --seconds; --settings records the
+                                       in-game settings, --notes anything else (both shown in the summary)
+        run [--seconds N] [--warmup S] [--label TEXT] [--settings TEXT] [--notes TEXT] -- CMD ARGS...
                                        launch CMD with the HUD variables, record it and its per-frame times;
                                        stops at N seconds, when CMD exits or on Ctrl-C (CMD keeps running;
                                        it inherits SIGPIPE ignored so it survives fwbench exiting)
@@ -23,7 +25,8 @@ enum RecordCommands {
     // MARK: - record / run
 
     static func record(_ args: [String]) throws {
-        let o = try parseOptions(args, allowed: ["--pid", "--name", "--seconds", "--warmup", "--label", "--out"])
+        let o = try parseOptions(args, allowed: ["--pid", "--name", "--seconds", "--warmup", "--label", "--settings",
+                                                     "--notes", "--out"])
         if o["--pid"] != nil && o["--name"] != nil { throw UsageError("use --pid or --name, not both") }
         var follow = FollowRule.busiest
         var game: String?
@@ -43,10 +46,11 @@ enum RecordCommands {
         guard let dash = args.firstIndex(of: "--"), dash + 1 < args.count else {
             throw UsageError("run needs -- CMD [ARGS...]")
         }
-        let o = try parseOptions(Array(args[..<dash]), allowed: ["--seconds", "--warmup", "--label", "--out"])
+        let o = try parseOptions(Array(args[..<dash]), allowed: ["--seconds", "--warmup", "--label", "--settings",
+                                                                          "--notes", "--out"])
         let command = Array(args[(dash + 1)...])
         let session = try Session(options: o, follow: .busiest,
-                                  game: ProcessNames.exeName(fromArgv0: command[0]))
+                                  game: ProcessNames.exeName(fromArgv0: command[0]), seedIsGuess: true)
         session.start(child: command)
     }
 
