@@ -40,6 +40,11 @@ if [[ -z $version || $version != "$code_version" ]]; then
     echo "make-app: VERSION ($version) differs from MetalPTVersion.current ($code_version); make them equal." >&2
     exit 1
 fi
+# CFBundleVersion takes digits and dots only.
+if [[ ! $version =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    echo "make-app: VERSION ($version) must be like 1.2.3 (digits and dots)." >&2
+    exit 1
+fi
 
 echo "==> swift build -c release --product MetalPT ($version)"
 swift build -c release --product MetalPT
@@ -49,8 +54,16 @@ app=build/Metal-PT.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/Metal-PT"
-sed "s/__VERSION__/$version/g" Resources/MetalPT/Info.plist > "$app/Contents/Info.plist"
-plutil -lint "$app/Contents/Info.plist" > /dev/null
+# The template's __VERSION__ values are replaced as plist values (no sed: nothing in VERSION is treated as syntax).
+plist="$app/Contents/Info.plist"
+cp Resources/MetalPT/Info.plist "$plist"
+plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+plutil -replace CFBundleVersion -string "$version" "$plist"
+if grep -q __VERSION__ "$plist"; then
+    echo "make-app: $plist still has a __VERSION__ placeholder." >&2
+    exit 1
+fi
+plutil -lint "$plist" > /dev/null
 printf 'APPL????' > "$app/Contents/PkgInfo"
 if [[ ! -f Resources/MetalPT/AppIcon.icns ]]; then
     swift scripts/make-icon.swift Resources/MetalPT
@@ -59,12 +72,20 @@ cp Resources/MetalPT/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 
 # Hardened runtime with an ad-hoc signature: Metal-PT runs /bin/launchctl and /usr/bin/log and reads IOKit/SMC,
 # none of which the hardened runtime restricts.
-echo "==> codesign (${identity/-/ad hoc})"
-codesign --sign "$identity" --force --deep --options runtime --timestamp=none "$app"
+if [[ $identity == - ]]; then
+    label="ad hoc"
+    timestamp=(--timestamp=none)   # an ad-hoc signature cannot be timestamped
+else
+    label=$identity
+    timestamp=()                    # a real identity: codesign's default (a secure timestamp for Developer ID)
+fi
+echo "==> codesign ($label)"
+codesign --sign "$identity" --force --deep --options runtime ${timestamp[@]+"${timestamp[@]}"} "$app"
 codesign --verify --strict --verbose=1 "$app"
 
 zip=build/Metal-PT-$version.zip
 rm -f "$zip"
-ditto -c -k --keepParent "$app" "$zip"
+# No resource forks, extended attributes or quarantine bits from this machine in the release zip.
+ditto -c -k --norsrc --noextattr --noqtn --keepParent "$app" "$zip"
 echo "==> $app"
 echo "==> $zip ($(du -h "$zip" | cut -f1))"
