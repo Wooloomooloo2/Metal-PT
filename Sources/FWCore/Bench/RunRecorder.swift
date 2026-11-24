@@ -36,6 +36,7 @@ public final class RunRecorder: @unchecked Sendable {
     private let startTime: Double
     private let follow: FollowRule
     private let warmup: Double
+    private let argv0: @Sendable (Int32) -> String?
     private let lock = NSLock()
     /// Serialises `tick` so `telemetry` is used from one thread at a time.
     private let tickLock = NSLock()
@@ -48,14 +49,25 @@ public final class RunRecorder: @unchecked Sendable {
     private var sawFrames = false
     private var stacks: [Int32: Stack] = [:]
     private var finished = false
+    private var writeWarnings: [String] = []
+    private var identifiedExe: String?
 
+    /// `argv0` looks up a live process's argv[0] (injectable for tests); the exe name is taken from it.
     public init(writer: RunBundleWriter, telemetry: TelemetrySource, startTime: Double, follow: FollowRule,
-                warmup: Double = 0) {
+                warmup: Double = 0,
+                argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) }) {
         self.writer = writer
         self.telemetry = telemetry
         self.startTime = startTime
         self.follow = follow
         self.warmup = max(0, warmup)
+        self.argv0 = argv0
+    }
+
+    /// Exe name of the process followed at `finish`, or nil if it was never identified.
+    public var gameExe: String? {
+        lock.lock(); defer { lock.unlock() }
+        return identifiedExe
     }
 
     public func hud(_ event: HUDEvent) {
@@ -72,7 +84,11 @@ public final class RunRecorder: @unchecked Sendable {
         guard !finished, !times.isEmpty else { return }
         sawFrames = true
         pendingFrameTimes.append(contentsOf: times.map(\.intervalMs))
-        try? writer.append(frames: times, endingAtMs: (time - startTime) * 1000)
+        do {
+            try writer.append(frames: times, endingAtMs: (time - startTime) * 1000)
+        } catch {
+            noteWriteFailure("frames.csv write failed: \(error)")
+        }
     }
 
     /// The PID the FPS columns currently follow, or nil if none is known yet.
@@ -127,7 +143,12 @@ public final class RunRecorder: @unchecked Sendable {
         for (key, watts) in s.smcPower { row["smc_\(key)_w"] = SampleColumns.format(watts, column: "smc_\(key)_w") }
 
         // The writer ignores rows after its own finish, so a tick racing `finish` cannot write late.
-        try writer.append(sample: row)
+        do {
+            try writer.append(sample: row)
+        } catch {
+            lock.withLock { noteWriteFailure("samples.csv write failed: \(error)") }
+            throw error
+        }
         return RecorderStatus(elapsedS: time - startTime, fps: fps, app: app, gpuW: s.gpuW, sawFPSSource: saw)
     }
 
@@ -141,6 +162,9 @@ public final class RunRecorder: @unchecked Sendable {
         let exe = pid.flatMap { name(of: $0) }
         let stack = pid.flatMap { stacks[$0] }
         let source = sawFrames ? "stderr" : (sawHUD ? "log" : "none")
+        identifiedExe = exe
+        var warnings = writeWarnings
+        if exe == nil { warnings.append("game process never identified") }
         lock.unlock()
 
         let duration = max(0, time - startTime)
@@ -150,12 +174,19 @@ public final class RunRecorder: @unchecked Sendable {
             info.steadyStartS = steadyStart
             info.steadyEndS = duration
             info.fpsSource = source
-            if let exe { info.game.exe = exe }
+            info.game.exe = exe ?? ""
             if let stack { info.stack = stack }
+            info.warnings += warnings
         }
     }
 
     // MARK: - Private (call with `lock` held)
+
+    /// Keeps the first failure per file (a failing disk would otherwise add one per second).
+    private func noteWriteFailure(_ message: String) {
+        let file = message.prefix { $0 != " " }
+        if !writeWarnings.contains(where: { $0.hasPrefix(file) }) { writeWarnings.append(message) }
+    }
 
     private func resolveFollowed() -> Int32? {
         switch follow {
@@ -180,7 +211,7 @@ public final class RunRecorder: @unchecked Sendable {
     /// Cached once found, so a name survives the process exiting.
     private func name(of pid: Int32) -> String? {
         if let cached = names[pid] { return cached }
-        let found = ProcessNames.displayName(pid: pid).map(ProcessNames.exeName(fromArgv0:))
+        let found = argv0(pid).map(ProcessNames.exeName(fromArgv0:))
             ?? imagePaths[pid].map(ProcessNames.exeName(fromArgv0:))
         if let found, !found.isEmpty { names[pid] = found; return found }
         return nil

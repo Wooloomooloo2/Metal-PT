@@ -27,7 +27,7 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     @Test func recorderWritesFPSFromHUD() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in nil })
         r.hud(event(pid: 9, frames: 0, at: 0))
         r.hud(event(pid: 9, frames: 60, at: 1))
         try r.tick(at: 1.2)
@@ -43,7 +43,7 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     @Test func recorderWithoutFPSStillWritesSamples() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 100, follow: .busiest)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 100, follow: .busiest, argv0: { _ in nil })
         for i in 1...3 { try r.tick(at: 100 + Double(i)) }
         try r.finish(at: 104)
         let b = try RunBundle.load(dir)
@@ -62,7 +62,7 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     @Test func frameTimesGiveP99AndMax() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in nil })
         var times = [FrameTime](repeating: FrameTime(intervalMs: 16.67, presentDelayMs: 1), count: 100)
         times.insert(FrameTime(intervalMs: 50, presentDelayMs: 1), at: 40)
         r.frames(times, pid: 5, at: 1.0)
@@ -81,7 +81,7 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     @Test func finishIsIdempotentAndClosesFiles() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 1000, follow: .busiest, warmup: 5)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 1000, follow: .busiest, warmup: 5, argv0: { _ in nil })
         try r.tick(at: 1001)
         try r.finish(at: 1030)
         try r.finish(at: 1099)
@@ -102,7 +102,8 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     @Test func followsPIDRuleAndNameRule() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let byName = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .nameContains("game"))
+        let byName = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .nameContains("game"),
+                                 argv0: { _ in nil })
         // The launcher is busier, but the name rule picks the game.
         byName.hud(event(pid: 1, frames: 0, at: 0, path: "/Apps/Launcher"))
         byName.hud(event(pid: 1, frames: 120, at: 1, path: "/Apps/Launcher"))
@@ -118,15 +119,63 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
 
         let (w2, dir2) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir2.deletingLastPathComponent()) }
-        let byPID = RunRecorder(writer: w2, telemetry: FakeTelemetry(), startTime: 0, follow: .pid(1))
+        let byPID = RunRecorder(writer: w2, telemetry: FakeTelemetry(), startTime: 0, follow: .pid(1), argv0: { _ in nil })
         #expect(byPID.followedPID == 1)
         try byPID.finish(at: 1)
+    }
+
+    @Test func nameRuleMatchesWindowsArgv0() throws {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let argv0: [Int32: String] = [10: #"Z:\Games\HZD\HorizonZeroDawnRemastered.exe"#, 11: "/Apps/Steam"]
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .nameContains("HORIZON"),
+                            argv0: { argv0[$0] })
+        r.hud(event(pid: 11, frames: 0, at: 0, path: "/Apps/Steam"))
+        r.hud(event(pid: 11, frames: 500, at: 1, path: "/Apps/Steam"))
+        r.hud(event(pid: 10, frames: 0, at: 0, path: "/Apps/wine64-preloader"))
+        r.hud(event(pid: 10, frames: 59, at: 1, path: "/Apps/wine64-preloader"))
+        try r.tick(at: 1.5)
+        try r.finish(at: 2)
+        let b = try RunBundle.load(dir)
+        #expect(b.rows[0]["fps_pid"] == "10")
+        #expect(b.rows[0]["fps_app"] == "HorizonZeroDawnRemastered.exe")
+        #expect(b.info.game.exe == "HorizonZeroDawnRemastered.exe")
+        #expect(r.gameExe == "HorizonZeroDawnRemastered.exe")
+        #expect(b.info.warnings.isEmpty)
+    }
+
+    @Test func unidentifiedGameLeavesExeEmptyWithWarning() throws {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .nameContains("hzd"),
+                            argv0: { _ in nil })
+        r.hud(event(pid: 3, frames: 0, at: 0, path: "/Apps/Other"))
+        try r.finish(at: 1)
+        let b = try RunBundle.load(dir)
+        #expect(b.info.game.exe == "")
+        #expect(b.info.warnings == ["game process never identified"])
+        #expect(r.gameExe == nil)
+    }
+
+    @Test func framesWriteFailureBecomesWarning() throws {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        // A directory where frames.csv should go makes every frames write fail.
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("frames.csv"),
+                                                withIntermediateDirectories: false)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .pid(4), argv0: { _ in "game" })
+        r.frames([FrameTime(intervalMs: 16, presentDelayMs: 1)], pid: 4, at: 1)
+        r.frames([FrameTime(intervalMs: 16, presentDelayMs: 1)], pid: 4, at: 2)
+        try r.finish(at: 3)
+        let b = try RunBundle.load(dir)
+        let frameWarnings = b.info.warnings.filter { $0.hasPrefix("frames.csv write failed") }
+        #expect(frameWarnings.count == 1)
     }
 
     @Test func stackIsWrittenForFollowedPID() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest)
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in nil })
         r.hud(event(pid: 4, frames: 0, at: 0))
         r.setStack(Stack(runtime: "Protium", graphics: ["DXMT"]), for: 4)
         r.setStack(Stack(runtime: "CrossOver"), for: 99)   // not followed: ignored
@@ -141,5 +190,14 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         #expect(MachineInfo.powerMode(fromPMSet: "System-wide power settings:\n sleep  1\n powermode            0\n") == "automatic")
         #expect(MachineInfo.powerMode(fromPMSet: " powermode 2") == "high")
         #expect(MachineInfo.powerMode(fromPMSet: " sleep 1\n") == nil)
+    }
+}
+
+@Suite struct TelemetrySamplerTests {
+    @Test func maxTemperatureSkipsCalibrationSensor() {
+        let r = [TemperatureReading(name: "PMU tcal", celsius: 51.9), TemperatureReading(name: "PMU tdie2", celsius: 41.0),
+                 TemperatureReading(name: "PMU tdie8", celsius: 43.5)]
+        #expect(TelemetrySampler.maxTemperature(r) == 43.5)
+        #expect(TelemetrySampler.maxTemperature([TemperatureReading(name: "PMU tcal", celsius: 51.9)]) == nil)
     }
 }

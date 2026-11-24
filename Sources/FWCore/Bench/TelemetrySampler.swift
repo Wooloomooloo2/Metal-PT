@@ -11,6 +11,7 @@ public final class TelemetrySampler {
 
     private let ioreport: IOReportSampler?
     private let smc: SMCConnection?
+    private let temperatures = HIDTemperatureSource()
     private var previous: (sample: CFDictionary, uptime: TimeInterval)?
 
     public init() {
@@ -23,8 +24,8 @@ public final class TelemetrySampler {
         result.thermalState = Self.thermalName(ProcessInfo.processInfo.thermalState)
         sampleIOReport(into: &result)
         sampleSMC(into: &result)
-        let temps = HIDTemperatureReader.read()
-        result.tempMaxC = temps.map(\.celsius).max()
+        let temps = temperatures.read()
+        result.tempMaxC = Self.maxTemperature(temps)
         result.memUsedGB = Self.memoryUsedGB()
         if let battery = try? SmartBatteryReader.read() {
             result.batteryPct = battery.percent
@@ -71,6 +72,12 @@ public final class TelemetrySampler {
             }
         }
         result.tempBatteryC = (try? smc.read("TB0T"))?.number
+    }
+
+    /// Hottest sensor, skipping "PMU tcal": a calibration value that reads a constant 51.9 at idle and under load
+    /// on M4 Max (measured 2026-11-24) and would otherwise always be the max.
+    static func maxTemperature(_ readings: [TemperatureReading]) -> Double? {
+        readings.filter { !$0.name.lowercased().contains("tcal") }.map(\.celsius).max()
     }
 
     /// (active + wired + compressor pages) × kernel page size, in GiB (1024³ bytes).

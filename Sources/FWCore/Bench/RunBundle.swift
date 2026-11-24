@@ -154,6 +154,15 @@ public struct RunBundle {
         return cut.isEmpty ? "game" : cut
     }
 
+    /// Moves a finished bundle created under a placeholder name to the name for `game` (non-colliding, same
+    /// parent). Returns the new location, or `directory` unchanged when the name would not change.
+    public static func rename(_ directory: URL, start: Date, game: String) throws -> URL {
+        guard directoryName(start: start, game: game) != directory.lastPathComponent else { return directory }
+        let target = availableDirectory(in: directory.deletingLastPathComponent(), start: start, game: game)
+        try FileManager.default.moveItem(at: directory, to: target)
+        return target
+    }
+
     /// A non-colliding bundle directory in `parent`: appends -2, -3, ... before `.fwrun` while the
     /// target already holds a run.json.
     public static func availableDirectory(in parent: URL, start: Date, game: String) -> URL {

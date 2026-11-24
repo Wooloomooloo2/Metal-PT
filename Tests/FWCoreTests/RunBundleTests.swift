@@ -47,6 +47,26 @@ import Foundation
         #expect(text.hasPrefix("t_ms,interval_ms,present_delay_ms\n"))
     }
 
+    @Test func renameMovesPlaceholderBundle() throws {
+        let root = tempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let dir = RunBundle.availableDirectory(in: root, start: start, game: "run")
+        let w = try RunBundleWriter(directory: dir, info: info())
+        try w.finish { _ in }
+        // Another bundle already holds the game's name: the rename picks the next free one.
+        let taken = root.appendingPathComponent(RunBundle.directoryName(start: start, game: "HZD.exe"))
+        try FileManager.default.createDirectory(at: taken, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: taken.appendingPathComponent("run.json"))
+        let moved = try RunBundle.rename(dir, start: start, game: "HZD.exe")
+        #expect(moved.lastPathComponent == "20270115-080000-hzd-exe-2.fwrun")
+        #expect(FileManager.default.fileExists(atPath: moved.appendingPathComponent("samples.csv").path))
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+        // Already under the game's name: nothing moves.
+        let again = try RunBundle.rename(taken, start: start, game: "HZD.exe")
+        #expect(again == taken)
+    }
+
     @Test func numbersUsePOSIXDecimal() {
         #expect(CSV.number(1.5, digits: 2) == "1.50")
         #expect(CSV.number(1234.5, digits: 1) == "1234.5")

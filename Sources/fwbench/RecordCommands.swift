@@ -8,7 +8,8 @@ enum RecordCommands {
                                        follows the Metal process with the most frames unless --pid/--name
         run [--seconds N] [--warmup S] [--label TEXT] -- CMD ARGS...
                                        launch CMD with the HUD variables, record it and its per-frame times;
-                                       stops at N seconds, when CMD exits or on Ctrl-C (CMD keeps running)
+                                       stops at N seconds, when CMD exits or on Ctrl-C (CMD keeps running;
+                                       it inherits SIGPIPE ignored so it survives fwbench exiting)
         stack PID                      print the detected runtime / translator / graphics stack as JSON
         ls                             list recorded runs
         (record/run/ls also take --out DIR to use DIR instead of ~/Documents/FW Benchmark/runs)
@@ -114,14 +115,29 @@ enum RecordCommands {
 
 /// One recording: telemetry timer, log stream, optional launched child, all handed back by one `Lease`.
 private final class Session: @unchecked Sendable {
-    let directory: URL
-    let recorder: RunRecorder
-    let stream: MetalHUDLogStream
-    let seconds: Double?
-    let queue = DispatchQueue(label: "fwbench.tick", qos: .utility)
-    let timer: DispatchSourceTimer
-    let done = DispatchSemaphore(value: 0)
-    private(set) var lease: Lease!
+    private let options: [String: String]
+    private let follow: FollowRule
+    /// Directory-name seed; nil means the placeholder "run" (renamed at finish once the game is known).
+    private let game: String?
+    private let seconds: Double?
+    private let warmup: Double
+    private let root: URL
+    private let sampler: TelemetrySampler
+    private let machine: RunInfo.Machine
+    private let settings: RunInfo.Settings
+
+    private let queue = DispatchQueue(label: "fwbench.tick", qos: .utility)
+    private let timer: DispatchSourceTimer
+    private let done = DispatchSemaphore(value: 0)
+    private let detections = DispatchGroup()
+    private var lease: Lease!
+
+    // Set up in `start` under `lock`; `stop` may run (from a signal) before they exist.
+    private let lock = NSLock()
+    private var startDate = Date()
+    private var directory: URL?
+    private var recorder: RunRecorder?
+    private var stream: MetalHUDLogStream?
 
     // Touched only on `queue`.
     private var ticks = 0
@@ -130,52 +146,57 @@ private final class Session: @unchecked Sendable {
     private var detected: Set<Int32> = []
 
     // Launched child (`run`).
-    private let childLock = NSLock()
     private var childPID: pid_t?
     private var childExited = false
     private var childName = ""
     /// Kept alive for the whole run: a deallocated handle closes the pipe.
     private var childStderr: FileHandle?
+    private let stderrEOF = DispatchSemaphore(value: 0)
 
+    /// Validates options and does the slow reads (pmset, battery, machine) before the run's start time is taken.
     init(options o: [String: String], follow: FollowRule, game: String?) throws {
+        options = o
+        self.follow = follow
+        self.game = game
         seconds = try number(o, "--seconds")
         if let seconds, seconds <= 0 { throw UsageError("--seconds needs a number > 0") }
-        let warmup = try number(o, "--warmup") ?? 0
-        let root = try RecordCommands.runsRoot(o["--out"], create: true)
-
-        let sampler = TelemetrySampler()
+        warmup = try number(o, "--warmup") ?? 0
+        root = try RecordCommands.runsRoot(o["--out"], create: true)
+        sampler = TelemetrySampler()
         _ = sampler.sample()   // prime IOReport so the first row has power and utilisation
-
-        let start = Date()
-        var info = RunInfo(appVersion: RecordCommands.appVersion, machine: MachineInfo.current(),
-                           game: .init(exe: game ?? ""),
-                           settings: .init(powerMode: MachineInfo.powerMode(),
-                                           onACAtStart: (try? SmartBatteryReader.read())?.externalConnected),
-                           start: start)
-        info.user.label = o["--label"] ?? ""
-        directory = RunBundle.availableDirectory(in: root, start: start, game: game ?? "run")
-        let writer = try RunBundleWriter(directory: directory, info: info)
-        let recorder = RunRecorder(writer: writer, telemetry: sampler, startTime: start.timeIntervalSince1970,
-                                   follow: follow, warmup: warmup)
-        self.recorder = recorder
-        stream = MetalHUDLogStream { recorder.hud($0) }
+        machine = MachineInfo.current()
+        settings = .init(powerMode: MachineInfo.powerMode(),
+                         onACAtStart: (try? SmartBatteryReader.read())?.externalConnected)
         timer = DispatchSource.makeTimerSource(queue: queue)
     }
 
     /// Runs until `--seconds`, the child's exit, or a signal (which exits from the lease's handler). Never returns.
     func start(child command: [String]?) -> Never {
         lease = Lease { [self] in stop() }
-        lease.releaseOnSignals()   // also ignores SIGPIPE, which a launched child inherits (see `spawn`)
+        lease.releaseOnSignals()   // before anything is created; also ignores SIGPIPE (inherited by a child)
 
         do {
+            try lock.withLock {
+                startDate = Date()
+                var info = RunInfo(appVersion: RecordCommands.appVersion, machine: machine, game: .init(exe: ""),
+                                   settings: settings, start: startDate)
+                info.user.label = options["--label"] ?? ""
+                let dir = RunBundle.availableDirectory(in: root, start: startDate, game: game ?? "run")
+                let writer = try RunBundleWriter(directory: dir, info: info)
+                let recorder = RunRecorder(writer: writer, telemetry: sampler,
+                                           startTime: startDate.timeIntervalSince1970, follow: follow, warmup: warmup)
+                directory = dir
+                self.recorder = recorder
+                stream = MetalHUDLogStream { recorder.hud($0) }
+            }
             if let command { try spawn(command) }
-            try stream.start()
+            try stream?.start()
         } catch {
             printError("error: \(error)")
             lease.release()
             exit(1)
         }
-        print("recording to \(directory.path) — Ctrl-C to stop")
+        print("recording to \(directory?.path ?? "?") — Ctrl-C to stop")
 
         timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(100))
         timer.setEventHandler { [self] in onTick() }
@@ -189,14 +210,24 @@ private final class Session: @unchecked Sendable {
     /// Lease restore: runs once, on normal end or on a signal.
     private func stop() {
         timer.cancel()
-        stream.stop()
+        let (stream, recorder, dir, start) = lock.withLock { (self.stream, self.recorder, directory, startDate) }
+        stream?.stop()
+        guard let recorder, var dir else { return }
+        // Let a stack detection that is under way land in run.json (lsof is bounded at 5 s; wait at most 2).
+        _ = detections.wait(timeout: .now() + 2)
         do { try recorder.finish() } catch { printError("error finishing run: \(error)") }
-        print("saved \(directory.path)")
-        let (pid, exited, name) = childLock.withLock { (childPID, childExited, childName) }
+        if game == nil, let exe = recorder.gameExe {
+            do { dir = try RunBundle.rename(dir, start: start, game: exe) } catch {
+                printError("could not rename the run folder: \(error)")
+            }
+        }
+        print("saved \(dir.path)")
+        let (pid, exited, name) = lock.withLock { (childPID, childExited, childName) }
         if let pid, !exited { print("\(name) is still running (pid \(pid))") }
     }
 
     private func onTick() {
+        guard let (recorder, stream) = lock.withLock({ self.recorder.map { ($0, self.stream) } }) else { return }
         let status: RecorderStatus?
         do { status = try recorder.tick(at: Date().timeIntervalSince1970) } catch {
             printError("error writing sample: \(error)")
@@ -206,7 +237,7 @@ private final class Session: @unchecked Sendable {
         guard let status else { return }
         ticks += 1
 
-        if !warnedStream && !stream.isRunning {
+        if !warnedStream && !(stream?.isRunning ?? false) {
             warnedStream = true
             printError("log stream stopped unexpectedly; still recording telemetry")
         }
@@ -221,8 +252,9 @@ private final class Session: @unchecked Sendable {
         }
         if let pid = recorder.followedPID, !detected.contains(pid) {
             detected.insert(pid)
-            let recorder = recorder
-            DispatchQueue.global(qos: .utility).async { recorder.setStack(StackDetector.detect(pid: pid), for: pid) }
+            DispatchQueue.global(qos: .utility).async(group: detections) {
+                recorder.setStack(StackDetector.detect(pid: pid), for: pid)
+            }
         }
         if let seconds, Double(ticks) >= seconds.rounded(.up) { done.signal() }
     }
@@ -230,8 +262,7 @@ private final class Session: @unchecked Sendable {
     // MARK: - Launched child
 
     /// posix_spawn so the child gets its own process group (terminal Ctrl-C reaches only fwbench) and default
-    /// handlers for the signals the lease ignores. SIGPIPE stays ignored so the child survives fwbench exiting
-    /// while it still writes to the stderr pipe.
+    /// handlers for the signals the lease ignores.
     private func spawn(_ command: [String]) throws {
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { throw BenchError("pipe failed: errno \(errno)") }
@@ -243,6 +274,8 @@ private final class Session: @unchecked Sendable {
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
                                               | POSIX_SPAWN_CLOEXEC_DEFAULT))
         posix_spawnattr_setpgroup(&attr, 0)
+        // SIGPIPE is deliberately NOT reset: the lease ignores it and the game inherits that, so the game survives
+        // writing to its stderr pipe after fwbench has exited (Ctrl-C or --seconds leave it running).
         var defaults = sigset_t()
         sigemptyset(&defaults)
         for s in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] { sigaddset(&defaults, s) }
@@ -273,14 +306,17 @@ private final class Session: @unchecked Sendable {
         }
         let name = ProcessNames.exeName(fromArgv0: command[0])
         let pid = spawned
-        childLock.withLock { childPID = pid; childName = name }
+        lock.withLock { childPID = pid; childName = name }
         print("launched \(name) (pid \(pid))")
 
         readStderr(readFD, pid: pid)
         Thread.detachNewThread { [self] in
             var status: Int32 = 0
             while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
-            childLock.withLock { childExited = true }
+            lock.withLock { childExited = true }
+            // Its last HUD lines may still be in the pipe: wait for EOF (a grandchild can hold the pipe open, so
+            // at most 1 s).
+            _ = stderrEOF.wait(timeout: .now() + 1)
             print("\(name) exited")
             done.signal()
         }
@@ -289,25 +325,29 @@ private final class Session: @unchecked Sendable {
     /// HUD lines become frame times; everything else is passed through to our stderr.
     private func readStderr(_ fd: Int32, pid: pid_t) {
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        childLock.withLock { childStderr = handle }
+        lock.withLock { childStderr = handle }
         let splitter = LineBuffer()
-        let recorder = recorder
+        let recorder = lock.withLock { self.recorder }
+        let eof = stderrEOF
         handle.readabilityHandler = { h in
             let chunk = h.availableData
             let lines = chunk.isEmpty ? splitter.flush() : splitter.add(chunk)
-            if chunk.isEmpty { h.readabilityHandler = nil }
             let now = Date().timeIntervalSince1970
             var passthrough = Data()
             for line in lines {
                 let text = String(decoding: line, as: UTF8.self)
                 if let hud = MetalHUDLine.parse(text) {
-                    recorder.frames(hud.frameTimes, pid: pid, at: now)
+                    recorder?.frames(hud.frameTimes, pid: pid, at: now)
                 } else {
                     passthrough.append(line)
                     passthrough.append(0x0A)
                 }
             }
             if !passthrough.isEmpty { FileHandle.standardError.write(passthrough) }
+            if chunk.isEmpty {
+                h.readabilityHandler = nil
+                eof.signal()
+            }
         }
     }
 }

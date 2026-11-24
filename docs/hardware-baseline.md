@@ -76,4 +76,19 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
     `MTL_HUD_LOG_METRICS_ENABLED=1` added nothing visible. Other variables are listed by `strings libMTLHud.dylib`.
   - Still to test: a real Wine/CrossOver/Protium game (DXMT and D3DMetal), whether the HUD env reaches it, stderr
     capture through `wine`, and `log stream` CPU cost.
+- [M] E8 2026-11-24: **each HUD line appears twice in the unified log**: first with empty subsystem, then a copy with
+  subsystem `com.apple.metal.hud`, category `Logging`, same thread and message, ~50–130 µs later. A naive per-event
+  frame delta then gives 0 fps on the copy; `FrameCounter` ignores an unchanged count < 0.25 s after the previous line.
+  [?] Whether the copy is always present: an earlier run that day read a steady 60 fps before the fix.
+- [M] E8 2026-11-24: the HUD message is **Default level**: the same predicate with `--level debug`, `--level info` or
+  no `--level` received the same lines (10 s side by side, test app running).
+- [M] E8 2026-11-24, recording cost (`fwbench record`, 1 Hz, 20 s windows, cumulative CPU from `ps -o time`):
+  - before: `/usr/bin/log stream --level debug` 2.66–2.87 s / 20 s ≈ 13–15 % (side by side over 10 s: `--level debug`
+    1.53 s, `--level info` 0.35 s, no `--level` 0.18 s); fwbench 0.37 s / 20 s ≈ 1.9 % (release), ≈ 2.0 % (debug).
+  - after dropping `--level debug` and keeping one HID event-system client: `log` 0.40–0.43 s / 20 s ≈ 2.0–2.2 %;
+    fwbench 0.35 s / 20 s ≈ 1.75 % (release), 0.42 s ≈ 2.1 % (debug). Combined ≈ 4 %, still over the 1 % target.
+  - Most of fwbench's tick is `IOHIDServiceClientCopyEvent` for the ~45 HID temperature sensors (IPC to the HID event
+    system; 187 of 227 tick samples in a `sample` profile); reusing the client did not change that much.
+- [M] E5/E8 2026-11-24: HID sensor "PMU tcal" reads a constant 51.9 at idle and under 8 s of 12× `yes` (a
+  calibration value, not a temperature); it was always the max. `temp_max_c` now skips it (die sensors ~40–43 °C).
 ## Open questions

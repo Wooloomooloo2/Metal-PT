@@ -39,7 +39,7 @@ public final class MetalHUDLogStream: @unchecked Sendable {
         guard process == nil else { return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        p.arguments = ["stream", "--style", "ndjson", "--level", "debug",
+        p.arguments = ["stream", "--style", "ndjson",
                        "--predicate", #"eventMessage BEGINSWITH "metal-HUD""#]
         let pipe = Pipe()
         p.standardOutput = pipe

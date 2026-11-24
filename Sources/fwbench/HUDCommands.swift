@@ -18,20 +18,42 @@ enum HUDCommands {
         case "on" where args.count == 1:
             try on()
         case "off" where args.count == 1:
-            unset()
-            print("HUD logging off")
+            guard unset() else { exit(1) }
         default:
             throw UsageError("hud needs 'on' or 'off'")
         }
     }
 
-    static func unset() {
-        for name in variables { _ = try? runTool("/bin/launchctl", ["unsetenv", name]) }
+    /// `launchctl getenv NAME`; nil if unset or unreadable.
+    static func launchdValue(_ name: String) -> String? {
+        guard let out = try? captureTool("/bin/launchctl", ["getenv", name]) else { return nil }
+        let value = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// Unsets both variables and reads them back; prints the outcome. False if either is still set.
+    @discardableResult
+    static func unset() -> Bool {
+        var failed: [String] = []
+        for name in variables {
+            let status = (try? runTool("/bin/launchctl", ["unsetenv", name])) ?? -1
+            if status != 0 || launchdValue(name) != nil { failed.append(name) }
+        }
+        if failed.isEmpty {
+            print("HUD logging off")
+            return true
+        }
+        printError("error: could not unset \(failed.joined(separator: ", ")); try 'launchctl unsetenv NAME'")
+        return false
     }
 
     /// Holds the variables as a lease: Ctrl-C (or any catchable signal) unsets them.
     private static func on() throws {
-        let lease = Lease { unset(); print("\nHUD logging off") }
+        if launchdValue("MTL_HUD_ENABLED") != nil || launchdValue("MTL_HUD_LOG_ENABLED") != nil {
+            throw BenchError("HUD logging is already on — a previous fwbench may have been killed; "
+                             + "run 'fwbench hud off'")
+        }
+        let lease = Lease { print(""); unset() }
         lease.releaseOnSignals()
         for name in variables {
             let status = try runTool("/bin/launchctl", ["setenv", name, "1"])
@@ -41,6 +63,7 @@ enum HUDCommands {
             }
         }
         print("HUD logging on for apps launched from now; Ctrl-C to turn off")
+        print("(if fwbench is killed, run 'fwbench hud off')")
         // The signal sources run on a global queue; they release the lease and exit.
         while true { pause() }
     }

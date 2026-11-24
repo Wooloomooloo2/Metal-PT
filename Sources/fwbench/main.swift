@@ -31,8 +31,8 @@ do {
         try HUDCommands.run(Array(args.dropFirst()))
     case "help", "--help", "-h", nil:
         print(usage)
-    default:
-        print(usage)
+    case let command?:
+        printError("unknown command: \(command)\n\n\(usage)")
         exit(64)
     }
 } catch let error as UsageError {
@@ -77,6 +77,20 @@ func number(_ options: [String: String], _ name: String) throws -> Double? {
 
 func printError(_ text: String) {
     FileHandle.standardError.write(Data((text + "\n").utf8))
+}
+
+/// Runs a tool and returns its stdout (stderr discarded).
+func captureTool(_ path: String, _ arguments: [String]) throws -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: path)
+    p.arguments = arguments
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    try p.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return String(decoding: data, as: UTF8.self)
 }
 
 /// Runs a tool and waits; returns its exit status.
