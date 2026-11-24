@@ -45,6 +45,24 @@ private func procArgs(exec: String, argv: [String], env: [String], pad: Int = 3,
         #expect(p?.env == ["A": "1"])
     }
 
+    @Test func argcLargerThanTheStringsIsNil() {
+        var b = procArgs(exec: "/x", argv: ["x"], env: ["K=V"], trailingZeros: 0)
+        b.replaceSubrange(0..<4, with: [3, 0, 0, 0])      // argc 3, two strings follow
+        #expect(ProcessNames.parseProcArgs(b) == nil)
+        b.replaceSubrange(0..<4, with: [0xff, 0xff, 0xff, 0x7f])   // Int32.max
+        #expect(ProcessNames.parseProcArgs(b) == nil)
+        b.replaceSubrange(0..<4, with: [0xff, 0xff, 0xff, 0xff])   // negative
+        #expect(ProcessNames.parseProcArgs(b) == nil)
+    }
+
+    /// An empty argv[0] cannot be told apart from the NUL padding after the exec path (ps(1) has the same limit):
+    /// it is absorbed, so argv takes the next string and env starts one string later. Documented, not detected.
+    @Test func emptyArgv0IsAbsorbedByThePadding() throws {
+        let p = try #require(ProcessNames.parseProcArgs(procArgs(exec: "/x", argv: [""], env: ["A=1", "B=2"])))
+        #expect(p.argv == ["A=1"])
+        #expect(p.env == ["B": "2"])
+    }
+
     @Test func ignoresStringsWithoutEquals() throws {
         let p = try #require(ProcessNames.parseProcArgs(procArgs(exec: "/x", argv: ["x"], env: ["junk", "K=V"])))
         #expect(p.env == ["K": "V"])
@@ -105,6 +123,23 @@ private func procArgs(exec: String, argv: [String], env: [String], pad: Int = 3,
         #expect(ProcessTree.launcher(of: 900, info: tree([:])) == nil)
         #expect(ProcessTree.launcher(of: 900, info: tree([900: (600, Self.game)])) == nil)   // parent unreadable
         #expect(ProcessTree.launcher(of: 900, info: tree([900: (600, Self.game), 600: (900, "/bin/sh")])) == nil)
+    }
+
+    @Test func bundleUsesTheLastContentsMacOS() {
+        // An ordinary folder named Contents above the app is not a bundle.
+        #expect(ProcessTree.bundle(ofExecutable: "/Users/u/Contents/Games/G.app/Contents/MacOS/G")?.name == "G")
+        #expect(ProcessTree.bundle(ofExecutable: "/Users/u/Contents/MacOS/Games/G.app/Contents/MacOS/G")?.path
+                == "/Users/u/Contents/MacOS/Games/G.app")
+        // A helper inside an app's Frameworks belongs to the outer app (Steam's real layout).
+        let helper = "/Users/u/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/Frameworks/"
+            + "Steam Helper.app/Contents/MacOS/Steam Helper"
+        #expect(ProcessTree.bundle(ofExecutable: helper)?.path
+                == "/Users/u/Library/Application Support/Steam/Steam.AppBundle/Steam")
+        #expect(ProcessTree.bundle(ofExecutable: "/A.app/Contents/Helpers/B.app/Contents/MacOS/b")?.name == "A")
+        // Measured on this Mac: Steam's helpers live under Contents/MacOS/Frameworks.
+        let measured = "/Users/u/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/"
+            + "Steam Helper.app/Contents/MacOS/Steam Helper"
+        #expect(ProcessTree.bundle(ofExecutable: measured)?.name == "Steam")
     }
 
     @Test func bundleOf() {

@@ -20,9 +20,11 @@ import MPTCore
     }
 
     private func input(_ t: Double, pid: Int32? = game, app: String? = "Cyberpunk2077", gpu: Double? = 90,
-                       hud: Bool = false, logging: Bool = true, sampling: Bool = true) -> FrameReportingCheck.Input {
+                       hud: Bool = false, otherHUD: Bool = false, logging: Bool = true,
+                       sampling: Bool = true) -> FrameReportingCheck.Input {
         FrameReportingCheck.Input(now: t, fpsLoggingOn: logging, sampling: sampling, frontmostPID: pid,
-                                  frontmostApp: app, selfPID: Self.selfPID, gpuBusyPct: gpu, hudLive: hud)
+                                  frontmostApp: app, selfPID: Self.selfPID, gpuBusyPct: gpu, hudLive: hud,
+                                  otherHUDActive: otherHUD)
     }
 
     /// Runs `n` ticks from `start`, each built by `make`; returns the last warning.
@@ -148,5 +150,23 @@ import MPTCore
         l.launcher = [:]
         var c = check(l)
         #expect(run(&c, 10) { input($0, app: nil) }?.hasPrefix("The frontmost app started before") == true)
+    }
+
+    /// A game reporting frames in the background (second display, windowed) keeps the GPU busy; the app in front
+    /// (Terminal) must not be blamed.
+    @Test func notApplicableWhileAnotherProcessReports() {
+        let l = Lookups()
+        l.env[901] = ["HOME": "/"]
+        var c = check(l)
+        #expect(run(&c, 30) { input($0, pid: 901, app: "Terminal", otherHUD: true) } == nil)
+        #expect(l.envCalls == 0)
+        // The count starts over once the other process stops reporting.
+        run(&c, from: 30, 9) { input($0, pid: 901, app: "Terminal") }
+        #expect(c.tick(input(39, pid: 901, app: "Terminal", otherHUD: true)) == nil)
+        #expect(run(&c, from: 40, 9) { input($0, pid: 901, app: "Terminal") } == nil)
+        #expect(c.tick(input(49, pid: 901, app: "Terminal")) != nil)
+        // A game starting to report in the background clears a shown warning.
+        #expect(c.tick(input(50, pid: 901, app: "Terminal", otherHUD: true)) == nil)
+        #expect(c.warning == nil)
     }
 }

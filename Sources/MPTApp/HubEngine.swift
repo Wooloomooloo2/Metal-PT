@@ -236,6 +236,14 @@ final class HubEngine: @unchecked Sendable {
         lock.withLock { counter.isLive(pid: pid, at: deps.clock()) }
     }
 
+    /// True when a process other than `pid` and Metal-PT sent a HUD line within `FrameCounter.staleAfter`.
+    func hasLiveHUD(excluding pid: Int32?) -> Bool {
+        lock.withLock {
+            let now = deps.clock()
+            return counter.pids.contains { $0 != pid && $0 != deps.selfPID && counter.isLive(pid: $0, at: now) }
+        }
+    }
+
     // MARK: Private
 
     private func tick() {

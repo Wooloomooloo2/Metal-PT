@@ -354,8 +354,14 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         await settle()
         #expect(f.hub.hasLiveHUD(pid: 4242))
         #expect(!f.hub.hasLiveHUD(pid: 4243))
+        #expect(f.hub.hasLiveHUD(excluding: 4243))     // 4242 reports while 4243 is in front
+        #expect(!f.hub.hasLiveHUD(excluding: 4242))
+        f.play(selfPID, frames: 60, at: t0 + 1)   // Metal-PT's own lines never count
+        await settle()
+        #expect(!f.hub.hasLiveHUD(excluding: 4242))
         f.clock.set(t0 + 4)   // past FrameCounter.staleAfter
         #expect(!f.hub.hasLiveHUD(pid: 4242))
+        #expect(!f.hub.hasLiveHUD(excluding: 4243))
         withExtendedLifetime(h) {}
     }
 

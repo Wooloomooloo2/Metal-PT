@@ -626,5 +626,4 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         model.showMainWindow()
         #expect(opened == 2)
     }
-
 }

@@ -5,10 +5,12 @@ import MPTCore
 /// environment lacks the HUD variables — it was started (or its launcher was) before FPS logging was turned on.
 ///
 /// Fed one `Input` per hub sample (1 Hz). Fires when FPS logging is on, the hub is sampling, the frontmost app is not
-/// Metal-PT, GPU busy ≥ `busyPct` for `ticksNeeded` consecutive ticks with no HUD line from that PID, and its
-/// environment is readable and lacks `MTL_HUD_LOG_ENABLED`. Says nothing for apps that have the variable (they
-/// are just not Metal games) or whose environment cannot be read. Clears when HUD lines arrive from it, the
-/// frontmost app changes (or quits), FPS logging goes off or sampling stops; a GPU dip only restarts the count.
+/// Metal-PT, no other process is sending HUD lines (GPU busy is system-wide: a game reporting in the background would
+/// make the app in front look busy), GPU busy ≥ `busyPct` for `ticksNeeded` consecutive ticks with no HUD line from
+/// that PID, and its environment is readable and lacks `MTL_HUD_LOG_ENABLED`. Says nothing for apps that have the
+/// variable (they are just not Metal games) or whose environment cannot be read. Clears when HUD lines arrive from it
+/// or from another process, the frontmost app changes (or quits), FPS logging goes off or sampling stops; a GPU dip
+/// only restarts the count.
 ///
 /// Environment and launcher lookups (sysctl/proc_pidinfo) run at most once per PID per `lookupCacheSeconds`.
 /// The message names apps; it is shown in the UI only and never written to run bundles.
@@ -24,9 +26,12 @@ public struct FrameReportingCheck {
         public var gpuBusyPct: Double?
         /// The frontmost PID sent a HUD line recently (`TelemetryHub.hasLiveHUD(pid:)`).
         public var hudLive: Bool
+        /// Another process (not the frontmost, not Metal-PT) sent a HUD line recently: GPU busy is system-wide, so
+        /// a game reporting in the background (second display, windowed) must not be blamed on the app in front.
+        public var otherHUDActive: Bool
 
         public init(now: Double, fpsLoggingOn: Bool, sampling: Bool, frontmostPID: Int32?, frontmostApp: String?,
-                    selfPID: Int32, gpuBusyPct: Double?, hudLive: Bool) {
+                    selfPID: Int32, gpuBusyPct: Double?, hudLive: Bool, otherHUDActive: Bool) {
             self.now = now
             self.fpsLoggingOn = fpsLoggingOn
             self.sampling = sampling
@@ -35,6 +40,7 @@ public struct FrameReportingCheck {
             self.selfPID = selfPID
             self.gpuBusyPct = gpuBusyPct
             self.hudLive = hudLive
+            self.otherHUDActive = otherHUDActive
         }
     }
 
@@ -67,7 +73,7 @@ public struct FrameReportingCheck {
             return nil
         }
         if front != pid { reset(pid: front) }
-        if i.hudLive {
+        if i.hudLive || i.otherHUDActive {
             reset(pid: front)
             return nil
         }

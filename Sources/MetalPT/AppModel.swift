@@ -736,7 +736,8 @@ final class AppModel: ObservableObject {
         let input = FrameReportingCheck.Input(
             now: now ?? lastFrameCheckTime ?? 0, fpsLoggingOn: fpsLoggingOn, sampling: hub.isSampling,
             frontmostPID: front?.pid, frontmostApp: front?.name, selfPID: ProcessInfo.processInfo.processIdentifier,
-            gpuBusyPct: gpuBusyPct, hudLive: front.map { hub.hasLiveHUD(pid: $0.pid) } ?? false)
+            gpuBusyPct: gpuBusyPct, hudLive: front.map { hub.hasLiveHUD(pid: $0.pid) } ?? false,
+            otherHUDActive: front.map { hub.hasLiveHUD(excluding: $0.pid) } ?? false)
         let warning = frameCheck.tick(input)
         guard warning != frameReportingWarning else { return }
         frameReportingWarning = warning

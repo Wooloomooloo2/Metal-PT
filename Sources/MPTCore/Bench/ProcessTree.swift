@@ -42,12 +42,30 @@ public enum ProcessTree {
         return nil
     }
 
-    /// The outermost bundle holding an app executable (`…/X.app/Contents/MacOS/x`, or a nested one such as a
-    /// helper app inside `Contents/Frameworks`): its path and its folder name without `.app`. Nil when the path is
-    /// not an app executable.
+    /// Folders inside a bundle's `Contents/` that hold nested bundles (helpers, login items, plug-ins).
+    static let nestedBundleFolders: Set<String> = ["Frameworks", "Helpers", "Library", "PlugIns", "XPCServices",
+                                                    "Resources", "SharedSupport", "Applications"]
+
+    /// The outermost bundle holding an app executable: its path and its folder name without `.app`; nil when the
+    /// path is not an app executable. The executable's own bundle is the path before the LAST `/Contents/MacOS/`;
+    /// an enclosing bundle is a prefix followed by `/Contents/<one of nestedBundleFolders>/` or
+    /// `/Contents/MacOS/<one of them>/` (measured: Steam's helpers are in `Steam/Contents/MacOS/Frameworks/`), so a
+    /// helper belongs to its app while an ordinary folder named `Contents` above an app does not count. The
+    /// outermost such prefix wins.
     public static func bundle(ofExecutable path: String) -> (path: String, name: String)? {
-        guard path.contains("/Contents/MacOS/"), let r = path.range(of: "/Contents/") else { return nil }
-        let bundlePath = String(path[..<r.lowerBound])
+        guard let macOS = path.range(of: "/Contents/MacOS/", options: .backwards) else { return nil }
+        var bundlePath = String(path[..<macOS.lowerBound])
+        var search = bundlePath.startIndex..<bundlePath.endIndex
+        while let r = bundlePath.range(of: "/Contents/", range: search) {
+            var rest = bundlePath[r.upperBound...]
+            if rest.hasPrefix("MacOS/") { rest = rest.dropFirst("MacOS/".count) }   // Steam: Contents/MacOS/Frameworks
+            if let folder = rest.split(separator: "/", maxSplits: 1).first, nestedBundleFolders.contains(String(folder)),
+               rest.contains("/") {
+                bundlePath = String(bundlePath[..<r.lowerBound])
+                break
+            }
+            search = r.upperBound..<bundlePath.endIndex
+        }
         var name = (bundlePath as NSString).lastPathComponent
         if name.hasSuffix(".app") { name.removeLast(4) }
         guard !name.isEmpty else { return nil }

@@ -31,12 +31,14 @@ public enum ProcessNames {
     /// Parses a `KERN_PROCARGS2` buffer: argc (Int32, host order), exec path, NUL padding, `argc` argv strings, then
     /// `KEY=value` env strings up to the first empty string (or the end). Nil when argc or the argv strings are
     /// cut off. In env, a string cut off by the end of the buffer and strings without `=` are dropped; the first
-    /// value of a repeated key wins.
+    /// value of a repeated key wins. An empty argv[0] cannot be told apart from the padding (ps(1) has the same
+    /// limit): it is absorbed, so argv takes the next string and env starts one string later.
     public static func parseProcArgs(_ b: [UInt8]) -> (argv: [String], env: [String: String])? {
         let n = MemoryLayout<Int32>.size
         guard b.count >= n else { return nil }
         let argc = b.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
-        guard argc >= 0 else { return nil }
+        // Each argv string takes at least one byte: an argc past the buffer is malformed (and is not looped over).
+        guard argc >= 0, Int(argc) <= b.count - n else { return nil }
         var i = n
         while i < b.count, b[i] != 0 { i += 1 }      // exec path
         guard i < b.count else { return nil }
