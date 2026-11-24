@@ -44,10 +44,25 @@ import Foundation
         var frames = (0..<1000).map { TimedFrame(tMs: 12_000 + Double($0) * 16.67, intervalMs: 16.67, presentDelayMs: 1) }
         frames += (0..<20).map { TimedFrame(tMs: 30_000 + Double($0), intervalMs: 50, presentDelayMs: 1) }
         frames.append(TimedFrame(tMs: 500, intervalMs: 999, presentDelayMs: 1)) // outside window
+        // Steady rows are 10…59 s. The row at 59 s covers (58, 59], so frames after 59 s belong to no steady row
+        // (the old [first, last + 1) window counted these two and gave a 0.1 % low of ~1 fps).
+        frames += [59_400, 59_500].map { TimedFrame(tMs: $0, intervalMs: 999, presentDelayMs: 1) }
         let s = RunSummary(bundle(rows: r, frames: frames))
         #expect(s.low1 == 20.0)
         #expect(s.low01 == 20.0)
         #expect(RunSummary(bundle(rows: r)).low1 == nil)
+    }
+
+    // A row at elapsed t covers (t − 1, t], so the lows window over steady rows first…last is [first − 1, last).
+    @Test func lowsWindowIsTheSecondBeforeEachRow() {
+        let r = rows(60) { _ in ["fps": "60", "fps_app": "game"] }   // steady 10…59
+        let frames = [TimedFrame(tMs: 8_900, intervalMs: 400, presentDelayMs: 1),    // before row 10's second
+                      TimedFrame(tMs: 9_500, intervalMs: 100, presentDelayMs: 1),    // row 10
+                      TimedFrame(tMs: 58_900, intervalMs: 100, presentDelayMs: 1),   // row 59
+                      TimedFrame(tMs: 59_500, intervalMs: 200, presentDelayMs: 1)]   // after the last row
+        let s = RunSummary(bundle(rows: r, frames: frames))
+        #expect(s.low1 == 10)
+        #expect(s.low01 == 10)
     }
 
     @Test func mixedFrameTimesHideLows() {

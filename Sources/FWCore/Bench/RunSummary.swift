@@ -89,12 +89,13 @@ public struct RunSummary: Sendable {
         medianFPS = stats["fps"]?.median
         p5FPS = stats["fps"]?.p5
 
-        // Lows from frames in the steady window.
+        // Lows from frames in the steady window. A row at elapsed t covers the second (t − 1, t], so steady rows
+        // first…last cover [first − 1, last).
         var low1: Double?, low01: Double?
         let times = steady.compactMap(elapsed)
         lowsMixed = bundle.info.warnings.contains(RunRecorder.mixedFramesWarning)
         if !lowsMixed, let frames = bundle.frames, let first = times.min(), let last = times.max() {
-            let lo = first, hi = last + 1
+            let lo = first - 1, hi = last
             let intervals = frames.filter { $0.tMs / 1000 >= lo && $0.tMs / 1000 < hi }
                 .map(\.intervalMs).sorted()
             if !intervals.isEmpty {
