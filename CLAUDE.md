@@ -40,6 +40,7 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
 - IORegistry stores signed battery values as unsigned 64-bit: −1550 mA reads as 18446744073709550066.
 - zsh's `log` is a builtin: always `/usr/bin/log`.
 - Each Metal HUD line appears twice in the unified log (empty subsystem, then `com.apple.metal.hud`); FrameCounter dedupes.
+- Steam lives at `…/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx` (no `.app`); games inherit Steam's environment.
 - AlDente writes the same charge keys. Quit it (and confirm its helper is not rewriting them) before any charge experiment.
 - Never call `ProcessInfo.hostName` / `Host.current()` in the app: in the bundled app NSHost waits on mDNS / Local
   Network privacy and stalled a recording start and quit for over a minute. `Privacy.localHostNames()` reads locally.
@@ -54,10 +55,12 @@ Live, Runs, Compare, Settings, overlay, hotkeys, export; `scripts/make-app.sh` b
 `Metal-PT.app` (0.2.0, hardened runtime; launchctl, `log stream` and SMC/IOKit reads verified under it).
 Still to check by hand: a real Wine game (CrossOver/Protium), a "Run saved" notification click in the bundled app,
 and launch at login from /Applications (starts menu-bar only).
+Metal-PT limiter/feedback plan (`docs/superpowers/plans/2026-11-24-metal-pt-limiter-and-feedback.md`) complete pending final
+review: GPU clock and memory-pressure columns, "What held it back", recording feedback, not-reporting-frames warning.
 M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`) is paused (E2-E5, E7 pending).
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
 ## Resume here
 
-After the user's manual checks: a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the
+Final review of the limiter/feedback plan. Then, after the user's manual checks: a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the
 Metal-PT Helper plan (battery charge limit and fans via a root helper; `make-app.sh helper` is reserved).

@@ -270,7 +270,7 @@ private struct LiveCharts: View {
             }
             LiveChart(title: "Power", unit: "W", series: [
                 .init(name: "System", color: ChartPalette.primary, points: points { Fmt.systemW($0.sample) }),
-                .init(name: "GPU (may under-read)", color: ChartPalette.gpu, dashed: true,
+                .init(name: "GPU (IOReport)", color: ChartPalette.gpu, dashed: true,
                       points: points { $0.sample.gpuW }),
             ], domain: .zeroTo(minUpper: 20))
             LiveChart(title: "Utilisation", unit: "%", series: [

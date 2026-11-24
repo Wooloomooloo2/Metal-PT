@@ -155,8 +155,8 @@ import Foundation
         let a = bundle("a.mptrun", info(), fps: 60, power: "gpu_w", watts: 5)
         let project = CompareProject(name: "p", baseline: 0, runs: [.init(bundle: "a.mptrun", name: "A")])
         let out = CompareReport.html(project: project, runs: [pair(a)])
-        #expect(out.contains("may under-read"))
-        #expect(!out.contains("under-reads"))
+        #expect(out.contains("GPU only (IOReport)"))
+        #expect(!out.contains("under-read"))
     }
 
     @Test func unidentifiedGameIsNamed() {

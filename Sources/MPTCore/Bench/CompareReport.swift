@@ -295,7 +295,7 @@ public enum CompareReport {
         if let best = efficient.max(by: { $0.summary.fpsPerWatt! < $1.summary.fpsPerWatt! }) {
             let gpuOnly = best.summary.powerColumn == "gpu_w"
             out += HTML.tile("Most efficient", "\(HTML.number(best.summary.fpsPerWatt, digits: 2))<small> FPS/W</small>",
-                        best.label, hint: gpuOnly ? "GPU-only power, may under-read" : "")
+                        best.label, hint: gpuOnly ? "GPU-only power (IOReport)" : "")
         } else {
             out += HTML.tile("Most efficient", dash, "no FPS and power for the same runs")
         }
@@ -344,7 +344,7 @@ public enum CompareReport {
         if items.contains(where: { $0.power != nil }) {
             out += "<div class=\"chart\"><h3>Mean power</h3>"
             out += HTML.bars(items.map { it in
-                let kind = it.summary.powerColumn == "gpu_w" ? "GPU only (IOReport, may under-read)"
+                let kind = it.summary.powerColumn == "gpu_w" ? "GPU only (IOReport)"
                     : it.summary.powerColumn == nil ? "" : "system"
                 return (label: short(it.label), value: it.power, note: join(baseNote(it), kind))
             }, unit: "W")

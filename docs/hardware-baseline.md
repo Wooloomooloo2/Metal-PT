@@ -55,6 +55,10 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
   **`PSTR` = system total** (equals `PDTR`, DC-in, on AC). `PHPC`/`PSVR`/`PZC*` rise with CPU *and* GPU load: SoC rails,
   not a CPU-only figure. IOReport `GPU Energy` read only 1.15–1.31 W under the GPU load while the SoC keys rose ~12 W —
   [?] it may under-report or cover only part of the GPU; don't use it as the GPU's power until checked with a heavy game.
+  (Superseded for heavy loads by the next line; it applies to light loads only.)
+- [M] 2026-11-24 real game run (Cyberpunk 2077 native, 164 steady s, M4 Max, macOS 27.0.1): IOReport `GPU Energy` median
+  56.4 W (p5 17.4, max 117.7) against SMC `PSTR` system median 118.4 W. So the earlier "may under-report" applies to light
+  loads only; under heavy load IOReport GPU Energy reports plausibly. Metal-PT labels it "GPU (IOReport)".
 - [M] At idle, P-core residency is mostly `IDLE` (PCPU000 IDLE ≈ 99 %), so busy = 1 − (IDLE+DOWN) share works; the
   100 % `V19P0` seen earlier was the game load.
 - [M] 2026-11-24 (macOS 27.0.1): GPU frequency table — IORegistry `pmgr` property `voltage-states9` (identical copies in
