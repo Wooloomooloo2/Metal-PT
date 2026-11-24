@@ -4,13 +4,14 @@ import MPTCore
 import SwiftUI
 import WebKit
 
-/// The selected run: its name, Edit / Submit, and its summary.html (the same report the CLI writes) in a web view.
+/// The selected run: its name, Edit / Submit (`SubmitSheet`), and its summary.html (the same report the CLI writes) in a web view.
 struct RunDetailView: View {
     let entry: RunEntry
     @ObservedObject var store: RunsStore
     /// `MPT_DEBUG=1`: log web view loads.
     var debug = false
     let onEdit: () -> Void
+    let onSubmit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,10 +34,10 @@ struct RunDetailView: View {
                 HStack {
                     Button("Edit Settings/Notes…", action: onEdit)
                         .disabled(entry.inProgress)
-                    // Submit (export / upload) arrives in the next step (T13).
-                    Button("Submit…") {}
-                        .disabled(true)
-                        .help("Submitting runs arrives in the next update.")
+                    Button("Submit…", action: onSubmit)
+                        .disabled(entry.inProgress)
+                        .help(entry.inProgress ? "Still recording: submit once the recording has stopped"
+                                               : "See exactly what would be sent, and export the upload file")
                 }
                 .fixedSize()
             }

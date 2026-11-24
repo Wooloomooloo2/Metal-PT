@@ -103,6 +103,21 @@ enum Snapshots {
                                 fields: .init(label: first.label, gameSettings: first.settings,
                                               notes: "Mountain path loop from the Mother's Heart save.\n"
                                                 + "Fans audible after ~90 s.")))))
+            // Submit with the notes left out, and ticked in.
+            if let url = withRuns.runs.url(of: first.id), var info = try? RunBundle.load(url, frames: false).info {
+                info.user.notes = "Mountain path loop from the Mother's Heart save."
+                try? RunBundleWriter.writeInfo(info, to: url)
+            }
+            if let url = withRuns.runs.url(of: first.id), let b = try? RunBundle.load(url, frames: false) {
+                let previews = (withoutNotes: RunExport.preview(b, includeNotes: false),
+                                withNotes: RunExport.preview(b, includeNotes: true))
+                for (name, include) in [("runs-submit", false), ("runs-submit-notes", true)] {
+                    list.append(Shot(name: name, size: nil, width: 520,
+                                     view: AnyView(SubmitSheet(entry: first, store: withRuns.runs,
+                                                               exportsFolder: URL(fileURLWithPath: "/tmp/exports"),
+                                                               previews: previews, includeNotes: include))))
+                }
+            }
         }
         return list
     }

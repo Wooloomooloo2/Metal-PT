@@ -9,6 +9,7 @@ let usage = """
 
     \(RecordCommands.usage)
     \(CompareCommands.usage)
+    \(ExportCommands.usage)
     \(HUDCommands.usage)
     """
 
@@ -30,6 +31,8 @@ do {
         try RecordCommands.summary(Array(args.dropFirst()))
     case "stack":
         try RecordCommands.stack(Array(args.dropFirst()))
+    case "export":
+        try ExportCommands.run(Array(args.dropFirst()))
     case "compare":
         try CompareCommands.run(Array(args.dropFirst()))
     case "hud":

@@ -38,11 +38,15 @@ public final class RunBundleWriter: @unchecked Sendable {
     /// Writes `<directory>/run.json` (privacy-scrubbed, atomically). The one place run.json is written: the
     /// recorder and later edits of the user fields (Runs page) both come through here.
     public static func writeInfo(_ info: RunInfo, to directory: URL) throws {
+        try encodedInfo(info).write(to: directory.appendingPathComponent("run.json"), options: .atomic)
+    }
+
+    /// run.json's bytes for `info`, privacy-scrubbed (what `writeInfo` writes).
+    public static func encodedInfo(_ info: RunInfo) throws -> Data {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try enc.encode(Privacy.scrub(info)).write(
-            to: directory.appendingPathComponent("run.json"), options: .atomic)
+        return try enc.encode(Privacy.scrub(info))
     }
 
     private static let stringColumns: Set<String> = ["fps_app", "thermal_state"]
@@ -102,7 +106,7 @@ public final class RunBundleWriter: @unchecked Sendable {
     }
 }
 
-public struct RunBundle {
+public struct RunBundle: Sendable {
     public let url: URL
     public let info: RunInfo
     public let rows: [[String: String]]

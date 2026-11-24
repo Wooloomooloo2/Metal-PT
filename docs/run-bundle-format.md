@@ -16,7 +16,7 @@ text (JSON and CSV, UTF-8). Code: `Sources/MPTCore/Bench/` (`RunInfo.swift`, `Ru
 - `<slug>` is the game exe name: lowercased, each run of characters outside `[a-z0-9]` becomes one `-`, leading and
   trailing `-` removed, cut to 40 characters (trailing `-` trimmed after the cut). Empty becomes `game`.
 - Collision: if the directory already holds a `run.json`, `-2`, `-3`, ... is appended before `.mptrun`.
-- Upload = zip the directory without `summary.html`. The directory name carries no meaning; read `run.json`.
+- Upload = the zip described in "Upload file" below. The directory name carries no meaning; read `run.json`.
 
 ## run.json
 
@@ -133,6 +133,57 @@ Guarantee: no user name, home path, hostname or serial number in any bundle file
 - The serial number is not collected.
 - Not scrubbed: anything a user types into `--label`, `--notes` or `--settings` that is not a home path or this machine's host name
   (for example a real name). A website should treat `user.*` as untrusted free text.
+
+## Upload file (`<run>.mptrun.zip`)
+
+What the app's Submit sheet ("Export file…") and `mpt export RUN` write, and what the website will accept. Written to
+`~/Documents/Metal-PT/exports/` (the data root's `exports`; `mpt export --out DIR`) as `<run folder name>.zip`, so
+`20261124-120000-hzd.mptrun.zip`; when the name is taken, `-2`, `-3`, … go before `.mptrun.zip`.
+
+The zip holds one folder, named as the run folder, so unzipping it gives a run folder that `mpt` and the app read:
+
+    20261124-120000-hzd.mptrun/
+      frames.csv      only if the run has one; copied as recorded
+      manifest.json
+      run.json        the run's run.json, re-scrubbed; user.notes is "" unless the user opted in
+      samples.csv     copied as recorded
+
+Nothing else from the run folder is included: no `summary.html` (the website renders its own), no dot-files, no
+other files. The zip is made with `ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent`, so it has no
+`__MACOSX/` or `._*` (AppleDouble) entries.
+
+`manifest.json` is written last and does not list itself:
+
+```json
+{
+  "app" : "0.2.0-dev",
+  "files" : [
+    { "bytes" : 196712, "path" : "frames.csv", "sha256" : "<64 lowercase hex>" },
+    { "bytes" : 1180, "path" : "run.json", "sha256" : "…" },
+    { "bytes" : 21933, "path" : "samples.csv", "sha256" : "…" }
+  ],
+  "format" : "metal-pt-run",
+  "includesNotes" : false,
+  "schema" : 1
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `format` | Always `metal-pt-run`. |
+| `schema` | The manifest's format, 1. (`run.json` carries its own `schema`.) |
+| `files` | Every other file in the folder, sorted by `path`: size in bytes and SHA-256 of its exact contents. |
+| `app` | Version of the Metal-PT (or `mpt`) that exported it; the version that recorded it is `run.json` `appVersion`. |
+| `includesNotes` | The user ticked "Also send my notes"; when false `run.json` has `user.notes` empty. |
+
+Privacy: the run folder's scrubbing (above) applies, and `run.json` goes through it again on export. The label and
+game settings are always included (they are the point of a submission); notes only when opted in.
+
+Size: when the files listed in the manifest total more than 25 MB (25 × 1024 × 1024 bytes, uncompressed), export is
+refused ("This run is too large to submit"), to keep within a single Cloudflare Worker request body.
+
+A website should check `format`, every listed file's size and hash, reject unknown files, and treat all text as
+untrusted.
 
 ## Compatibility rules
 

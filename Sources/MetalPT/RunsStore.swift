@@ -83,6 +83,27 @@ final class RunsStore: ObservableObject {
         return await Task.detached { Result { try index.summary(dir: id) } }.value
     }
 
+    /// The Submit sheet's previews of the run's upload file, without and with the notes. Refused while recording.
+    func exportPreviews(_ id: String) async throws -> (withoutNotes: ExportPreview, withNotes: ExportPreview) {
+        guard let index, let url = url(of: id) else { throw CocoaError(.fileNoSuchFile) }
+        return try await Task.detached {
+            guard !index.isInProgress(dir: id) else { throw RunIndexError.inProgress }
+            let bundle = try RunBundle.load(url, frames: false)
+            return (RunExport.preview(bundle, includeNotes: false), RunExport.preview(bundle, includeNotes: true))
+        }.value
+    }
+
+    /// Writes the run's upload file (`<run>.mptrun.zip`) into `folder` and returns it. Refused while recording.
+    func export(_ id: String, includeNotes: Bool, to folder: URL) async throws -> URL {
+        guard let index, let url = url(of: id) else { throw CocoaError(.fileNoSuchFile) }
+        let app = AppModel.appVersion
+        return try await Task.detached {
+            guard !index.isInProgress(dir: id) else { throw RunIndexError.inProgress }
+            let bundle = try RunBundle.load(url, frames: false)
+            return try RunExport.write(bundle, includeNotes: includeNotes, to: folder, appVersion: app)
+        }.value
+    }
+
     /// Snapshots: index `root` synchronously.
     func showFixture(root: URL) {
         let index = index(for: root)

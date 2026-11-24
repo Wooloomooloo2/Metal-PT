@@ -14,6 +14,7 @@ struct RunsPage: View {
     /// Runs ticked for comparison.
     @State private var ticked: Set<String>
     @State private var editing: RunEntry?
+    @State private var submitting: RunEntry?
     @State private var deleting: RunEntry?
     @State private var problem: String?
 
@@ -55,6 +56,9 @@ struct RunsPage: View {
         .onChange(of: model.selectedRun) { selectRequestedRun() }
         .sheet(item: $editing) { entry in
             EditNotesSheet(entry: entry, store: store)
+        }
+        .sheet(item: $submitting) { entry in
+            SubmitSheet(entry: entry, store: store, exportsFolder: model.folder("exports"))
         }
         .confirmationDialog("Move this run to the Trash?", isPresented: Binding(
             get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { entry in
@@ -120,6 +124,8 @@ struct RunsPage: View {
         .contextMenu {
             Button("Edit Settings and Notes…") { editing = entry }
                 .disabled(entry.inProgress)
+            Button("Submit…") { submitting = entry }
+                .disabled(entry.inProgress)
             Button("Show in Finder") {
                 if let url = store.url(of: entry.id) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
@@ -161,7 +167,8 @@ struct RunsPage: View {
     @ViewBuilder
     private var detail: some View {
         if let entry = shown {
-            RunDetailView(entry: entry, store: store, debug: model.debugLogging, onEdit: { editing = entry })
+            RunDetailView(entry: entry, store: store, debug: model.debugLogging, onEdit: { editing = entry },
+                          onSubmit: { submitting = entry })
         } else if !store.loaded {
             ProgressView().controlSize(.small)
         } else {
