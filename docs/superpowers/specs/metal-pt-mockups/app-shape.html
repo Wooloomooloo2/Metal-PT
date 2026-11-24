@@ -1,0 +1,63 @@
+<h2>Metal-PT: how should the app be shaped?</h2>
+<p class="subtitle">Both options have the same pieces — global hotkey (⌃⇧F6) to start/stop recording, an in-game overlay, run summaries, comparisons and Submit. The question is where you spend your time between games.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Menu-bar first</h3>
+      <p>Lives in the menu bar. The dropdown shows live stats and Record. Runs, Compare and Monitor open as separate small windows when you need them. No Dock icon.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>One main window + menu bar</h3>
+      <p>A normal app window with a sidebar (Live · Runs · Compare · Submit · Settings), plus a small menu-bar item for status and Record. Dock icon while the window is open.</p>
+    </div>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A — menu-bar dropdown</div>
+    <div class="mockup-body" style="font-size:13px">
+      <div style="text-align:right;padding:4px 8px;border-bottom:1px solid #ccc">◉ 58 fps &nbsp; 41 W &nbsp; 🔋80%</div>
+      <div style="width:290px;margin:8px 0 0 auto;border:1px solid #bbb;border-radius:10px;padding:10px;background:#fafafa">
+        <div style="display:flex;justify-content:space-between"><b>HorizonZeroDawnRemastered</b><span style="color:#c00">● REC 01:23</span></div>
+        <div style="color:#666;margin-bottom:8px">Protium · FEX · DXMT</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px">
+          <div>FPS <b>58</b> (1% 44)</div><div>System <b>41 W</b></div>
+          <div>GPU <b>92%</b></div><div>CPU P <b>31%</b></div>
+          <div>Die <b>78 °C</b></div><div>Fans <b>3100 rpm</b></div>
+        </div>
+        <button class="mock-button" style="width:100%">Stop recording (⌃⇧F6)</button>
+        <div style="border-top:1px solid #ddd;margin-top:8px;padding-top:6px;line-height:1.8">
+          Overlay: <b>On</b> (⌃⇧F7)<br>
+          Recent runs ▸<br>Compare… <br>Monitor… <br>Settings…
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">B — main window</div>
+    <div class="mockup-body" style="font-size:13px">
+      <div style="display:flex;border:1px solid #bbb;border-radius:8px;overflow:hidden;min-height:300px">
+        <div class="mock-sidebar" style="width:110px;line-height:2">
+          <b>Live</b><br>Runs<br>Compare<br>Submit<br>Settings
+        </div>
+        <div class="mock-content" style="flex:1;padding:10px">
+          <div style="display:flex;justify-content:space-between"><b>HorizonZeroDawnRemastered</b><span style="color:#c00">● REC 01:23</span></div>
+          <div style="color:#666;margin-bottom:8px">Protium · FEX · DXMT</div>
+          <div class="placeholder" style="height:70px">FPS + frame time chart (live, last 5 min)</div>
+          <div class="placeholder" style="height:50px;margin-top:6px">Power · utilisation chart</div>
+          <div class="placeholder" style="height:40px;margin-top:6px">Temps · fans</div>
+          <button class="mock-button" style="margin-top:8px">Stop recording (⌃⇧F6)</button>
+        </div>
+      </div>
+      <div style="text-align:right;color:#666;margin-top:6px">+ menu bar: ◉ 58 fps · Record ▸</div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">My pick: <b>B</b>. Runs, Compare and Submit are where people will spend real time, and they're cramped as pop-up windows. The menu-bar item still gives one-click Record and status. Click one, then reply in the terminal.</p>

@@ -1,0 +1,46 @@
+<h2>The in-game overlay</h2>
+<p class="subtitle">Click-through, never takes focus, sits above fullscreen games. Toggle with ⌃⇧F7. While recording it shows ● REC and the time. Which style should be the default? (The other can be a setting.)</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>Compact strip</h3><p>One line in a corner. Least in the way; good for playing.</p></div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>Detailed panel</h3><p>A small block with labelled rows and a frame-time sparkline. Good for testing settings.</p></div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content"><h3>Compact, expands while recording</h3><p>Strip while playing; switches to the panel automatically during a recording, back after.</p></div>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A — compact strip (top-left)</div>
+    <div class="mockup-body" style="background:linear-gradient(135deg,#3a4a2a,#7a6a3a 60%,#2a3a4a);height:220px;position:relative;border-radius:6px">
+      <div style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,.55);color:#fff;font:12px ui-monospace,monospace;padding:4px 8px;border-radius:6px;white-space:nowrap">
+        <span style="color:#ff5a4e">● 01:23</span>&nbsp; <b>58</b> fps · 1% 44 · 41 W · GPU 92% · 78 °C
+      </div>
+      <div style="position:absolute;bottom:10px;right:12px;color:rgba(255,255,255,.6);font-size:11px">(game)</div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">B — detailed panel (top-left)</div>
+    <div class="mockup-body" style="background:linear-gradient(135deg,#3a4a2a,#7a6a3a 60%,#2a3a4a);height:220px;position:relative;border-radius:6px">
+      <div style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);color:#fff;font:12px ui-monospace,monospace;padding:8px 10px;border-radius:8px;width:190px;line-height:1.55">
+        <div style="display:flex;justify-content:space-between"><b style="font-size:18px">58 <span style="font-size:11px;opacity:.7">fps</span></b><span style="color:#ff5a4e">● REC 01:23</span></div>
+        <svg width="170" height="22" style="display:block;margin:2px 0"><polyline fill="none" stroke="#7fd1ff" stroke-width="1.5" points="0,12 10,11 20,13 30,12 40,6 50,12 60,11 70,13 80,12 90,12 100,3 110,12 120,11 130,12 140,13 150,12 160,11 170,12"/></svg>
+        <div>frame 17.2 ms · 1% low 44</div>
+        <div>System 41 W · GPU 92%</div>
+        <div>CPU P 31% · E 18%</div>
+        <div>Die 78 °C · fans 3100</div>
+        <div style="opacity:.7">Protium · DXMT</div>
+      </div>
+      <div style="position:absolute;bottom:10px;right:12px;color:rgba(255,255,255,.6);font-size:11px">(game)</div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Note: the Metal HUD (Apple's own FPS box) also has to be on screen for FPS to be logged — Metal-PT can't hide it. The overlay should sit in a different corner by default (Metal HUD is top-right). My pick: <b>C</b>.</p>

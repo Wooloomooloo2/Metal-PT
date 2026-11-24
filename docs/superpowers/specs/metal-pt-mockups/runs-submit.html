@@ -1,0 +1,53 @@
+<h2>Runs, Compare and Submit</h2>
+<p class="subtitle">One proposal to react to rather than options. Left: the Runs page. Right: what Submit shows before anything is sent. Tell me what's wrong or missing.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Runs (sidebar → Runs)</div>
+    <div class="mockup-body" style="font-size:12px">
+      <div style="display:flex;border:1px solid #bbb;border-radius:8px;overflow:hidden;min-height:330px">
+        <div style="width:230px;border-right:1px solid #ddd">
+          <div style="padding:6px;border-bottom:1px solid #ddd;display:flex;gap:4px">
+            <input class="mock-input" placeholder="Filter: game, stack, label" style="flex:1;font-size:11px">
+          </div>
+          <div style="padding:6px;background:#e8f0fe">☑ <b>Horizon Zero Dawn</b><br><span style="color:#666">Protium · DXMT · High 1440p</span><br>Today 14:02 · 2:00 · <b>58.1</b> fps · 1% 44</div>
+          <div style="padding:6px">☑ <b>Horizon Zero Dawn</b><br><span style="color:#666">CrossOver · D3DMetal · High 1440p</span><br>Today 13:41 · 2:00 · <b>52.6</b> fps · 1% —</div>
+          <div style="padding:6px">☐ <b>Cyberpunk 2077</b><br><span style="color:#666">CrossOver · D3DMetal · Medium</span><br>Yesterday · 3:00 · <b>41.0</b> fps</div>
+          <div style="padding:6px;border-top:1px solid #ddd"><button class="mock-button" style="font-size:11px">Compare 2 selected…</button></div>
+        </div>
+        <div style="flex:1;padding:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b>Horizon Zero Dawn — Protium DXMT</b>
+            <span><button class="mock-button" style="font-size:11px">Edit notes</button> <button class="mock-button" style="font-size:11px">Submit…</button></span>
+          </div>
+          <div class="placeholder" style="height:250px;margin-top:6px">The run summary (same page as the HTML report: tiles, charts, stats), shown inside the app</div>
+        </div>
+      </div>
+      <p style="color:#666;margin-top:6px">Compare opens the comparison (baseline, "what differs") in the same place; saved comparisons live under Compare in the sidebar. After a hotkey recording stops, a notification "Run saved — add settings/notes" opens this page.</p>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Submit… (sheet)</div>
+    <div class="mockup-body" style="font-size:12px">
+      <div style="border:1px solid #bbb;border-radius:10px;padding:12px;background:#fafafa">
+        <b style="font-size:14px">Submit this run</b>
+        <p style="margin:6px 0;color:#444">This is exactly what will be sent. Nothing leaves your Mac until you press Submit.</p>
+        <div style="border:1px solid #ddd;border-radius:6px;padding:8px;background:#fff;line-height:1.7">
+          <b>Game</b> HorizonZeroDawnRemastered.exe<br>
+          <b>Stack</b> Protium 0.3.1 · FEX · DXMT<br>
+          <b>Mac</b> Mac16,5 · M4 Max 40-core GPU · 48 GB · macOS 26.6<br>
+          <b>Settings you typed</b> "High, 1440p, FSR off" ✎<br>
+          <b>Notes</b> "Mountain path loop" ✎<br>
+          <b>Data</b> 120 s of 1 Hz samples (31 columns), 7 012 frame times<br>
+          <span style="color:#1d7a3e">✓ No user name, home folder, computer name or serial number</span>
+        </div>
+        <label style="display:block;margin-top:8px">☐ Also send my notes (free text you typed)</label>
+        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:6px">
+          <button class="mock-button">Export file…</button>
+          <button class="mock-button" disabled style="opacity:.5">Submit (website coming soon)</button>
+        </div>
+      </div>
+      <p style="color:#666;margin-top:6px">Until the site exists, "Export file…" saves the upload file (<code>.mptrun</code>, one zip). Later the same sheet posts it to your Cloudflare site.</p>
+    </div>
+  </div>
+</div>

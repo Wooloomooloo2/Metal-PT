@@ -1,0 +1,43 @@
+<h2>Metal-PT Helper (battery + fans)</h2>
+<p class="subtitle">Last screen. A separate menu-bar app with a settings window. Left: everyday use. Right: the one-time hardware check that has to pass on each Mac before a feature can be switched on.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Menu-bar dropdown + Battery / Fans</div>
+    <div class="mockup-body" style="font-size:12px">
+      <div style="text-align:right;padding:4px 8px;border-bottom:1px solid #ccc">🔋 80% ⏸ &nbsp; 🌀 Silent</div>
+      <div style="width:300px;margin:8px 0 0 auto;border:1px solid #bbb;border-radius:10px;padding:10px;background:#fafafa;line-height:1.7">
+        <b>Profile</b> &nbsp; [ Silent | <u>Balanced</u> | Performance ]<br>
+        <span style="color:#666">Power mode Automatic · fans: macOS</span>
+        <hr>
+        <b>Battery</b> 80 % · on power · <b>holding at limit</b><br>
+        Charge limit <b>80 %</b> ───────●──── &nbsp; <button class="mock-button" style="font-size:11px">Top up to 100 %</button><br>
+        Heat protection: pause charging above <b>40 °C</b><br>
+        <span style="color:#666">Battery current 0 mA ✓ (charging really stopped)</span>
+        <hr>
+        <b>Fans</b> 2 × 2350 rpm · curve "Quiet" · die 61 °C<br>
+        <span style="color:#666">Fans return to macOS on quit, sleep, crash or sensor loss</span>
+        <hr>
+        Helper: <span style="color:#1d7a3e">running</span> · AlDente: not running<br>
+        Settings… · Fan curve editor… · Quit
+      </div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Hardware check (first time you enable charge limit)</div>
+    <div class="mockup-body" style="font-size:12px">
+      <div style="border:1px solid #bbb;border-radius:10px;padding:12px;background:#fafafa;line-height:1.8">
+        <b style="font-size:14px">Check charge control on this Mac</b>
+        <p style="margin:4px 0;color:#444">Metal-PT Helper will briefly pause charging and watch the battery current. Keep the charger connected, battery below 95 %. About 2 minutes.</p>
+        ✓ Charger connected, battery 72 %<br>
+        ✓ AlDente not running<br>
+        ✓ Found charge key <code>CHTE</code><br>
+        ◐ Pausing charging… battery current 1 820 → 340 → <b>0 mA</b><br>
+        ○ Restoring charging and confirming current rises<br>
+        ○ Saving result for this Mac (Mac16,5, macOS 26.6)
+        <div style="margin-top:8px;padding:6px;border-radius:6px;background:#eef7ee;color:#1d4d2a">If any step fails, the original bytes are written back, charging is restored, and the feature stays off with the reason shown.</div>
+        <p style="color:#666;margin:6px 0 0">Fans get the same kind of check: take one fan to a target speed, confirm the RPM really changes, hand it back, confirm macOS takes over. Macs without fans (Air) or battery (mini/Studio) just don't show those sections.</p>
+      </div>
+    </div>
+  </div>
+</div>
