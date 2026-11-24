@@ -89,6 +89,9 @@ public final class DispatchHubScheduler: HubScheduler {
 /// of the hub's stream: starting and stopping it never starts or stops the stream. The hub's `AsyncStackCache` is
 /// shared with the session (`stackOf` and `detectNow`), so each PID's stack is detected once.
 ///
+/// App Nap: while a recording runs the hub holds `AppActivity.recording` (`Dependencies.activities`), so the session's
+/// 1 Hz tick is not throttled when Metal-PT has no visible window.
+///
 /// Threads: the hub is main-actor; sampling, stream events and timers run off the main thread in `HubEngine`
 /// (lock-protected) and reach the published properties via the main queue.
 @MainActor
@@ -138,6 +141,8 @@ public final class TelemetryHub: ObservableObject {
         /// Never followed (Metal-PT itself logs HUD lines when FPS logging was on at its launch).
         public var selfPID: Int32
         public var makeSession: @Sendable (RecordingSession.Options, SessionParts) throws -> RecordingSession
+        /// App Nap / idle-sleep activities (`AppActivity`): the hub holds one while a recording runs.
+        public var activities: ActivityProviding
 
         public init(makeSampler: @escaping @Sendable () -> TelemetrySource,
                     makeStream: @escaping @Sendable () -> HUDEventSource,
@@ -147,7 +152,8 @@ public final class TelemetryHub: ObservableObject {
                     detectStack: @escaping @Sendable (Int32) -> Stack,
                     selfPID: Int32,
                     makeSession: @escaping @Sendable (RecordingSession.Options, SessionParts) throws
-                        -> RecordingSession) {
+                        -> RecordingSession,
+                    activities: ActivityProviding = SystemActivities()) {
             self.makeSampler = makeSampler
             self.makeStream = makeStream
             self.clock = clock
@@ -156,6 +162,7 @@ public final class TelemetryHub: ObservableObject {
             self.detectStack = detectStack
             self.selfPID = selfPID
             self.makeSession = makeSession
+            self.activities = activities
         }
 
         /// The real sampler, `log stream`, wall clock, Dispatch timers and lsof stack detection.
@@ -236,10 +243,15 @@ public final class TelemetryHub: ObservableObject {
     /// Live HUD processes except Metal-PT, busiest first, with exe name and stack (nil while detecting).
     public var followCandidates: [(pid: Int32, app: String, stack: Stack?)] { engine.candidates() }
 
+    /// The hub's activity provider (the app also holds `AppActivity.overlay` from it while the overlay is shown).
+    public var activities: ActivityProviding { deps.activities }
+
     private let deps: Dependencies
     private let engine: HubEngine
     private var holds: [UUID: Need] = [:]
     private var menuBarToken: Token?
+    /// `AppActivity.recording`, held exactly while `recordingID` is set (from start until finished or failed).
+    private var recordingActivity: ActivityToken?
     /// Set from `startRecording` until the run is finished (keeps the sampler for a tick in flight).
     private var recordingID: UUID?
     /// The session being created and started off main; completes after `session` is installed.
@@ -460,6 +472,13 @@ public final class TelemetryHub: ObservableObject {
             streamError = "\(error)"
         }
         engine.setSampling(active: wantSamples || recordingActive, ticking: wantSamples && !recordingActive)
+        // Every recording exit path (stop, quit, session end, failed start) clears `recordingID` and reconciles.
+        if recordingActive, recordingActivity == nil {
+            recordingActivity = deps.activities.begin(AppActivity.recording, reason: AppActivity.recordingReason)
+        } else if !recordingActive, let a = recordingActivity {
+            recordingActivity = nil
+            a.end()
+        }
         if isSampling != (wantSamples || recordingActive) {
             isSampling = wantSamples || recordingActive
             onSamplingChange?(isSampling)

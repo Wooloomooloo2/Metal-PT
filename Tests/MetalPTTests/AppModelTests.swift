@@ -46,6 +46,25 @@ private struct NoScheduler: HubScheduler {
     func once(after delay: Double, _ work: @escaping @Sendable () -> Void) -> HubTimer { NoTimer() }
 }
 
+private final class FakeActivities: ActivityProviding, @unchecked Sendable {
+    final class Token: ActivityToken, @unchecked Sendable {
+        let options: ProcessInfo.ActivityOptions
+        private let lock = NSLock()
+        private var isEnded = false
+        init(_ options: ProcessInfo.ActivityOptions) { self.options = options }
+        var ended: Bool { lock.withLock { isEnded } }
+        func end() { lock.withLock { isEnded = true } }
+    }
+    private let lock = NSLock()
+    private var all: [Token] = []
+    func begin(_ options: ProcessInfo.ActivityOptions, reason: String) -> ActivityToken {
+        let t = Token(options)
+        lock.withLock { all.append(t) }
+        return t
+    }
+    var active: [ProcessInfo.ActivityOptions] { lock.withLock { all }.filter { !$0.ended }.map(\.options) }
+}
+
 @MainActor
 private final class FakeNotifier: RecordingNotifying {
     var onOpenRun: ((URL) -> Void)?
@@ -61,6 +80,7 @@ private final class Fixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("mptapp-\(UUID().uuidString)")
     let launchctl = FakeLaunchctl()
     let notifier = FakeNotifier()
+    let activities = FakeActivities()
     let defaults: UserDefaults = MemoryDefaults()   // in memory: no plist in ~/Library/Preferences
     let hub: TelemetryHub
     let model: AppModel
@@ -82,7 +102,8 @@ private final class Fixture {
                     machine: { (RunInfo.Machine(modelID: "Mac16,5", chip: "Apple M4 Max", memoryGB: 64,
                                                 osVersion: "26.0", osBuild: "x"), RunInfo.Settings()) },
                     stackDetector: parts.stackDetector, argv0: parts.argv0, stackOf: parts.stackOf)
-            })
+            },
+            activities: activities)
         hub = TelemetryHub(dependencies: deps)
         model = AppModel(hub: hub, fpsLogging: FPSLogging(launchctl: launchctl), live: true, usesAppKit: false,
                          defaults: defaults, env: ["MPT_DATA_ROOT": root.path], notifier: notifier)
@@ -269,6 +290,22 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         f.model.toggleRecording()
         try await waitUntil("idle again") { f.model.recordState == .idle && f.notifier.posted.count == 4 }
         #expect(f.notifier.posted.last?.title == "Run saved — add settings")
+    }
+
+    /// The overlay holds the lighter activity (no App Nap, idle sleep allowed) exactly while shown, and quit ends it.
+    @Test func overlayHoldsActivityWhileShown() {
+        let f = Fixture()
+        f.model.launch()
+        #expect(f.activities.active.isEmpty)
+        f.model.toggleOverlay()
+        #expect(f.activities.active == [AppActivity.overlay])
+        #expect(!AppActivity.overlay.contains(.idleSystemSleepDisabled))
+        f.model.toggleOverlay()
+        #expect(f.activities.active.isEmpty)
+        f.model.toggleOverlay()
+        #expect(f.activities.active.count == 1)
+        f.model.quit()
+        #expect(f.activities.active.isEmpty)
     }
 
     @Test func startNoticeNamesGameAndStack() {

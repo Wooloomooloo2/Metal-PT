@@ -106,6 +106,8 @@ final class AppModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var debugObservers: [NSObjectProtocol] = []
     private let overlayLease = HubLease()
+    /// `AppActivity.overlay` while the overlay is shown (the panel's numbers must not be App-Napped).
+    private var overlayActivity: ActivityToken?
     private var overlay: OverlayController?
     private var quitDone = false
     /// The press-to-start task, from the press until the hub has started (or refused) the recording. While it is
@@ -462,6 +464,12 @@ final class AppModel: ObservableObject {
     private func overlayChanged() {
         guard live else { return }   // snapshots set `overlayOn` for the menu row only
         overlayLease.set(overlayOn, .samples, on: hub)
+        if overlayOn, overlayActivity == nil {
+            overlayActivity = hub.activities.begin(AppActivity.overlay, reason: AppActivity.overlayReason)
+        } else if !overlayOn, let a = overlayActivity {
+            overlayActivity = nil
+            a.end()
+        }
         guard usesAppKit else { return }
         if overlayOn {
             let controller = overlay ?? OverlayController(model: self, defaults: defaults)

@@ -102,6 +102,28 @@ private final class Gate: @unchecked Sendable {
     }
 }
 
+/// Records each activity begun and whether it has ended.
+private final class FakeActivities: ActivityProviding, @unchecked Sendable {
+    final class Token: ActivityToken, @unchecked Sendable {
+        let options: ProcessInfo.ActivityOptions
+        let reason: String
+        private let lock = NSLock()
+        private var isEnded = false
+        init(_ options: ProcessInfo.ActivityOptions, _ reason: String) { self.options = options; self.reason = reason }
+        var ended: Bool { lock.withLock { isEnded } }
+        func end() { lock.withLock { isEnded = true } }
+    }
+    private let lock = NSLock()
+    private var all: [Token] = []
+    func begin(_ options: ProcessInfo.ActivityOptions, reason: String) -> ActivityToken {
+        let t = Token(options, reason)
+        lock.withLock { all.append(t) }
+        return t
+    }
+    var begun: [Token] { lock.withLock { all } }
+    var active: [Token] { begun.filter { !$0.ended } }
+}
+
 private let t0 = 1_700_000_000.0
 private let selfPID: Int32 = 777
 
@@ -111,6 +133,7 @@ private final class Fixture {
     let streams = Streams()
     let clock = FakeClock(t0)
     let scheduler = ManualScheduler()
+    let activities = FakeActivities()
     let detection = Gate()
     /// Holds `makeSession` (before the session exists).
     let creation = Gate()
@@ -119,7 +142,7 @@ private final class Fixture {
 
     init() {
         let samplers = samplers, streams = streams, clock = clock, detection = detection, creation = creation
-        let deps = TelemetryHub.Dependencies(
+        var deps = TelemetryHub.Dependencies(
             makeSampler: { samplers.make() },
             makeStream: { streams.make() },
             clock: { clock.now },
@@ -136,6 +159,7 @@ private final class Fixture {
                                                 osVersion: "26.0", osBuild: "x"), RunInfo.Settings()) },
                     stackDetector: parts.stackDetector, argv0: parts.argv0, stackOf: parts.stackOf)
             })
+        deps.activities = activities
         hub = TelemetryHub(dependencies: deps)
     }
 
@@ -406,6 +430,41 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         try await f.hub.startRecording(options: f.options())   // allowed again
         #expect(f.hub.stopRecordingNow() != nil)
         withExtendedLifetime(h) {}
+    }
+
+    /// A recording holds the App-Nap/idle-sleep activity from its start until it is finished, on every exit path:
+    /// stop, quit (`stopRecordingNow`) and a start that fails. Nothing else holds it.
+    @Test func recordingHoldsActivityUntilFinished() async throws {
+        let f = Fixture()
+        let samples = f.hub.acquire(.samples)
+        let hud = f.hub.acquire(.hud)
+        #expect(f.activities.begun.isEmpty)
+        try await f.hub.startRecording(options: f.options())
+        let a = try #require(f.activities.active.first)
+        #expect(f.activities.active.count == 1)
+        #expect(a.options == AppActivity.recording)
+        #expect(a.options.contains(.idleSystemSleepDisabled) && a.options.contains(.userInitiated))
+        #expect(a.reason == "Recording a game run")
+        try await waitUntil("a recording tick") { f.hub.recording != nil }
+        _ = await f.hub.stopRecording()
+        #expect(f.activities.active.isEmpty)
+
+        try await f.hub.startRecording(options: f.options())
+        #expect(f.activities.active.count == 1)
+        _ = f.hub.stopRecordingNow()
+        #expect(f.activities.active.isEmpty)
+
+        // A start that fails (the runs root is under a file) ends it too.
+        let file = f.root.appendingPathComponent("file")
+        try FileManager.default.createDirectory(at: f.root, withIntermediateDirectories: true)
+        try Data().write(to: file)
+        await #expect(throws: (any Error).self) {
+            try await f.hub.startRecording(options: RecordingSession.Options(
+                runsRoot: file.appendingPathComponent("runs"), appVersion: "test"))
+        }
+        #expect(f.activities.begun.count == 3)
+        #expect(f.activities.active.isEmpty)
+        withExtendedLifetime((samples, hud)) {}
     }
 
     /// Quit path: finishes synchronously.
