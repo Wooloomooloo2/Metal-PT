@@ -67,7 +67,7 @@ the decimal separator, no grouping, whatever the machine's locale. **Empty cell 
 | `fps_app` | text | | Exe name of that process (path-scrubbed). |
 | `ft_p99_ms` | ms | 2 | 99th-percentile frame interval within that second. Only with per-frame times (`fwbench run`). |
 | `ft_max_ms` | ms | 2 | Longest frame interval within that second. Only with `fwbench run`. |
-| `gpu_w` | W | 2 | GPU power from IOReport `GPU Energy`. **Under-reads**: about 1.2 W while SMC rails rose about 12 W under a GPU load (hardware-baseline E6). Treat as a lower bound. |
+| `gpu_w` | W | 2 | GPU power from IOReport `GPU Energy`. **May under-read**: measured about 1.2 W while SMC rails rose about 12 W under a GPU load (hardware-baseline E6). Treat as a lower bound. |
 | `cpu_p_util_pct` | % | 1 | P-core utilisation (IOReport residency; busy = 1 - IDLE/DOWN share). |
 | `cpu_e_util_pct` | % | 1 | E-core utilisation. |
 | `cpu_core_max_pct` | % | 1 | Busiest single core. |

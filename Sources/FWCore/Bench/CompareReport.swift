@@ -27,6 +27,12 @@ public enum CompareReport {
         return (pct > 0 ? "+" : "\u{2212}") + digits + " %"
     }
 
+    /// The game's title, else its exe, else "unidentified".
+    static func gameName(_ info: RunInfo) -> String {
+        let name = info.game.title ?? info.game.exe
+        return name.isEmpty ? "unidentified" : name
+    }
+
     // MARK: - Differences
 
     /// The compared fields of one run, in display order; "—" when unknown.
@@ -86,7 +92,7 @@ public enum CompareReport {
             var seen = Set<String>()
             return values.filter { seen.insert($0).inserted }
         }
-        let games = distinct(runs.map { $0.0.game.title ?? $0.0.game.exe })
+        let games = distinct(runs.map { gameName($0.0) })
         if games.count > 1 { out.append("different games: " + games.joined(separator: ", ")) }
         if Set(runs.compactMap { $0.0.settings.onACAtStart }).count > 1 { out.append(acBatteryWarning) }
 
@@ -124,7 +130,8 @@ public enum CompareReport {
     public static func write(project: CompareProject, projectURL: URL, runsRoot: URL) throws -> URL {
         let url = projectURL.deletingPathExtension().appendingPathExtension("html")
         let loaded = project.loadRuns(runsRoot: runsRoot)
-        try Data(html(project: project, runs: loaded.runs).utf8).write(to: url, options: .atomic)
+        let problems = Dictionary(loaded.missing.map { ($0.index, $0.reason) }, uniquingKeysWith: { a, _ in a })
+        try Data(html(project: project, runs: loaded.runs, problems: problems).utf8).write(to: url, options: .atomic)
         return url
     }
 
@@ -139,7 +146,10 @@ public enum CompareReport {
         (entry.bundle as NSString).lastPathComponent
     }
 
-    public static func html(project: CompareProject, runs: [(RunBundle, RunSummary)]) -> String {
+    /// `problems` maps an entry index (0-based) to why its run did not load (from `loadRuns`); an entry with no
+    /// loaded run and no problem is reported as "the run folder is gone".
+    public static func html(project: CompareProject, runs: [(RunBundle, RunSummary)],
+                            problems: [Int: String] = [:]) -> String {
         let e = HTML.escape
 
         // Pair entries with loaded runs, in project order; entries without one are missing. Every run keeps its
@@ -176,7 +186,8 @@ public enum CompareReport {
         let base = items.first(where: \.isBase)
         for m in missing {
             let shown = m.entry.name.isEmpty ? folderName(m.entry) : "\(m.entry.name) (\(folderName(m.entry)))"
-            warns.append("missing: \(shown) — run \(m.number), the run folder is gone; it is left out")
+            let why = problems[m.number - 1] ?? "the run folder is gone"
+            warns.append("missing: \(shown) — run \(m.number), \(why); it is left out")
         }
         warns += warnings(items.map { ($0.bundle.info, $0.summary) }, names: items.map(\.name))
         for it in items {
@@ -186,7 +197,7 @@ public enum CompareReport {
         var seen = Set<String>()
         warns = warns.filter { seen.insert($0).inserted }
 
-        let games = Array(Set(items.map { $0.bundle.info.game.title ?? $0.bundle.info.game.exe })).sorted()
+        let games = Array(Set(items.map { gameName($0.bundle.info) })).sorted()
         var body = "<div class=\"wrap\">\n<header>\n"
         body += "<div class=\"eyebrow\">fwbench compare · \(items.count) run\(items.count == 1 ? "" : "s")</div>\n"
         body += "<h1>\(e(project.name))</h1>\n"
@@ -267,7 +278,7 @@ public enum CompareReport {
         if let best = efficient.max(by: { $0.summary.fpsPerWatt! < $1.summary.fpsPerWatt! }) {
             let gpuOnly = best.summary.powerColumn == "gpu_w"
             out += tile("Most efficient", "\(HTML.number(best.summary.fpsPerWatt, digits: 2))<small> FPS/W</small>",
-                        best.label, hint: gpuOnly ? "GPU-only power, under-reads" : "")
+                        best.label, hint: gpuOnly ? "GPU-only power, may under-read" : "")
         } else {
             out += tile("Most efficient", dash, "no FPS and power for the same runs")
         }
@@ -316,7 +327,7 @@ public enum CompareReport {
         if items.contains(where: { $0.power != nil }) {
             out += "<div class=\"chart\"><h3>Mean power</h3>"
             out += HTML.bars(items.map { it in
-                let kind = it.summary.powerColumn == "gpu_w" ? "GPU only (IOReport, under-reads)"
+                let kind = it.summary.powerColumn == "gpu_w" ? "GPU only (IOReport, may under-read)"
                     : it.summary.powerColumn == nil ? "" : "system"
                 return (label: short(it.label), value: it.power, note: join(baseNote(it), kind))
             }, unit: "W")

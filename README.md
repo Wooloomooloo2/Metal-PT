@@ -44,7 +44,7 @@ times from its stderr, which adds 1 % / 0.1 % lows. `$F ls` lists runs; `$F` alo
   `~/Documents/FW Benchmark/projects/`. Format: `docs/run-bundle-format.md`. No user name, home path or host name is written.
 - Cost (measured, `docs/hardware-baseline.md`): about 2.6 % of one core while recording (fwbench about 1.5 %, `log` about 1.1 %).
 - Limits: FPS comes from Apple's Metal HUD, which is drawn on screen while `hud on` is active; no HUD, no FPS (telemetry still records).
-  Per-frame lows exist only for runs started with `fwbench run`. `gpu_w` is IOReport and under-reads; use the
+  Per-frame lows exist only for runs started with `fwbench run`. `gpu_w` is IOReport and may under-read; use the
   SMC power columns for load. Metal games only; the SMC columns are measured on one Mac model.
 
 ## License

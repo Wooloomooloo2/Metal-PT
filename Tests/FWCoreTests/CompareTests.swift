@@ -151,6 +151,51 @@ import Foundation
         #expect(out.contains("1 % low — (frame times mixed)"))
     }
 
+    @Test func gpuOnlyPowerIsHedgedInCompare() {
+        let a = bundle("a.fwrun", info(), fps: 60, power: "gpu_w", watts: 5)
+        let project = CompareProject(name: "p", baseline: 0, runs: [.init(bundle: "a.fwrun", name: "A")])
+        let out = CompareReport.html(project: project, runs: [pair(a)])
+        #expect(out.contains("may under-read"))
+        #expect(!out.contains("under-reads"))
+    }
+
+    @Test func unidentifiedGameIsNamed() {
+        let w = CompareReport.warnings([(info(game: ""), RunSummary(bundle("a", info(game: ""), fps: 60))),
+                                        (info(game: "B.exe"), RunSummary(bundle("b", info(game: "B.exe"), fps: 60)))])
+        #expect(w.contains("different games: unidentified, B.exe"))
+        let a = bundle("a.fwrun", info(game: ""), fps: 60)
+        let project = CompareProject(name: "p", baseline: 0, runs: [.init(bundle: "a.fwrun", name: "A")])
+        let out = CompareReport.html(project: project, runs: [pair(a)])
+        #expect(out.contains("<dt>Game</dt><dd>unidentified</dd>"))
+    }
+
+    @Test func loadRunsSaysWhyARunIsMissing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fwcmp-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        for name in ["bad.fwrun", "old.fwrun", "empty.fwrun"] {
+            try fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try Data("{".utf8).write(to: root.appendingPathComponent("bad.fwrun/run.json"))
+        try Data(#"{"schema":1,"game":{"exe":"g"},"start":"2026-11-24T12:00:00Z"}"#.utf8)
+            .write(to: root.appendingPathComponent("old.fwrun/run.json"))
+        let project = CompareProject(name: "p", runs: [.init(bundle: "gone.fwrun"), .init(bundle: "bad.fwrun"),
+                                                       .init(bundle: "old.fwrun"), .init(bundle: "empty.fwrun")])
+        let loaded = project.loadRuns(runsRoot: root)
+        #expect(loaded.runs.isEmpty)
+        #expect(loaded.missing.map(\.index) == [0, 1, 2, 3])
+        let reasons = loaded.missing.map(\.reason)
+        #expect(reasons[0] == "the run folder is gone")
+        #expect(reasons[1].hasPrefix("run.json unreadable or incompatible: "))
+        #expect(reasons[2] == "run.json unreadable or incompatible: missing \"machine\"")
+        #expect(reasons[3] == "run.json unreadable or incompatible: no run.json")
+
+        let out = CompareReport.html(project: project, runs: loaded.runs,
+                                     problems: Dictionary(uniqueKeysWithValues: loaded.missing.map { ($0.index, $0.reason) }))
+        #expect(out.contains("missing: gone.fwrun — run 1, the run folder is gone; it is left out"))
+        #expect(out.contains("missing: old.fwrun — run 3, run.json unreadable or incompatible: missing &quot;machine&quot;; it is left out"))
+    }
+
     @Test func runLabels() {
         let a = info(stack: Stack(runtime: "Protium", graphics: ["DXMT", "vkd3d"]))
         #expect(CompareReport.label(.init(bundle: "x.fwrun", name: "Mine"), a) == "Mine")

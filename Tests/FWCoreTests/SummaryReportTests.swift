@@ -131,11 +131,13 @@ import Foundation
         let rows: [[String: String]] = (0..<30).map { ["elapsed_s": "\($0)", "fps": "60", "fps_app": "g", "gpu_w": "2.00"] }
         let b = RunBundle(url: URL(fileURLWithPath: "/r.fwrun"), info: info, rows: rows, frames: nil, warnings: [])
         let out = SummaryReport.html(b, RunSummary(b))
-        #expect(out.contains("GPU power (under-reads)"))
+        #expect(out.contains("GPU power (may under-read)"))
         #expect(out.contains("no system power key — FPS/W not comparable"))
         #expect(out.contains("power is GPU-only (IOReport), FPS/W not comparable across runs"))
-        #expect(out.contains("GPU (IOReport, under-reads)"))
-        #expect(out.contains("IOReport GPU energy under-reads"))
+        #expect(out.contains("GPU (IOReport, may under-read)"))
+        #expect(out.contains("IOReport GPU energy may under-read"))
+        #expect(out.contains("≈1.2 W where the SoC keys rose ≈12 W"))
+        #expect(!out.contains("under-reads"))
         #expect(!out.contains("averaged over"))
     }
 }

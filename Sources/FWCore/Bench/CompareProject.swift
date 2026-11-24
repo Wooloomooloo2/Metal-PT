@@ -47,17 +47,47 @@ public struct CompareProject: Codable, Sendable {
         return dir.deletingLastPathComponent().path == root.path ? dir.lastPathComponent : dir.path
     }
 
-    /// Loads every run that still exists; the others come back in `missing` (entry indices).
-    public func loadRuns(runsRoot: URL) -> (runs: [(RunBundle, RunSummary)], missing: [Int]) {
+    /// Loads every run it can; the others come back in `missing` with why ("the run folder is gone", or
+    /// "run.json unreadable or incompatible: <reason>").
+    public func loadRuns(runsRoot: URL) -> (runs: [(RunBundle, RunSummary)], missing: [(index: Int, reason: String)]) {
         var runs: [(RunBundle, RunSummary)] = []
-        var missing: [Int] = []
+        var missing: [(index: Int, reason: String)] = []
         for (i, entry) in self.runs.enumerated() {
-            if let b = try? RunBundle.load(Self.bundleURL(entry, runsRoot: runsRoot)) {
+            let url = Self.bundleURL(entry, runsRoot: runsRoot)
+            do {
+                let b = try RunBundle.load(url)
                 runs.append((b, RunSummary(b)))
-            } else {
-                missing.append(i)
+            } catch {
+                missing.append((i, Self.loadProblem(url, error)))
             }
         }
         return (runs, missing)
+    }
+
+    /// Why the bundle at `url` did not load.
+    public static func loadProblem(_ url: URL, _ error: Error) -> String {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return "the run folder is gone"
+        }
+        return "run.json unreadable or incompatible: " + reason(error)
+    }
+
+    private static func reason(_ error: Error) -> String {
+        func path(_ keys: [CodingKey]) -> String {
+            keys.map { $0.intValue.map { "[\($0)]" } ?? $0.stringValue }.joined(separator: ".")
+        }
+        switch error {
+        case DecodingError.keyNotFound(let key, let ctx):
+            return "missing \"\(path(ctx.codingPath + [key]))\""
+        case DecodingError.valueNotFound(_, let ctx), DecodingError.typeMismatch(_, let ctx):
+            return "wrong value for \"\(path(ctx.codingPath))\""
+        case DecodingError.dataCorrupted(let ctx):
+            return ctx.codingPath.isEmpty ? "not valid JSON" : "bad value for \"\(path(ctx.codingPath))\""
+        case let e as CocoaError where e.code == .fileReadNoSuchFile:
+            return "no run.json"
+        default:
+            return error.localizedDescription
+        }
     }
 }

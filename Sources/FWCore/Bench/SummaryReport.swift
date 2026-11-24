@@ -34,7 +34,7 @@ public enum SummaryReport {
 
     static let columnNames: [String: String] = [
         "fps": "Frame rate", "ft_p99_ms": "Frame time p99", "ft_max_ms": "Frame time max",
-        "gpu_w": "GPU power (IOReport, under-reads)", "cpu_p_util_pct": "CPU P-cores busy", "cpu_e_util_pct": "CPU E-cores busy",
+        "gpu_w": "GPU power (IOReport, may under-read)", "cpu_p_util_pct": "CPU P-cores busy", "cpu_e_util_pct": "CPU E-cores busy",
         "cpu_core_max_pct": "Busiest CPU core", "gpu_busy_pct": "GPU busy",
         // Only PSTR (system total) and PDTR (DC-in) have measured meanings (hardware-baseline.md); the other
         // SMC power keys are shown by key alone.
@@ -108,7 +108,8 @@ public enum SummaryReport {
     static let mixedHint = "frame times mixed"
     static let gpuOnlyWarning = "power is GPU-only (IOReport), FPS/W not comparable across runs"
     /// docs/hardware-baseline.md E6: IOReport GPU Energy read about 1.2 W where the SoC SMC keys rose about 12 W.
-    static let gpuCaption = "IOReport GPU energy under-reads on this machine (≈1.2 W where the SoC keys rose ≈12 W); "
+    static let gpuCaption = "IOReport GPU energy may under-read on this machine (measured ≈1.2 W where the SoC keys "
+        + "rose ≈12 W); "
         + "use the system line to compare runs."
 
     private static func startText(_ date: Date) -> String {
@@ -166,7 +167,7 @@ public enum SummaryReport {
         if let col = s.powerColumn, let mean = s.stats[col]?.mean {
             let perW = s.fpsPerWatt.map { "\(HTML.number($0, digits: 2)) FPS/W" } ?? "mean over steady seconds"
             let gpuOnly = col == "gpu_w"
-            out += tile(gpuOnly ? "GPU power (under-reads)" : "System power",
+            out += tile(gpuOnly ? "GPU power (may under-read)" : "System power",
                         "\(HTML.number(mean, digits: 1))<small> W</small>", perW,
                         hint: gpuOnly ? "no system power key — FPS/W not comparable" : "")
         } else {
@@ -214,7 +215,7 @@ public enum SummaryReport {
             out += "<span class=\"mono\">fwbench run</span>.</p></div>\n"
         }
         let gpu = column(rows, "gpu_w")
-        out += chart("Power", [("System", column(rows, "smc_PSTR_w")), ("GPU (IOReport, under-reads)", gpu)],
+        out += chart("Power", [("System", column(rows, "smc_PSTR_w")), ("GPU (IOReport, may under-read)", gpu)],
                      unit: "W", yMin: 0, caption: has(gpu) ? gpuCaption : "")
         out += chart("Utilisation", [("CPU P-cores", column(rows, "cpu_p_util_pct")),
                                      ("CPU E-cores", column(rows, "cpu_e_util_pct")),
