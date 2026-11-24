@@ -25,6 +25,55 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
 ## Fans (E4)
 ## Temperatures (E5)
 ## IOReport power and clocks (E6)
+
+- [M] E6 (partial) 2026-11-24: 11 817 channels (`docs/data/ioreport-channels-m4max.txt`). **Not an idle baseline**: a game
+  (Horizon Zero Dawn Remastered under Protium) and MTLCompilerService (~1200 % CPU) were running. Repeat on an idle machine.
+- [M] **"Energy Model": only `GPU Energy [nJ]` is non-zero** (~0.26–0.33 W per 1 s delta). `CPU Energy`, `EACC_CPU`,
+  `PACC0_CPU`, `PACC1_CPU`, `ANE`, `DRAM`, `GPU [mJ]` all read 0, alone (`--group "Energy Model"`) or merged, idle or with
+  12 P-cores loaded. CPU power must come from elsewhere (SMC `P***`, or `PMP / Energy` in events — unexplored).
+- [M] CPU residency: `CPU Stats / CPU Core Performance States / PCPU000…PCPU150` (12 P-cores, 2 clusters) and
+  `ECPU000…ECPU030` (4 E-cores); state names `IDLE`, `DOWN`, `V<n>P<m>` (P-cores V0P19…V19P0, E-cores V0P6…V6P0).
+  Units 24 Mticks (≈ 24.2 M per second). Under the load above every P-core was 100 % `V19P0`, IDLE 0.
+- [M] GPU: `GPU Stats / GPU Performance States / GPUPH` states `OFF`, `P1`…`P15`. Busy = 1 − OFF share.
+- [M] Cost: sample + delta of the three default groups ≈ 8–13 ms per sample (under load).
+- [M] SMC power keys (`flt`, watts) are unprivileged and track load: at E1 (idle) `PSTR` 8.1, `PHPC` 7.4, `PDTR` 0.0001;
+  under the load above `PSTR` 83.2, `PDTR` 87.4, `PHPC` 60.1, `PHPS` 52.8, `PSVR` 56.3, `PZC0` 52.8, `PZC1` 51.7,
+  `PMVC` 15.5, `PPMC` 6.7, `PPSC` 5.3. [?] Meanings (likely `PSTR` system total, `PDTR` DC-in, `PHPC` SoC/CPU) to be
+  pinned by a controlled CPU-only / GPU-only load.
+- [M] E6 controlled loads 2026-11-24 (machine otherwise idle, on AC, battery 80 % not charging), SMC watts:
+
+  | key | idle | 16× `yes` (CPU) | GPU-only (Metal clears, 3840×2400, GPUPH P1/P2 ~87 %) |
+  |---|---|---|---|
+  | `PSTR` | 16.8–17.2 | 41.5–44.3 | 32.3–32.4 |
+  | `PDTR` | 15.9–18.0 | 41.1–42.4 | 31.9–32.5 |
+  | `PHPC` | 2.8–4.8 | 24.3–25.4 | 16.0–16.4 |
+  | `PSVR` | 1.5–3.0 | 23.7–24.6 | 14.0–14.3 |
+  | `PZC0`/`PZC1`/`PHPS` | 1.5–3.5 | 19.2–20.0 | 13.1–13.8 |
+  | `PMVC` | 4.6–5.2 | 6.9–7.4 | 7.4–7.6 |
+  | `PPMC`/`PPSC` | 0.7–1.2 | 1.7–2.6 | 2.1 |
+
+  **`PSTR` = system total** (equals `PDTR`, DC-in, on AC). `PHPC`/`PSVR`/`PZC*` rise with CPU *and* GPU load: SoC rails,
+  not a CPU-only figure. IOReport `GPU Energy` read only 1.15–1.31 W under the GPU load while the SoC keys rose ~12 W —
+  [?] it may under-report or cover only part of the GPU; don't use it as the GPU's power until checked with a heavy game.
+- [M] At idle, P-core residency is mostly `IDLE` (PCPU000 IDLE ≈ 99 %), so busy = 1 − (IDLE+DOWN) share works; the
+  100 % `V19P0` seen earlier was the game load.
 ## Power modes (E7)
 ## FPS (E8)
+
+- [M] E8 (partial) 2026-11-24, with a minimal CAMetalLayer test app at 60 Hz (not yet a real game):
+  - `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1` in the process environment makes `libMTLHud.dylib` log about once per
+    second (≈ 1.016 s): `metal-HUD: <frames>,<a>,<b>,<interval ms>,<present-delay ms>,…` where `<frames>` is
+    **cumulative** (63, 124, 185 …) and the pairs are **every frame** since the last line. [?] `<a>`/`<b>` unknown
+    (10.61/468.19, then 6.72/285.24). The library registers metrics `hud-stat.fps`, `hud-stat.frame-interval`,
+    `hud-stat.present-delay`, which fits interval/present-delay for the pairs.
+  - Goes to the process's **stderr in full** and to the **unified log** (format `metal-HUD: %zu,%.2f,%.2f%s`,
+    sender `libMTLHud.dylib`, empty subsystem). In the unified log the `%s` (per-frame list) is **`<private>`**; the
+    frame count, timestamp, `processID` and `processImagePath` are public. Readable unprivileged, cross-process:
+    `/usr/bin/log stream --style ndjson --predicate 'eventMessage BEGINSWITH "metal-HUD"'` (in zsh, `log` is a builtin).
+  - So: **per-second FPS for any Metal process with no root**; **per-frame times** only from stderr (when we launch the
+    process) or with private log data enabled (root, untested).
+  - `MTL_HUD_HIDDEN=1` stops the logging too. `MTL_HUD_REPORT_URL=file://…` wrote nothing.
+    `MTL_HUD_LOG_METRICS_ENABLED=1` added nothing visible. Other variables are listed by `strings libMTLHud.dylib`.
+  - Still to test: a real Wine/CrossOver/Protium game (DXMT and D3DMetal), whether the HUD env reaches it, stderr
+    capture through `wine`, and `log stream` CPU cost.
 ## Open questions

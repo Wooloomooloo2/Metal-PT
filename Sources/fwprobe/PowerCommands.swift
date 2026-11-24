@@ -7,7 +7,8 @@ enum PowerCommands {
         fwprobe ioreport sample [--seconds N] [--group G]...
                                                   1 s deltas for N s (default 10): watts for energy channels,
                                                   residency for performance-state channels, and sampling cost.
-                                                  Default groups: Energy Model, CPU Stats, GPU Stats
+                                                  Default groups: Energy Model, CPU Stats, GPU Stats.
+                                                  --raw prints every channel's raw delta, unfiltered
         fwprobe temps [--watch S]                 HID temperature sensors (repeat every S s with --watch)
         """
 
@@ -58,6 +59,7 @@ enum PowerCommands {
         for (index, arg) in args.enumerated() where arg == "--group" && index + 1 < args.count {
             groups.append(args[index + 1])
         }
+        let raw = args.contains("--raw")
         let sampler = try IOReportSampler(groups: groups.isEmpty ? ["Energy Model", "CPU Stats", "GPU Stats"] : groups)
         guard var previous = sampler.sample() else { throw ProbeError("IOReportCreateSamples returned nothing") }
         var previousTime = ProcessInfo.processInfo.systemUptime
@@ -74,6 +76,16 @@ enum PowerCommands {
 
             print("── \(timestamp())  interval \(String(format: "%.3f", interval)) s  sample+delta \(String(format: "%.2f", cost)) ms")
             for channel in channels {
+                if raw {
+                    switch channel.value {
+                    case .simple(let value): print("   \(channel.group) / \(channel.subgroup) / \(channel.name) [\(channel.unit)] = \(value)")
+                    case .states(let states):
+                        let text = states.map { "\($0.name)=\($0.residency)" }.joined(separator: " ")
+                        print("   \(channel.group) / \(channel.subgroup) / \(channel.name) [\(channel.unit)] \(text)")
+                    case .other(let format): print("   \(channel.group) / \(channel.subgroup) / \(channel.name) format \(format)")
+                    }
+                    continue
+                }
                 switch channel.value {
                 case .simple(let raw):
                     guard let joules = PowerMath.joules(raw, unit: channel.unit),
