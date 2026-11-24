@@ -91,3 +91,22 @@ CH0J needs sudo to read (`sudo $P smc read CH0J`); CH0B and CH0C do not exist on
 3. If nothing useful is logged: retry with `defaults write -g MetalForceHudEnabled -bool YES` (always run
    `defaults delete -g MetalForceHudEnabled` afterwards to undo) and with a capture from only the game's process:
    `log stream --process <pid> --level debug`. Record what was tried even if it failed.
+
+## B1 — fwbench in a real game (pending, needs the user)
+Needs a Wine game that uses Metal (e.g. Horizon Zero Dawn Remastered) in **Protium** and in **CrossOver**.
+`F=.build/debug/fwbench`. Run each runtime in turn; record in `docs/hardware-baseline.md` E8 (tag `[M]`, date).
+1. Terminal 1: `$F hud on`. Leave it. Quit the launcher and the game completely, then relaunch the launcher from the
+   Dock/Finder (it must start after `hud on`), then the game. Reach a repeatable scene.
+2. Terminal 2: `$F record --seconds 120 --warmup 15 --label "<runtime> <graphics>, <settings>"`. Watch the status line.
+   - Do HUD lines arrive (an fps number appears, not `no Metal HUD lines yet`)? If not, note whether the launcher or the game was started after `hud on`.
+   - From which process/PID and app name (`fps_app` in `samples.csv`)? Several Metal processes may exist (launcher, Steam, game); is the busiest one the game?
+   - Stack detected: `$F stack <pid>` and `$F summary <run>`. Right runtime, Wine arch, translator, graphics layer (DXMT / D3DMetal)?
+   - Cost: in a third terminal during the run, `ps -o %cpu,time -p $(pgrep -x fwbench)` and the same for `/usr/bin/log`; take cumulative time over 60 s. Record fwbench % and log %.
+3. `$F run --seconds 120 --warmup 15 --label "<...> run" -- <command>`. Finding the runtime's command line for the game
+   is part of the test: try `ps -o command -p <game pid>` while the game runs under the launcher (or the runtime's `wine`
+   binary inside its app bundle, with the game's exe and `WINEPREFIX`), and a Steam launch with `%command%` options if that is how it starts.
+   Record the exact command that worked. Did per-frame times arrive via stderr (`frames.csv` exists, `fpsSource` is `stderr`, lows shown)? If stderr stayed empty, record whether the runtime swallows the game's stderr.
+4. Repeat 1-3 in the other runtime, ideally with another graphics layer or setting (e.g. DXMT vs D3DMetal).
+5. Compare: `$F compare hzd add <run1> <run2>`, then `$F compare hzd report --open`. Check "What differs" lists the
+   runtime and the graphics layer (and settings if `--label`/settings differ), and that FPS and power columns are plausible.
+6. Afterwards: `$F hud off` (if terminal 1 was killed), `launchctl getenv MTL_HUD_ENABLED` prints nothing.

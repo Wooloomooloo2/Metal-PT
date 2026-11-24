@@ -14,6 +14,8 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
     swift test                      # unit tests, no hardware
     .build/debug/fwprobe ...        # read commands work unprivileged
     sudo .build/debug/fwprobe ...   # write experiments (charge-test, fan-test, fan-release, smc write)
+    swift run fwbench ...           # benchmarking: record, run, hud, stack, ls, summary, compare (unprivileged;
+    .build/debug/fwbench ...        #   `fwbench` alone prints usage; `record` alone starts recording)
 
 ## Hard rules
 
@@ -31,12 +33,17 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
   (`CHTE`) are written by other tools as `01 00 00 00`, which does not fit a big-endian reading. Write raw bytes,
   and record exactly which bytes worked.
 - IORegistry stores signed battery values as unsigned 64-bit: −1550 mA reads as 18446744073709550066.
+- zsh's `log` is a builtin: always `/usr/bin/log`.
+- Each Metal HUD line appears twice in the unified log (empty subsystem, then `com.apple.metal.hud`); FrameCounter dedupes.
 - AlDente writes the same charge keys. Quit it (and confirm its helper is not rewriting them) before any charge experiment.
 
 ## Current state
 
-M0 in progress — see `docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`.
+M0 in progress — see `docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md` (E2–E5, E7 pending).
+M1B benchmarking (`fwbench`, branch `m1b-benchmarking`) built: Tasks 1–10 done and reviewed, 129 tests. Docs:
+`docs/run-bundle-format.md`, README. Not yet verified with a real Wine game (Task 11 steps 1–3).
 
 ## Resume here
 
-Continue the M0 plan at the first unchecked task.
+Run `docs/m0-test-plan.md` B1 with real games (Protium, CrossOver) and record the results in
+`docs/hardware-baseline.md` E8, then continue the M0 plan at its first unchecked task.
