@@ -44,5 +44,7 @@ M1B benchmarking (`fwbench`, branch `m1b-benchmarking`) built: Tasks 1–10 done
 
 ## Resume here
 
-Run `docs/m0-test-plan.md` B1 with real games (Protium, CrossOver) and record the results in
-`docs/hardware-baseline.md` E8, then continue the M0 plan at its first unchecked task.
+The user will hands-on test benchmarking only once there is a UI and a global hotkey to start/stop recording
+(decided 2026-11-24). Next: design and build that app layer on top of FWCore's recorder (menu-bar app, hotkey,
+REC indicator, runs/compare browsing) — brainstorm first. Then B1 in `docs/m0-test-plan.md` with real games, recording
+results in `docs/hardware-baseline.md` E8, then continue M0 at its first unchecked task.
