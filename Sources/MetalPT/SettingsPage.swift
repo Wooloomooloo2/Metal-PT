@@ -55,7 +55,7 @@ private struct SettingsContent: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Approval in System Settings → Login Items and → Notifications happens outside the app.
             loginItem.refresh()
-            model.refreshNotificationStatus()
+            if !snapshot { model.refreshNotificationStatus() }
         }
     }
 
