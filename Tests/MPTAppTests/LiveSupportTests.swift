@@ -121,4 +121,62 @@ import MPTCore
         #expect(p.map(\.segment) == [0, 0, 1, 1])
         #expect(p.map(\.time) == [100, 101, 120, 121])
     }
+
+    // MARK: - Limited by (last 30 s)
+
+    private func busy(_ t: Double, _ gpu: Double?, core: Double = 50, fps: Double? = 50, mhz: Double? = nil,
+                      thermal: String = "nominal") -> HubSnapshot {
+        HubSnapshot(time: t, sample: TelemetrySample(cpuPUtilPct: 30, cpuCoreMaxPct: core, gpuBusyPct: gpu,
+                                                     thermalState: thermal, gpuMHz: mhz),
+                    fps: fps, followedPID: 1, followedApp: "g", stack: nil)
+    }
+
+    @Test func snapshotMapsToSecond() {
+        let snap = HubSnapshot(time: 1, sample: TelemetrySample(cpuPUtilPct: 81, cpuCoreMaxPct: 92, gpuBusyPct: 97,
+                                                                 thermalState: "serious", gpuMHz: 1200,
+                                                                 memPressure: "warn", pageoutsPerS: 12),
+                               fps: 59.5, followedPID: 1, followedApp: "g", stack: nil)
+        let s = LiveLimiter.second(snap)
+        #expect(s.fps == 59.5)
+        #expect(s.gpuBusyPct == 97)
+        #expect(s.gpuMHz == 1200)
+        #expect(s.memPressure == "warn")
+        #expect(s.pageoutsPerSecond == 12)
+        #expect(s.thermalLevel == 2)
+        #expect(s.coreMaxPct == 92)
+        #expect(s.pCoresPct == 81)
+    }
+
+    @Test func majorityOfTheLastThirtySeconds() {
+        // 40 CPU-bound seconds long ago, then 30 s: 20 GPU, 10 unclear → GPU (67 %).
+        let old = (0..<40).map { busy(Double($0), 50, core: 99) }
+        let recent = (0..<30).map { busy(100 + Double($0), $0 < 20 ? 100 : 90) }
+        #expect(LiveLimiter.current(old + recent, topMHz: nil) == .limiter(.gpu))
+        #expect(LiveLimiter.label(.limiter(.gpu)) == "Limited by: GPU")
+    }
+
+    @Test func noMajorityIsMixedAndUnclearIsNotALimiter() {
+        let mixed = (0..<30).map { busy(Double($0), $0 % 2 == 0 ? 100 : 50, core: 99) }
+        #expect(LiveLimiter.current(mixed, topMHz: nil) == .mixed)
+        #expect(LiveLimiter.label(.mixed) == "Limited by: mixed")
+        let unclear = (0..<30).map { busy(Double($0), 90) }
+        #expect(LiveLimiter.current(unclear, topMHz: nil) == .limiter(.unclear))
+        #expect(LiveLimiter.label(.limiter(.unclear)) == "No single limit")
+    }
+
+    @Test func hiddenWithUnderTenSecondsOfData() {
+        #expect(LiveLimiter.current((0..<9).map { busy(Double($0), 100) }, topMHz: nil) == nil)
+        #expect(LiveLimiter.current((0..<10).map { busy(Double($0), 100) }, topMHz: nil) == .limiter(.gpu))
+        // Seconds without GPU busy are not data.
+        let gaps = (0..<30).map { busy(Double($0), $0 < 9 ? 100 : nil) }
+        #expect(LiveLimiter.current(gaps, topMHz: nil) == nil)
+        #expect(LiveLimiter.current([], topMHz: nil) == nil)
+    }
+
+    @Test func busyAtLowClockIsNotGPU() {
+        // Busy 100 % at a third of the top clock: the game isn't pushing the GPU (ruling L1).
+        let low = (0..<30).map { busy(Double($0), 100, mhz: 500) }
+        #expect(LiveLimiter.current(low, topMHz: 1578) == .limiter(.unclear))
+        #expect(LiveLimiter.current(low, topMHz: nil) == .limiter(.gpu))
+    }
 }

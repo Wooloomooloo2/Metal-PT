@@ -4,9 +4,11 @@ import Foundation
 
 @Suite struct SummaryReportTests {
     private func bundle(label: String = "", stack: Stack = Stack(), frames: [TimedFrame]? = nil,
-                        fpsSource: String = "log", warnings: [String] = []) -> RunBundle {
+                        fpsSource: String = "log", warnings: [String] = [],
+                        extra: [String: String] = [:], gpuMaxMHz: Int? = nil) -> RunBundle {
         var info = RunInfo(appVersion: "0.1", machine: .init(modelID: "Mac15,6", chip: "M3 Pro", memoryGB: 36,
-                                                             osVersion: "15.1", osBuild: "24B83"),
+                                                             osVersion: "15.1", osBuild: "24B83",
+                                                             gpuMaxMHz: gpuMaxMHz),
                            game: .init(exe: "Game.exe"), stack: stack,
                            start: Date(timeIntervalSince1970: 1_800_000_000),
                            end: Date(timeIntervalSince1970: 1_800_000_050), fpsSource: fpsSource, warnings: warnings)
@@ -14,6 +16,7 @@ import Foundation
         let rows: [[String: String]] = (0..<50).map { i in
             ["elapsed_s": "\(i)", "fps": i < 3 ? "" : "60.0", "fps_app": "Game.exe", "gpu_w": "10.00",
              "smc_PSTR_w": "30.00", "cpu_p_util_pct": "40.0", "temp_max_c": "70.0", "fan0_rpm": "2000"]
+                .merging(extra) { _, new in new }
         }
         return RunBundle(url: URL(fileURLWithPath: "/runs/20270115-080000-game-exe.mptrun"), info: info, rows: rows,
                          frames: frames, warnings: warnings)
@@ -80,6 +83,49 @@ import Foundation
         let out = HTML.bars([(label: "A", value: 10, note: "n"), (label: "B<", value: nil, note: "")], unit: "fps")
         #expect(out.contains("B&lt;"))
         #expect(out.contains("—"))
+    }
+    // MARK: - What held it back
+
+    private let gpuBound = ["gpu_busy_pct": "100.0", "gpu_mhz": "1578", "mem_pressure": "normal",
+                            "pageouts_per_s": "0", "thermal_state": "nominal", "cpu_core_max_pct": "50.0"]
+
+    @Test func limiterSectionFollowsTiles() throws {
+        let out = html(bundle(extra: gpuBound, gpuMaxMHz: 1578))
+        let section = try #require(out.range(of: "What held it back"))
+        let tiles = try #require(out.range(of: "<div class=\"tiles\">"))
+        let charts = try #require(out.range(of: "Over time"))
+        #expect(tiles.lowerBound < section.lowerBound && section.lowerBound < charts.lowerBound)
+        #expect(out.contains("<p class=\"verdict\">Mostly GPU</p>"))
+        #expect(out.contains("GPU busy median 100 %"))
+        #expect(out.contains("MetalFX"))
+        #expect(out.contains("class=\"callout\""))
+        #expect(out.contains("How this is decided"))
+        #expect(out.contains(HTML.escape(LimiterAnalysis.describeThresholds()[0])))
+        #expect(out.contains("100 %</text>"))             // the GPU share bar
+        #expect(out.contains("var(--limit-gpu)"))
+        #expect(!out.contains("This run didn"))          // nothing missing
+        #expect(!out.lowercased().contains("<script"))
+    }
+
+    @Test func limiterNamesMissingInputsOfOldRuns() {
+        let out = html(bundle(extra: ["gpu_busy_pct": "100.0"]))
+        #expect(out.contains("Mostly GPU"))
+        #expect(out.contains("This run didn&#39;t record: GPU clock, memory pressure — newer runs do."))
+    }
+
+    @Test func noSingleLimitIsNotPresentedAsALimiter() {
+        let out = html(bundle(extra: ["gpu_busy_pct": "90.0", "cpu_core_max_pct": "50.0"]))
+        #expect(out.contains("<p class=\"verdict\">No single limit stood out</p>"))
+        #expect(out.contains("var(--limit-none)"))
+        #expect(!out.contains("class=\"callout\""))
+    }
+
+    @Test func summaryCarriesItsVersion() {
+        let out = html(bundle())
+        #expect(out.contains("<meta name=\"mpt-summary-version\" content=\"\(SummaryReport.version)\">"))
+        #expect(SummaryReport.version >= 2)
+        #expect(SummaryReport.fileVersion(of: out) == SummaryReport.version)
+        #expect(SummaryReport.fileVersion(of: "<html><head><meta name=\"mpt-run\" content=\"x\"></head>") == 1)
     }
 }
 

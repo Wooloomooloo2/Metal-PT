@@ -33,6 +33,26 @@ public enum CompareReport {
         return name.isEmpty ? "unidentified" : name
     }
 
+    // MARK: - Limiter
+
+    /// The "Limited by" cell: the class of a "Mostly" verdict ("GPU", "no single limit"), "mixed", or "—" with no
+    /// steady seconds.
+    public static func limitedBy(_ a: LimiterAnalysis) -> String {
+        if let p = a.primary { return p.displayName }
+        return a.shares.count >= 2 ? "mixed" : dash
+    }
+
+    /// The end of a run line: " · limited by GPU", " · limited by a mix of GPU and CPU", " · no single limit".
+    static func limiterSuffix(_ a: LimiterAnalysis) -> String {
+        switch a.primary {
+        case .unclear?: return " · no single limit"
+        case let p?: return " · limited by \(p.displayName)"
+        case nil:
+            guard a.shares.count >= 2 else { return "" }
+            return " · limited by a mix of \(a.shares[0].0.displayName) and \(a.shares[1].0.displayName)"
+        }
+    }
+
     // MARK: - Differences
 
     /// The compared fields of one run, in display order; "—" when unknown.
@@ -122,6 +142,8 @@ public enum CompareReport {
         let summary: RunSummary
         let label: String
         var isBase = false
+        /// What held the run back (computed once per report).
+        let limits: LimiterAnalysis
         var power: Double? { summary.powerColumn.flatMap { summary.stats[$0]?.mean } }
         var name: String { "run \(number) (\(label))" }
     }
@@ -164,13 +186,14 @@ public enum CompareReport {
             }
             let (b, s) = runs[unused.remove(at: pos)]
             items.append(Item(number: k + 1, entry: entry, bundle: b, summary: s, label: label(entry, b.info),
-                              isBase: k == project.baseline))
+                              isBase: k == project.baseline, limits: LimiterAnalysis(b, summary: s)))
         }
         // Runs passed in without an entry (not produced by `loadRuns`) are numbered after the entries.
         for (extra, i) in unused.enumerated() {
             let entry = CompareProject.Entry(bundle: runs[i].0.url.lastPathComponent)
             items.append(Item(number: project.runs.count + extra + 1,
-                              entry: entry, bundle: runs[i].0, summary: runs[i].1, label: label(entry, runs[i].0.info)))
+                              entry: entry, bundle: runs[i].0, summary: runs[i].1, label: label(entry, runs[i].0.info),
+                              limits: LimiterAnalysis(runs[i].0, summary: runs[i].1)))
         }
 
         var warns: [String] = []
@@ -286,7 +309,7 @@ public enum CompareReport {
         for it in items {
             let g = it.isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base?.summary.medianFPS)
             let line = "\(it.label): \(HTML.number(it.summary.medianFPS, digits: 1)) fps median (\(g)), "
-                + "1 % low \(lowText(it.summary)), \(powerText(it))"
+                + "1 % low \(lowText(it.summary)), \(powerText(it))" + limiterSuffix(it.limits)
             lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(HTML.escape(line))"
                 + "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"))
         }
@@ -344,7 +367,9 @@ public enum CompareReport {
     private static func differenceTable(_ items: [Item]) -> String {
         let e = HTML.escape
         let infos = items.map(\.bundle.info)
-        let diffs = differences(infos)
+        var diffs = differences(infos)
+        let limited = items.map { limitedBy($0.limits) }
+        if Set(limited).count > 1 { diffs.append((field: "limited by", values: limited)) }
         let baseIndex = items.firstIndex(where: \.isBase) ?? 0
         var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">What differs</div>"
         if diffs.isEmpty {
@@ -365,7 +390,8 @@ public enum CompareReport {
             }
             out += "</tbody></table></div>"
         }
-        let same = shared(infos)
+        var same = shared(infos)
+        if Set(limited).count == 1, let only = limited.first, only != dash { same.append((field: "limited by", value: only)) }
         if !same.isEmpty {
             out += "<p class=\"note\"><strong>Same in every run:</strong> "
             out += same.map { "\(e(capitalised($0.field))): \(e($0.value))" }.joined(separator: "; ") + "</p>"

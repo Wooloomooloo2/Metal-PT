@@ -60,12 +60,14 @@ public enum HTML {
           --rule: #dfe2e6; --grid: #eceef1; --axis: #c9cdd3; --shade: rgba(21, 23, 26, 0.05);
           --hover: rgba(42, 120, 214, 0.10); --warn: #8a5d00; --warn-bg: #fdf6e7; --warn-rule: #ecd9ab;
           --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #6250d6; --s5: #e34948; --s6: #008300;
+          --cap: #c2387e; --none: #a3a9b2;
         """
     private static let darkTokens = """
           --bg: #131518; --panel: #1b1e22; --ink: #eef0f2; --ink-2: #b8bdc5; --ink-3: #8a909a;
           --rule: #2e3238; --grid: #252a30; --axis: #3a3f46; --shade: rgba(255, 255, 255, 0.05);
           --hover: rgba(57, 135, 229, 0.16); --warn: #e0b04a; --warn-bg: #2a2416; --warn-rule: #4a3d1c;
           --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9085e9; --s5: #e66767; --s6: #0ca30c;
+          --cap: #e0609f; --none: #5c626b;
           color-scheme: dark;
         """
 
@@ -75,6 +77,8 @@ public enum HTML {
         \(lightTokens)
           --f-body: -apple-system, system-ui, sans-serif;
           --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
+          --limit-gpu: var(--s3); --limit-thermal: var(--s5); --limit-thread: var(--s4); --limit-cpu: var(--s1);
+          --limit-memory: var(--s2); --limit-cap: var(--cap); --limit-none: var(--none);
         }
         @media (prefers-color-scheme: dark) {
           :root:not([data-theme="light"]) {
@@ -153,6 +157,14 @@ public enum HTML {
         .user { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 16px;
           display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem; }
         .user p { white-space: pre-wrap; color: var(--ink-2); }
+        .verdict { font-size: 1.45rem; font-weight: 650; line-height: 1.2; letter-spacing: -0.01em; }
+        ul.evidence { margin: 0; padding-left: 1.1em; font-size: 0.9rem; color: var(--ink-2);
+          font-variant-numeric: tabular-nums; }
+        .callout { background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid var(--s1);
+          border-radius: 6px; padding: 10px 14px; font-size: 0.92rem; max-width: none; }
+        .rules { font-size: 0.78rem; color: var(--ink-3); }
+        .rules h3 { font-size: 0.78rem; font-weight: 600; color: var(--ink-3); }
+        .rules ul { margin: 4px 0 0; padding-left: 1.1em; }
         footer { font-size: 0.75rem; color: var(--ink-3); font-family: var(--f-mono); }
         @media (max-width: 640px) {
           .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -343,13 +355,13 @@ public enum HTML {
         return legend(series.map(\.name)) + svg
     }
 
-    /// Horizontal bars, one row per item, scaled from 0 to the largest value. nil values show "—".
-    /// `note` is a muted second line under the label.
+    /// Horizontal bars, one row per item, scaled from 0 to the largest value (or `maxValue`). nil values show "—".
+    /// `note` is a muted second line under the label. `colors[i]` fills bar `i` (default: the first series colour).
     public static func bars(_ items: [(label: String, value: Double?, note: String)], unit: String,
-                            digits: Int = 1) -> String {
+                            digits: Int = 1, maxValue: Double? = nil, colors: [String] = []) -> String {
         let row = 34.0, left = 200.0, right = 90.0, top = 6.0
         let height = top + Double(items.count) * row + 4
-        let maxV = max(items.compactMap(\.value).filter(\.isFinite).max() ?? 1, 1e-9)
+        let maxV = max(maxValue ?? items.compactMap(\.value).filter(\.isFinite).max() ?? 1, 1e-9)
         let pw = chartWidth - left - right
         var svg = "<svg viewBox=\"0 0 \(f(chartWidth)) \(f(height))\" role=\"img\" aria-label=\"\(escape(unit)) by item\">"
         for (k, item) in items.enumerated() {
@@ -364,8 +376,9 @@ public enum HTML {
                 svg += "<text x=\"0\" y=\"\(f(labelY + 14))\" style=\"font-family:var(--f-body)\">\(escape(item.note))</text>"
             }
             if let v = item.value, v.isFinite {
-                let w = max(0, v / maxV * pw)
-                svg += "<rect x=\"\(f(left))\" y=\"\(f(by))\" width=\"\(f(w))\" height=\"\(f(barH))\" rx=\"2\" fill=\"\(seriesColor(0))\"/>"
+                let w = min(pw, max(0, v / maxV * pw))
+                let fill = k < colors.count ? colors[k] : seriesColor(0)
+                svg += "<rect x=\"\(f(left))\" y=\"\(f(by))\" width=\"\(f(w))\" height=\"\(f(barH))\" rx=\"2\" fill=\"\(escape(fill))\"/>"
                 svg += "<text x=\"\(f(left + w + 6))\" y=\"\(f(by + barH - 3))\" style=\"fill:var(--ink)\">\(number(v, digits: digits)) \(escape(unit))</text>"
             } else {
                 svg += "<text x=\"\(f(left))\" y=\"\(f(by + barH - 3))\">—</text>"

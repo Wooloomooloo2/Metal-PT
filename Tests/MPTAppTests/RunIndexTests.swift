@@ -321,4 +321,26 @@ import MPTCore
         #expect(p1.runs.map(\.bundle) == entries.reversed().map(\.id))
         #expect(p1.baseline == 0)
     }
+
+    @Test func summaryIsRewrittenWhenOlderThanThisVersion() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "old.exe", start: 1_800_000_000)
+        let file = dir.appendingPathComponent(SummaryReport.fileName)
+        let index = RunIndex(root: root)
+
+        // A summary from before the limiter section (no version tag): rewritten.
+        try "<html><head><meta name=\"mpt-run\" content=\"x\"></head>OLD</html>".write(to: file, atomically: true,
+                                                                                         encoding: .utf8)
+        _ = try index.summary(dir: dir.lastPathComponent)
+        let html = try String(contentsOf: file, encoding: .utf8)
+        #expect(html.contains("What held it back"))
+        #expect(!html.contains("OLD"))
+
+        // A current one: kept as it is.
+        let current = "<meta name=\"mpt-summary-version\" content=\"\(SummaryReport.version)\">CURRENT"
+        try current.write(to: file, atomically: true, encoding: .utf8)
+        _ = try index.summary(dir: dir.lastPathComponent)
+        #expect(try String(contentsOf: file, encoding: .utf8) == current)
+    }
 }

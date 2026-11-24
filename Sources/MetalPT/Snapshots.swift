@@ -382,7 +382,7 @@ enum Fixture {
             let load = following ? 1.0 : 0.25
             let sample = TelemetrySample(
                 gpuW: (18 + 2 * sin(x / 9)) * load, cpuPUtilPct: (31 + 4 * sin(x / 7)) * load,
-                cpuEUtilPct: 12 + 3 * sin(x / 17), cpuCoreMaxPct: 70, gpuBusyPct: following ? 92 + 3 * sin(x / 11) : 8,
+                cpuEUtilPct: 12 + 3 * sin(x / 17), cpuCoreMaxPct: 70, gpuBusyPct: following ? 97 + 2.5 * sin(x / 11) : 8,
                 smcPower: ["PSTR": following ? 40 + 2.5 * sin(x / 13) + 0.6 * sin(x * 1.3) : 9 + sin(x / 13)],
                 tempMaxC: following ? 72 + 4 * (1 - exp(-x / 60)) + 0.7 * sin(x / 6) : 48 + sin(x / 30),
                 tempBatteryC: 33,

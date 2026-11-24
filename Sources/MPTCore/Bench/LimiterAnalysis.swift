@@ -117,8 +117,23 @@ public struct LimiterAnalysis: Sendable {
             fps = num("fps"); gpuBusyPct = num("gpu_busy_pct"); gpuMHz = num("gpu_mhz")
             memPressure = row["mem_pressure"].flatMap { $0.isEmpty ? nil : $0 }
             pageoutsPerSecond = num("pageouts_per_s")
-            thermalLevel = ["fair": 1, "serious": 2, "critical": 3][row["thermal_state"] ?? ""] ?? 0
+            thermalLevel = Self.thermalLevel(row["thermal_state"] ?? "")
             coreMaxPct = num("cpu_core_max_pct"); pCoresPct = num("cpu_p_util_pct")
+        }
+
+        public init(fps: Double?, gpuBusyPct: Double?, gpuMHz: Double?, memPressure: String?,
+                    pageoutsPerSecond: Double?, thermalState: String, coreMaxPct: Double?, pCoresPct: Double?) {
+            func finite(_ v: Double?) -> Double? { v.flatMap { $0.isFinite ? $0 : nil } }
+            self.fps = finite(fps); self.gpuBusyPct = finite(gpuBusyPct); self.gpuMHz = finite(gpuMHz)
+            self.memPressure = memPressure.flatMap { $0.isEmpty ? nil : $0 }
+            self.pageoutsPerSecond = finite(pageoutsPerSecond)
+            thermalLevel = Self.thermalLevel(thermalState)
+            self.coreMaxPct = finite(coreMaxPct); self.pCoresPct = finite(pCoresPct)
+        }
+
+        /// `thermal_state` text → 0 nominal (or unknown), 1 fair, 2 serious, 3 critical.
+        public static func thermalLevel(_ state: String) -> Int {
+            ["fair": 1, "serious": 2, "critical": 3][state] ?? 0
         }
     }
 

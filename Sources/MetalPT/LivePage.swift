@@ -41,6 +41,9 @@ struct LivePage: View {
                     action: nil)
             }
             NumbersRow(snapshot: hub.latest, following: following)
+            if following || hub.recording != nil {
+                LimitedByChip(history: hub.history)
+            }
             LiveCharts(history: hub.history, showFPS: following)
         }
         .padding(24)
@@ -205,6 +208,48 @@ private struct BigNumber: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
+    }
+}
+
+// MARK: - Limited by
+
+/// This Mac's top GPU clock, read once (one IOReport sample and one IORegistry read) the first time the chip needs it.
+enum GPUTopClock {
+    static let mhz: Double? = GPUClock.currentMaxMHz().map(Double.init)
+}
+
+/// "Limited by: GPU" over the last 30 s (`LiveLimiter`); hidden until there are 10 seconds to judge.
+private struct LimitedByChip: View {
+    let history: [HubSnapshot]
+    @State private var topMHz: Double?
+
+    var body: some View {
+        Group {
+            if let reading = LiveLimiter.current(history, topMHz: topMHz) {
+                HStack(spacing: 7) {
+                    Circle().fill(Self.color(reading)).frame(width: 8, height: 8)
+                    Text(LiveLimiter.label(reading)).font(.callout.weight(.medium))
+                    Text("last 30 s").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.primary.opacity(0.05)))
+                .help("How the last 30 seconds were classified, by the same rules as a run's \"What held it back\".")
+            }
+        }
+        .task { topMHz = await Task.detached(priority: .utility) { GPUTopClock.mhz }.value }
+    }
+
+    /// Matches the charts: GPU orange, CPU blue.
+    static func color(_ r: LiveLimiter.Reading) -> Color {
+        switch r {
+        case .mixed, .limiter(.unclear): .secondary
+        case .limiter(.gpu): ChartPalette.gpu
+        case .limiter(.gpuThermal): .red
+        case .limiter(.cpu), .limiter(.cpuOneThread): ChartPalette.primary
+        case .limiter(.memory): ChartPalette.fourth
+        case .limiter(.frameCap): .pink
+        }
     }
 }
 

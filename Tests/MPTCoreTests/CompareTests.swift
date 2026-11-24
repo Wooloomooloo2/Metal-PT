@@ -15,10 +15,10 @@ import Foundation
     }
 
     private func bundle(_ dir: String, _ info: RunInfo, fps: Double, seconds: Int = 90,
-                        power: String = "smc_PSTR_w", watts: Double = 30) -> RunBundle {
+                        power: String = "smc_PSTR_w", watts: Double = 30, extra: [String: String] = [:]) -> RunBundle {
         let rows: [[String: String]] = (0..<seconds).map { i in
             ["elapsed_s": "\(i)", "fps": CSV.number(fps, digits: 1), "fps_app": info.game.exe, "on_ac": "1",
-             power: CSV.number(watts, digits: 2)]
+             power: CSV.number(watts, digits: 2)].merging(extra) { _, new in new }
         }
         return RunBundle(url: URL(fileURLWithPath: "/runs/\(dir)"), info: info, rows: rows, frames: nil, warnings: [])
     }
@@ -288,5 +288,32 @@ import Foundation
         let project = CompareProject(name: "p", baseline: 0, runs: entries([("a.mptrun", "A"), ("b.mptrun", "B")]))
         let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
         #expect(out.contains("The baseline has no power readings; FPS/W compares runs measured like run 2 (B)."))
+    }
+
+    @Test func runLinesAndDifferencesNameTheLimiter() {
+        let a = bundle("a.mptrun", info(stack: Stack(runtime: "Protium")), fps: 40, extra: ["gpu_busy_pct": "100.0"])
+        let b = bundle("b.mptrun", info(stack: Stack(runtime: "CrossOver")), fps: 50,
+                       extra: ["gpu_busy_pct": "60.0", "cpu_core_max_pct": "97.0"])
+        let c = bundle("c.mptrun", info(stack: Stack(runtime: "Whisky")), fps: 45, extra: ["gpu_busy_pct": "90.0"])
+        let project = CompareProject(name: "p", baseline: 0,
+                                     runs: [.init(bundle: "a.mptrun", name: "A"), .init(bundle: "b.mptrun", name: "B"),
+                                            .init(bundle: "c.mptrun", name: "C")])
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b), pair(c)])
+        #expect(out.contains("A: 40.0 fps median (baseline), 1 % low —, 30.0 W · limited by GPU"))
+        #expect(out.contains("· limited by CPU (one thread)"))
+        #expect(out.contains("C: 45.0 fps median (+12.5 %), 1 % low —, 30.0 W · no single limit"))
+        #expect(out.contains("<tr><td>Limited by</td><td>GPU</td><td class=\"diff\">CPU (one thread)</td>"
+            + "<td class=\"diff\">no single limit</td></tr>"))
+    }
+
+    @Test func sameLimiterIsSharedNotADifference() {
+        let a = bundle("a.mptrun", info(stack: Stack(runtime: "Protium")), fps: 40, extra: ["gpu_busy_pct": "100.0"])
+        let b = bundle("b.mptrun", info(stack: Stack(runtime: "CrossOver")), fps: 50, extra: ["gpu_busy_pct": "99.0"])
+        let project = CompareProject(name: "p", baseline: 0,
+                                     runs: [.init(bundle: "a.mptrun", name: "A"), .init(bundle: "b.mptrun", name: "B")])
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(!out.contains("<td>Limited by</td>"))
+        #expect(out.contains("Limited by: GPU"))
+        #expect(CompareReport.limitedBy(LimiterAnalysis(a, summary: RunSummary(a))) == "GPU")
     }
 }

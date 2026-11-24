@@ -3,6 +3,26 @@ import Foundation
 /// The single-run report written to `<bundle>/summary.html`.
 public enum SummaryReport {
     public static let fileName = "summary.html"
+    /// The report's layout version, written as `<meta name="mpt-summary-version">`. Bump it when the report gains
+    /// something an existing summary.html should show: the app rewrites summaries older than this when opened.
+    /// 2: "What held it back".
+    public static let version = 2
+    static let versionMeta = "mpt-summary-version"
+
+    /// The version a summary.html was written with; 1 for summaries from before the tag.
+    public static func fileVersion(of html: String) -> Int {
+        let tag = "<meta name=\"\(versionMeta)\" content=\""
+        guard let r = html.range(of: tag) else { return 1 }
+        return Int(html[r.upperBound...].prefix { $0.isNumber }) ?? 1
+    }
+
+    /// The version of the summary.html at `url` (its head only); nil when it cannot be read.
+    public static func fileVersion(at url: URL) -> Int? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        guard let data = try? h.read(upToCount: 4096) else { return nil }
+        return fileVersion(of: String(decoding: data, as: UTF8.self))
+    }
 
     /// Loads the bundle at `directory`, writes its summary next to it and returns the file's URL.
     @discardableResult
@@ -89,6 +109,7 @@ public enum SummaryReport {
         }
 
         body += tiles(info, summary)
+        body += limiterSection(LimiterAnalysis(bundle, summary: summary))
         body += charts(bundle, summary)
         body += statsTable(summary)
 
@@ -106,7 +127,8 @@ public enum SummaryReport {
         let version = info.appVersion.isEmpty ? "" : " \(info.appVersion)"
         body += "<footer>\(e(bundle.url.lastPathComponent)) · mpt\(e(version))</footer>\n</div>"
 
-        return HTML.page(title: "\(game) · mpt", meta: [("mpt-run", bundle.url.lastPathComponent)],
+        return HTML.page(title: "\(game) · mpt", meta: [("mpt-run", bundle.url.lastPathComponent),
+                                                                  (versionMeta, String(Self.version))],
                          body: body)
     }
 
@@ -172,6 +194,58 @@ public enum SummaryReport {
         }
         return out + "</div>\n"
     }
+
+    // MARK: - What held it back
+
+    /// Bar colour per class: GPU and CPU match the Utilisation chart (GPU busy, CPU P-cores); "no single limit" grey.
+    static func limiterColor(_ l: Limiter) -> String {
+        switch l {
+        case .gpu: "var(--limit-gpu)"
+        case .gpuThermal: "var(--limit-thermal)"
+        case .cpuOneThread: "var(--limit-thread)"
+        case .cpu: "var(--limit-cpu)"
+        case .memory: "var(--limit-memory)"
+        case .frameCap: "var(--limit-cap)"
+        case .unclear: "var(--limit-none)"
+        }
+    }
+
+    /// Names in the missing-inputs note: "no GPU clock recorded" → "GPU clock".
+    static func missingNote(_ missing: [String]) -> String? {
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map { m -> String in
+            var n = Substring(m)
+            if n.hasPrefix("no ") { n = n.dropFirst(3) }
+            if n.hasSuffix(" recorded") { n = n.dropLast(9) }
+            return String(n)
+        }
+        let newer: Set<String> = ["GPU clock", "GPU top clock", "memory pressure"]
+        let onlyNew = names.allSatisfy(newer.contains)
+        return "This run didn't record: \(names.joined(separator: ", "))" + (onlyNew ? " — newer runs do." : ".")
+    }
+
+    private static func limiterSection(_ a: LimiterAnalysis) -> String {
+        let e = HTML.escape
+        var out = "<section class=\"limits\"><div class=\"section-head\"><div class=\"eyebrow\">What held it back</div>"
+        out += "</div>\n<p class=\"verdict\">\(e(a.verdict))</p>\n"
+        if !a.shares.isEmpty {
+            out += "<div class=\"chart\"><h3>Share of steady seconds</h3>"
+            out += HTML.bars(a.shares.map { (label: capitalised($0.0.displayName), value: $0.1 * 100, note: "") },
+                             unit: "%", digits: 0, maxValue: 100, colors: a.shares.map { limiterColor($0.0) })
+            out += "</div>\n"
+        }
+        if !a.evidence.isEmpty {
+            out += "<ul class=\"evidence\">" + a.evidence.map { "<li>\(e($0))</li>" }.joined() + "</ul>\n"
+        }
+        if let s = a.suggestion { out += "<p class=\"callout\">\(e(s))</p>\n" }
+        if let m = missingNote(a.missing) { out += "<p class=\"note\">\(e(m))</p>\n" }
+        out += "<div class=\"rules\"><h3>How this is decided</h3><ul>"
+        out += LimiterAnalysis.describeThresholds().map { "<li>\(e($0))</li>" }.joined()
+        return out + "</ul></div></section>\n"
+    }
+
+    /// "a frame cap" → "A frame cap", "GPU" stays.
+    private static func capitalised(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
     private static func column(_ rows: [[String: String]], _ name: String) -> [Double?] {
         rows.map { r in r[name].flatMap { $0.isEmpty ? nil : Double($0) }.flatMap { $0.isFinite ? $0 : nil } }

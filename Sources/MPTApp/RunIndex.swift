@@ -147,14 +147,15 @@ public final class RunIndex: @unchecked Sendable {
         lock.withLock { inProgressLocked(dir, finished: nil) }
     }
 
-    /// Returns `<dir>/summary.html`, writing it first if missing, under the index lock (so it never races an edit).
+    /// Returns `<dir>/summary.html`, writing it first if missing or older than `SummaryReport.version` (so a run
+    /// recorded before a report change shows the new report), under the index lock (so it never races an edit).
     /// Refuses a run in progress (a summary of half a run would stay behind).
     public func summary(dir: String) throws -> URL {
         try lock.withLock {
             guard !inProgressLocked(dir, finished: nil) else { throw RunIndexError.inProgress }
             let url = root.appendingPathComponent(dir)
             let file = url.appendingPathComponent(SummaryReport.fileName)
-            if FileManager.default.fileExists(atPath: file.path) { return file }
+            if let v = SummaryReport.fileVersion(at: file), v >= SummaryReport.version { return file }
             return try SummaryReport.write(bundleAt: url)
         }
     }
