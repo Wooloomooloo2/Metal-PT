@@ -15,12 +15,13 @@ public enum HIDTemperatureReader {
 }
 
 /// Keeps one HID event-system client and the list of temperature services for its lifetime, so repeated reads
-/// (the 1 Hz benchmark recorder) only fetch events. Use from one thread at a time.
+/// (the 1 Hz benchmark recorder) only fetch events. `include` filters sensors by name once, in `init`, so `read()`
+/// only asks for the sensors wanted. Use from one thread at a time.
 public final class HIDTemperatureSource {
     private let client: IOHIDEventSystemClient?
     private let sensors: [(service: IOHIDServiceClient, name: String)]
 
-    public init() {
+    public init(include: (String) -> Bool = { _ in true }) {
         // Used instead of the public IOHIDEventSystemClientCreateSimpleClient: on M4 Max / macOS 26.6 the simple client returns services whose CopyEvent is always nil.
         client = IOHIDEventSystemClientCreate(kCFAllocatorDefault)
         var found: [(IOHIDServiceClient, String)] = []
@@ -31,11 +32,15 @@ public final class HIDTemperatureSource {
                 guard Self.intProperty(service, "PrimaryUsagePage") == Int(kCHIDSensorUsagePage),
                       Self.intProperty(service, "PrimaryUsage") == Int(kCHIDTemperatureSensorUsage) else { continue }
                 let name = IOHIDServiceClientCopyProperty(service, "Product" as CFString) as? String ?? "?"
+                guard include(name) else { continue }
                 found.append((service, name))   // the array element is retained by `found`
             }
         }
         sensors = found.sorted { $0.1 < $1.1 }
     }
+
+    /// Number of sensors this source reads.
+    public var sensorCount: Int { sensors.count }
 
     public func read() -> [TemperatureReading] {
         sensors.compactMap { sensor in

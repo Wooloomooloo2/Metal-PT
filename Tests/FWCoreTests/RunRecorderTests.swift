@@ -194,10 +194,18 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
 }
 
 @Suite struct TelemetrySamplerTests {
-    @Test func maxTemperatureSkipsCalibrationSensor() {
+    @Test func maxTemperatureUsesDieSensors() {
         let r = [TemperatureReading(name: "PMU tcal", celsius: 51.9), TemperatureReading(name: "PMU tdie2", celsius: 41.0),
-                 TemperatureReading(name: "PMU tdie8", celsius: 43.5)]
+                 TemperatureReading(name: "PMU tdie8", celsius: 43.5), TemperatureReading(name: "gas gauge", celsius: 60)]
         #expect(TelemetrySampler.maxTemperature(r) == 43.5)
+    }
+
+    @Test func maxTemperatureFallsBackWithoutDieSensors() {
+        let r = [TemperatureReading(name: "PMU tcal", celsius: 51.9), TemperatureReading(name: "PMU tcalx", celsius: 30),
+                 TemperatureReading(name: "NAND", celsius: 38)]
+        #expect(TelemetrySampler.maxTemperature(r) == 38)
         #expect(TelemetrySampler.maxTemperature([TemperatureReading(name: "PMU tcal", celsius: 51.9)]) == nil)
+        #expect(TelemetrySampler.isDieSensor("PMU tdie10"))
+        #expect(!TelemetrySampler.isDieSensor("PMU tcal"))
     }
 }

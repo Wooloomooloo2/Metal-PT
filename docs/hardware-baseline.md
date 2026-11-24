@@ -89,6 +89,12 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
     fwbench 0.35 s / 20 s ≈ 1.75 % (release), 0.42 s ≈ 2.1 % (debug). Combined ≈ 4 %, still over the 1 % target.
   - Most of fwbench's tick is `IOHIDServiceClientCopyEvent` for the ~45 HID temperature sensors (IPC to the HID event
     system; 187 of 227 tick samples in a `sample` profile); reusing the client did not change that much.
-- [M] E5/E8 2026-11-24: HID sensor "PMU tcal" reads a constant 51.9 at idle and under 8 s of 12× `yes` (a
-  calibration value, not a temperature); it was always the max. `temp_max_c` now skips it (die sensors ~40–43 °C).
+  - after reading only the "PMU tdie*" sensors (R13; 30 s release record, no Metal app, 10 s of 12× `yes` in the
+    middle): fwbench 0.45 s / 30 s ≈ 1.5 % (ps %cpu 0.8); `log` 0.33 s / 30 s ≈ 1.1 % with no HUD traffic. Combined
+    ≈ 2.6 %, still over 1 %.
+- [M] E5/E8 2026-11-24: 45 HID temperature services; 20 are "PMU tdie1…10" (each name appears twice), 6 "gas gauge".
+  "PMU tcal" reads a constant 51.9 at idle and under 8 s of 12× `yes` (a calibration value, not a temperature) and was
+  always the max. `temp_max_c` = max over "PMU tdie*" only (fallback without them: all except exactly "PMU tcal").
+  Under 10 s of 12× `yes` (P-cluster 99.7 %) it went from 39.8–40.7 °C (idle) to 41.4, peaking at 42.0 °C a few
+  seconds after the load stopped: these sensors move by only 1–2 °C on short loads.
 ## Open questions

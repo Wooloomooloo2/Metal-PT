@@ -11,7 +11,11 @@ public final class TelemetrySampler {
 
     private let ioreport: IOReportSampler?
     private let smc: SMCConnection?
-    private let temperatures = HIDTemperatureSource()
+    /// Die sensors only (R13); if the machine has none, every sensor except the constant "PMU tcal".
+    private let temperatures: HIDTemperatureSource = {
+        let die = HIDTemperatureSource(include: TelemetrySampler.isDieSensor)
+        return die.sensorCount > 0 ? die : HIDTemperatureSource(include: { $0 != TelemetrySampler.calibrationSensor })
+    }()
     private var previous: (sample: CFDictionary, uptime: TimeInterval)?
 
     public init() {
@@ -74,10 +78,15 @@ public final class TelemetrySampler {
         result.tempBatteryC = (try? smc.read("TB0T"))?.number
     }
 
-    /// Hottest sensor, skipping "PMU tcal": a calibration value that reads a constant 51.9 at idle and under load
-    /// on M4 Max (measured 2026-11-24) and would otherwise always be the max.
+    static let calibrationSensor = "PMU tcal"
+    static func isDieSensor(_ name: String) -> Bool { name.hasPrefix("PMU tdie") }
+
+    /// Hottest "PMU tdie*" sensor; without any, the hottest of the rest except "PMU tcal" (a calibration value that
+    /// reads a constant 51.9 at idle and under load on M4 Max, measured 2026-11-24).
     static func maxTemperature(_ readings: [TemperatureReading]) -> Double? {
-        readings.filter { !$0.name.lowercased().contains("tcal") }.map(\.celsius).max()
+        let die = readings.filter { isDieSensor($0.name) }
+        let pool = die.isEmpty ? readings.filter { $0.name != calibrationSensor } : die
+        return pool.map(\.celsius).max()
     }
 
     /// (active + wired + compressor pages) × kernel page size, in GiB (1024³ bytes).
