@@ -35,7 +35,7 @@ or null. A reader must treat any missing optional key as unknown.
 | `game.exe` | string | Executable name (Windows exe for Wine games, from argv[0]); empty if the game process was never identified. |
 | `game.title` | string? | Human title, when known. |
 | `game.storeAppID` | string? | Store id (Steam etc.), when known. |
-| `stack.runtime` | string? | `Protium`, `CrossOver`, `Whisky`, `native`, ... |
+| `stack.runtime` | string? | `Protium`, `CrossOver`, `Whisky`, `Kegworks`, `GPTK`, `Wine (unknown)` (a Wine build no named runtime claims), `native`; null when detection failed |
 | `stack.runtimeVersion` | string? | Runtime version when its bundle exposes one. |
 | `stack.wineArch` | string? | `arm64ec` or `x86_64`. |
 | `stack.translator` | string? | x86 translator: `FEX`, `Rosetta`, or absent. |

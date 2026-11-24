@@ -57,6 +57,36 @@ import Foundation
         #expect(s.graphics.isEmpty)
     }
 
+    @Test func kegworksRuntime() {
+        let wrapper = StackDetector.fingerprint(mappedPaths: [
+            "/Users/x/Applications/Kegworks/Game.app/Contents/SharedSupport/wine/lib/wine/x86_64-unix/ntdll.so",
+        ])
+        #expect(wrapper.runtime == "Kegworks")
+        let app = StackDetector.fingerprint(mappedPaths: ["/Applications/Kegworks.app/Contents/MacOS/Kegworks"])
+        #expect(app.runtime == "Kegworks")
+    }
+
+    @Test func gptkRuntime() {
+        #expect(StackDetector.fingerprint(mappedPaths: [
+            "/usr/local/opt/game-porting-toolkit/lib/wine/x86_64-unix/ntdll.so",
+        ]).runtime == "GPTK")
+        #expect(StackDetector.fingerprint(mappedPaths: [
+            "/Volumes/Game Porting Toolkit-2.1/redist/lib/external/D3DMetal.framework/D3DMetal",
+        ]).runtime == "GPTK")
+    }
+
+    @Test func unknownWineIsNotNative() {
+        #expect(StackDetector.fingerprint(mappedPaths: ["/opt/wine-stable/lib/wine/x86_64-unix/ntdll.so"]).runtime
+                == "Wine (unknown)")
+        #expect(StackDetector.fingerprint(mappedPaths: ["/opt/homebrew/bin/wine64"]).runtime == "Wine (unknown)")
+        #expect(StackDetector.fingerprint(mappedPaths: ["/opt/w/bin/wineserver"]).runtime == "Wine (unknown)")
+        #expect(StackDetector.fingerprint(mappedPaths: ["/opt/w/bin/wine64-preloader"]).runtime == "Wine (unknown)")
+        // A named runtime wins over the generic Wine match.
+        #expect(StackDetector.fingerprint(mappedPaths: ["\(protium)/lib/wine/aarch64-unix/ntdll.so"]).runtime
+                == "Protium")
+        #expect(StackDetector.fingerprint(mappedPaths: ["/Users/x/winery/notes.txt"]).runtime == "native")
+    }
+
     @Test func appBundleExtraction() {
         #expect(StackDetector.appBundlePath(in: [
             "/usr/lib/x", "\(crossOver)/lib/a.dylib",

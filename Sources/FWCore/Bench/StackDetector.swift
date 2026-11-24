@@ -2,7 +2,7 @@ import Foundation
 
 /// Which translation stack a game process runs on.
 public struct Stack: Codable, Equatable, Sendable {
-    /// "Protium", "CrossOver", "Whisky", "native"
+    /// "Protium", "CrossOver", "Whisky", "Kegworks", "GPTK", "Wine (unknown)", "native"
     public var runtime: String?
     public var runtimeVersion: String?
     /// "arm64ec", "x86_64"
@@ -23,9 +23,23 @@ public struct Stack: Codable, Equatable, Sendable {
 }
 
 public enum StackDetector {
-    /// Matches the runtime app bundle: `…/Protium.app`, `…/Whisky.app`, `…/CrossOver*.app`.
+    /// Matches the runtime app bundle: `…/Protium.app`, `…/Whisky.app`, `…/Kegworks.app`, `…/CrossOver*.app`.
     private static let appRegex = try! NSRegularExpression(
-        pattern: #"^(.*?/(Protium|Whisky|CrossOver[^/]*)\.app)/"#)
+        pattern: #"^(.*?/(Protium|Whisky|Kegworks|CrossOver[^/]*)\.app)/"#)
+
+    /// Runtimes recognised by a path alone, after the app bundles: (name, matcher), first match wins.
+    private static let runtimePathTable: [(String, @Sendable (String) -> Bool)] = [
+        // Kegworks wrappers live in `…/Kegworks/<Game>.app`.
+        ("Kegworks", { $0.contains("/Kegworks/") }),
+        ("GPTK", { $0.contains("game-porting-toolkit") || $0.contains("Game Porting Toolkit") }),
+    ]
+
+    /// A Wine build that no runtime above claims.
+    private static func isWinePath(_ path: String) -> Bool {
+        if path.contains("/lib/wine/") { return true }
+        let name = (path as NSString).lastPathComponent
+        return ["wine", "wine64", "wineserver", "wine-preloader", "wine64-preloader"].contains(name)
+    }
 
     private static func appMatch(_ path: String) -> (bundle: String, runtime: String)? {
         let range = NSRange(path.startIndex..., in: path)
@@ -54,7 +68,9 @@ public enum StackDetector {
 
     public static func fingerprint(mappedPaths: [String]) -> Stack {
         var stack = Stack()
-        stack.runtime = mappedPaths.lazy.compactMap { appMatch($0)?.runtime }.first ?? "native"
+        stack.runtime = mappedPaths.lazy.compactMap { appMatch($0)?.runtime }.first
+            ?? runtimePathTable.first { _, match in mappedPaths.contains(where: match) }?.0
+            ?? (mappedPaths.contains(where: isWinePath) ? "Wine (unknown)" : "native")
         if mappedPaths.contains(where: { $0.contains("libarm64ecfex") }) {
             stack.translator = "FEX"
             stack.wineArch = "arm64ec"
