@@ -43,14 +43,16 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
 - On MacBook keyboards you may need **Fn** for F6/F7. Menu-bar managers (Bartender etc.) may hide the Metal-PT
   item. After turning FPS logging on, restart the game's launcher (e.g. Steam) so games inherit the variables.
 - If FPS logging is on and a game keeps the GPU busy but logs no frames, Metal-PT warns that the game is not
-  reporting frames (restart the launcher and the game). Settings has a sound option for recording start and stop;
+  reporting frames (restart the launcher and the game). The check runs only while Metal-PT is sampling (recording,
+  the overlay on, or the Live page visible). Settings has a sound option for recording start and stop;
   the menu-bar label turns red while recording.
 - **What held it back** (run summary, Compare, Live page) classifies each steady second as memory (pressure or
-  paging), a frame cap (FPS at 30/40/45/60/90/120/144 with the GPU not busy), GPU (thermal), GPU, CPU (one thread)
-  or CPU, then gives a verdict (a class with at least 60 % of seconds, else "Mixed") with the evidence and one
-  suggestion.
-  A busy GPU at a low clock counts as headroom, not GPU-bound. It is a guide, not proof; each report shows the
-  thresholds it used ("how this is decided").
+  paging), a frame cap (FPS at 30/40/45/60/90/120/144 or the display's refresh rate or half of it, with the GPU not
+  busy), GPU (thermal), GPU, CPU (one thread) or CPU, then gives a verdict (a class with at least 60 % of seconds,
+  else "Mixed", or "Partly GPU (otherwise no single limit)") with the evidence and one suggestion.
+  A busy GPU well below its top clock is not counted as GPU-bound (the clock reading is not yet verified against a
+  heavy game); in low power mode or on battery the GPU is judged on busy % only. It is a guide, not proof; each
+  report shows the thresholds it used ("how this is decided").
 - **Runs**: every recording, newest first, with its summary. Add in-game settings and notes, show it in Finder,
   or move it to the Trash.
 - **Compare**: tick runs in Runs and choose "Compare selected…", or add runs to a project in Compare. Pick a
