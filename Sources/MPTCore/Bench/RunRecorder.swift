@@ -24,11 +24,14 @@ public enum FollowRule: Sendable {
 /// Per-PID stack cache whose detection (lsof, up to 5 s) runs on a background queue: `stack(for:)` never blocks and
 /// returns nil (unknown) until the detection finishes. Each PID is detected once, except that a result of nil or
 /// "native" is re-detected once more after `retryAfter` seconds (Wine libraries may not have been loaded yet).
+/// `detectNow(pid:)` is the blocking lookup for callers already off the main thread: it shares a detection under way
+/// instead of starting a second lsof.
 public final class AsyncStackCache: @unchecked Sendable {
     public static let retryAfter = 5.0
     private let detect: @Sendable (Int32) -> Stack
     private let now: @Sendable () -> Double
-    private let lock = NSLock()
+    /// Guards the state below; signalled when a detection finishes.
+    private let condition = NSCondition()
     private var known: [Int32: (stack: Stack, at: Double)] = [:]
     private var pending: Set<Int32> = []
     private var retried: Set<Int32> = []
@@ -40,10 +43,10 @@ public final class AsyncStackCache: @unchecked Sendable {
         self.now = now
     }
 
-    var pendingCount: Int { lock.withLock { pending.count } }
+    var pendingCount: Int { condition.withLock { pending.count } }
 
     public func stack(for pid: Int32) -> Stack? {
-        lock.lock(); defer { lock.unlock() }
+        condition.lock(); defer { condition.unlock() }
         let entry = known[pid]
         var start = false
         if let entry {
@@ -58,12 +61,32 @@ public final class AsyncStackCache: @unchecked Sendable {
         }
         if start {
             pending.insert(pid)
-            queue.async { [self] in
-                let s = detect(pid)
-                lock.withLock { known[pid] = (s, now()); pending.remove(pid) }
-            }
+            queue.async { [self] in finish(pid, detect(pid)) }
         }
         return entry?.stack
+    }
+
+    /// Blocking: the known stack; else waits for the detection under way; else detects now (and caches the result).
+    public func detectNow(pid: Int32) -> Stack {
+        condition.lock()
+        while known[pid] == nil && pending.contains(pid) { condition.wait() }
+        if let entry = known[pid] {
+            condition.unlock()
+            return entry.stack
+        }
+        pending.insert(pid)
+        condition.unlock()
+        let s = detect(pid)
+        finish(pid, s)
+        return s
+    }
+
+    private func finish(_ pid: Int32, _ s: Stack) {
+        condition.withLock {
+            known[pid] = (s, now())
+            pending.remove(pid)
+            condition.broadcast()
+        }
     }
 }
 
@@ -325,20 +348,8 @@ public final class RunRecorder: @unchecked Sendable {
             return counter.followedPID
         case .preferTranslated(let exclude, let pinned):
             guard let now = counter.latestTime else { return nil }
-            if let pinned, !exclude.contains(pinned), counter.isLive(pid: pinned, at: now) { return pinned }
-            let candidates = imagePaths.keys.filter { !exclude.contains($0) }
-            let live = candidates.filter { counter.isLive(pid: $0, at: now) }
-            let translated = live.filter { pid in
-                guard let runtime = (stacks[pid] ?? stackOf(pid))?.runtime else { return false }
-                return runtime != "native"
-            }
-            if let best = counter.busiestLive(at: now, among: translated) { return best }
-            if let best = counter.busiestLive(at: now, among: live) { return best }
-            // Nothing live: the most frames so far among the non-excluded.
-            return candidates.max { a, b in
-                let (fa, fb) = (counter.totalFrames(pid: a), counter.totalFrames(pid: b))
-                return fa != fb ? fa < fb : a > b
-            }
+            return FollowResolver.preferTranslated(counter: counter, pids: imagePaths.keys, exclude: exclude,
+                                                   pinned: pinned, at: now, stack: { stacks[$0] ?? stackOf($0) })
         case .nameContains(let text):
             let needle = text.lowercased()
             let matches = imagePaths.keys.filter { pid in

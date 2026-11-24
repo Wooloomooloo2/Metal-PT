@@ -117,6 +117,7 @@ public final class RecordingSession: @unchecked Sendable {
     private let tickInterval: Double
     private let stackDetector: @Sendable (Int32) -> Stack
     private let argv0: @Sendable (Int32) -> String?
+    private let stackOf: (@Sendable (Int32) -> Stack?)?
     /// Directory-name seed; nil means the placeholder "run" (renamed at finish once the game is known).
     private let game: String?
     /// The seed is only a guess (the launched command[0], often a launcher or wine): rename at finish to the
@@ -185,12 +186,16 @@ public final class RecordingSession: @unchecked Sendable {
 
     /// Validates `options` and does the slow reads (machine, power mode, battery) and primes `telemetry`, so the
     /// first row has power and utilisation. `machine`, `stackDetector`, `argv0` and `tickInterval` are for tests.
+    /// `stackOf` is the recorder's non-blocking stack lookup for `.preferTranslated` (nil: a cache of its own); an
+    /// owner with its own `AsyncStackCache` passes it here and `detectNow` as `stackDetector`, so a PID is detected
+    /// once.
     public init(options: Options, telemetry: TelemetrySource, hud: HUDEventSource,
                 clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
                 tickInterval: Double = 1,
                 machine: @Sendable () -> (RunInfo.Machine, RunInfo.Settings) = RecordingSession.currentMachine,
                 stackDetector: @escaping @Sendable (Int32) -> Stack = { StackDetector.detect(pid: $0) },
-                argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) }) throws {
+                argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) },
+                stackOf: (@Sendable (Int32) -> Stack?)? = nil) throws {
         if let seconds = options.seconds, !(seconds > 0 && seconds.isFinite) {
             throw OptionsError(description: "the duration must be more than 0 s")
         }
@@ -211,6 +216,7 @@ public final class RecordingSession: @unchecked Sendable {
         self.tickInterval = tickInterval
         self.stackDetector = stackDetector
         self.argv0 = argv0
+        self.stackOf = stackOf
 
         if let launch = options.launch {
             game = ProcessNames.exeName(fromArgv0: launch[0])
@@ -266,7 +272,8 @@ public final class RecordingSession: @unchecked Sendable {
                                        // launcher exits (reparenting does not change the group).
                                        guard let group = launched.value else { return false }
                                        return getpgid(pid) == group
-                                   })
+                                   },
+                                   stackOf: stackOf)
             startDate = date
             bundleDirectory = dir
             self.recorder = recorder

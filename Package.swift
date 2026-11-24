@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "MPTCore", targets: ["MPTCore"]),
+        .library(name: "MPTApp", targets: ["MPTApp"]),
         .executable(name: "mptprobe", targets: ["mptprobe"]),
         .executable(name: "mpt", targets: ["mpt"]),
     ],
@@ -19,8 +20,10 @@ let package = Package(
             ]
         ),
         .target(name: "MPTCore", dependencies: ["CMacPrivate"]),
+        .target(name: "MPTApp", dependencies: ["MPTCore"]),
         .executableTarget(name: "mptprobe", dependencies: ["MPTCore"]),
         .executableTarget(name: "mpt", dependencies: ["MPTCore"]),
         .testTarget(name: "MPTCoreTests", dependencies: ["MPTCore"]),
+        .testTarget(name: "MPTAppTests", dependencies: ["MPTApp", "MPTCore"]),
     ]
 )

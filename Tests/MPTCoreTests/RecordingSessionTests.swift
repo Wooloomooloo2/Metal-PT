@@ -151,6 +151,36 @@ private let t0 = 1_700_000_000.0
         #expect(b.info.stack.runtime == "native")
     }
 
+    /// The owner's stack lookup (the app's shared cache) decides `.preferTranslated`, not a cache of the recorder's.
+    @Test func stackOfIsUsedForFollowing() throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hud = FakeHUD()
+        let options = RecordingSession.Options(seconds: 1, runsRoot: root,
+                                               follow: .preferTranslated(exclude: [], pinned: nil), appVersion: "test")
+        let s = try RecordingSession(
+            options: options, telemetry: FakeTelemetry(), hud: hud, clock: { FakeClock([t0 + 1]).now() },
+            tickInterval: 0.01,
+            machine: { (RunInfo.Machine(modelID: "m", chip: "c", memoryGB: 1, osVersion: "1", osBuild: "x"),
+                        RunInfo.Settings()) },
+            stackDetector: { _ in Stack(runtime: "native") },
+            argv0: { $0 == 1 ? "Busy" : "Game" },
+            stackOf: { $0 == 2 ? Stack(runtime: "Protium") : nil })
+        let ended = DispatchSemaphore(value: 0)
+        let statuses = Statuses()
+        s.onTick = { statuses.append($0) }
+        s.onEnd = { _ in ended.signal() }
+        for (pid, frames) in [(Int32(1), 300), (Int32(2), 30)] {
+            hud.send(HUDEvent(pid: pid, imagePath: "/x", time: t0, line: MetalHUDLine(frames: 0, a: 0, b: 0, frameTimes: [])))
+            hud.send(HUDEvent(pid: pid, imagePath: "/x", time: t0 + 0.5,
+                              line: MetalHUDLine(frames: frames, a: 0, b: 0, frameTimes: [])))
+        }
+        try s.start()
+        #expect(ended.wait(timeout: .now() + 10) == .success)
+        _ = s.stop()
+        #expect(statuses.all.first?.followedPID == 2)
+    }
+
     @Test func sleepGapAddsWarning() throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

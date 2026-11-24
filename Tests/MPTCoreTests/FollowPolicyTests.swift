@@ -136,6 +136,61 @@ private final class NoTelemetry: TelemetrySource, @unchecked Sendable {
     }
 }
 
+@Suite struct FollowResolverTests {
+    private func counter(_ feeds: [(pid: Int32, frames: Int, until: Double)]) -> FrameCounter {
+        var c = FrameCounter()
+        for f in feeds {
+            c.add(HUDEvent(pid: f.pid, imagePath: "/x", time: 0, line: MetalHUDLine(frames: 0, a: 0, b: 0, frameTimes: [])))
+            c.add(HUDEvent(pid: f.pid, imagePath: "/x", time: f.until,
+                           line: MetalHUDLine(frames: f.frames, a: 0, b: 0, frameTimes: [])))
+        }
+        return c
+    }
+
+    @Test func liveCandidatesBusiestFirstWithoutExcluded() {
+        let c = counter([(1, 10, 5), (2, 300, 5), (3, 99, 5), (4, 9999, 1)])   // 4 is stale at 5
+        #expect(FollowResolver.liveCandidates(counter: c, pids: [1, 2, 3, 4], exclude: [3], at: 5) == [2, 1])
+    }
+
+    @Test func resolverMatchesTheRule() {
+        let c = counter([(1, 300, 5), (2, 10, 5)])
+        let stacks: [Int32: Stack] = [1: Stack(runtime: "native"), 2: Stack(runtime: "CrossOver")]
+        #expect(FollowResolver.preferTranslated(counter: c, pids: [1, 2], exclude: [], pinned: nil, at: 5,
+                                                stack: { stacks[$0] }) == 2)
+        #expect(FollowResolver.preferTranslated(counter: c, pids: [1, 2], exclude: [], pinned: 1, at: 5,
+                                                stack: { stacks[$0] }) == 1)
+    }
+}
+
+@Suite struct AsyncStackCacheWaitTests {
+    @Test func detectNowSharesADetectionUnderWay() async throws {
+        let gate = DispatchSemaphore(value: 0)
+        let calls = Atomic()
+        let cache = AsyncStackCache(detect: { _ in calls.bump(); gate.wait(); return Stack(runtime: "Protium") })
+        #expect(cache.stack(for: 1) == nil)   // starts the background detection
+        for _ in 0..<100 where calls.value == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        let box = StackBox()
+        DispatchQueue.global().async { box.value = cache.detectNow(pid: 1) }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(box.value == nil)   // waiting for the detection under way
+        gate.signal()
+        for _ in 0..<200 where box.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(box.value?.runtime == "Protium")
+        #expect(calls.value == 1)
+        // Known: returned at once; unknown: detected inline.
+        #expect(cache.detectNow(pid: 1).runtime == "Protium")
+        gate.signal()
+        #expect(cache.detectNow(pid: 2).runtime == "Protium")
+        #expect(calls.value == 2)
+        #expect(cache.stack(for: 2)?.runtime == "Protium")
+    }
+}
+
+private final class StackBox: @unchecked Sendable {
+    private let l = NSLock(); private var s: Stack?
+    var value: Stack? { get { l.withLock { s } } set { l.withLock { s = newValue } } }
+}
+
 private final class Atomic: @unchecked Sendable {
     private let l = NSLock(); private var n = 0
     func bump() { l.withLock { n += 1 } }
