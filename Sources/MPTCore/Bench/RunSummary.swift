@@ -24,7 +24,8 @@ public struct RunSummary: Sendable {
     public let powerColumn: String?
     public let notes: [String]
 
-    private static let skipColumns: Set<String> = ["t", "fps_app", "thermal_state", "fps_pid", "on_ac", "mem_pressure"]
+    /// Columns without per-column stats: the free-text ones, plus the timestamp, a PID and a flag.
+    static let skipColumns: Set<String> = SampleColumns.text.union(["t", "fps_pid", "on_ac"])
 
     /// Ascending sort, index ceil(p*n)-1 clamped to >= 0.
     static func percentile(_ sorted: [Double], _ p: Double) -> Double {

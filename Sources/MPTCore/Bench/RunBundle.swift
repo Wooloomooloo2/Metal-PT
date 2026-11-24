@@ -50,7 +50,7 @@ public final class RunBundleWriter: @unchecked Sendable {
     }
 
     /// Free-text sample columns (privacy-scrubbed when written, and again on export).
-    static let stringColumns: Set<String> = ["fps_app", "thermal_state", "mem_pressure"]
+    static let stringColumns: Set<String> = SampleColumns.text
 
     /// Writes one row; missing columns become empty cells; free-text cells are privacy-scrubbed.
     /// Written through immediately. Appends after `finish` are silently ignored (a signal handler may

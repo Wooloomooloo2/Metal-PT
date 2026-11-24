@@ -84,6 +84,10 @@ public enum SampleColumns {
         "gpu_mhz", "mem_pressure", "swap_used_gb", "compressed_gb", "pageouts_per_s",
     ]
 
+    /// Free-text columns: privacy-scrubbed when written (`RunBundleWriter`) and never summarised as numbers
+    /// (`RunSummary`).
+    public static let text: Set<String> = ["fps_app", "thermal_state", "mem_pressure"]
+
     nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

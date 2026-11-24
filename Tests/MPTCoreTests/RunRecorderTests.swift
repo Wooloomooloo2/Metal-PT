@@ -306,6 +306,14 @@ private final class GPUMemoryTelemetry: TelemetrySource, @unchecked Sendable {
         #expect(RunBundleWriter.stringColumns.contains("mem_pressure"))
     }
 
+    /// One list of free-text columns: scrubbed by the writer and never summarised as numbers.
+    @Test func textColumnsAreSharedByWriterAndSummary() {
+        #expect(SampleColumns.text == ["fps_app", "thermal_state", "mem_pressure"])
+        #expect(RunBundleWriter.stringColumns == SampleColumns.text)
+        #expect(RunSummary.skipColumns.isSuperset(of: SampleColumns.text))
+        #expect(SampleColumns.text.isSubset(of: Set(SampleColumns.all)))
+    }
+
     @Test func emptyGPUClockAndMemoryCellsStayEmpty() throws {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
