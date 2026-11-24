@@ -107,7 +107,12 @@ public struct RunSummary: Sendable {
         }
 
         var notes: [String] = []
-        if medianFPS == nil { notes.append("no FPS source") }
+        if !rows.indices.contains(where: { fps($0) != nil }) {
+            notes.append("no FPS source")
+        } else if medianFPS == nil {
+            notes.append("no steady FPS seconds")
+        }
+        // Rows are recorded at 1 Hz, so the row count is the steady time in seconds.
         let steadyCount = steady.count
         if steadyCount < 60 { notes.append("short run (\(steadyCount) s steady)") }
         if steady.contains(where: { rows[$0]["on_ac"] == "0" }) { notes.append("on battery") }

@@ -87,4 +87,21 @@ import Foundation
         #expect(st?.max == 4)
         #expect(st?.count == 4)
     }
+
+    @Test func emptySteadySetIsNotNoFPSSource() {
+        let r = rows(30) { _ in ["fps": "60", "fps_app": "game"] }
+        let s = RunSummary(bundle(rows: r, steadyStart: 100, steadyEnd: 200))
+        #expect(s.steadySeconds.isEmpty)
+        #expect(!s.notes.contains("no FPS source"))
+        #expect(s.notes.contains("no steady FPS seconds"))
+        #expect(s.notes.contains("short run (0 s steady)"))
+    }
+
+    @Test func menuMedianIsComputedAfterWarmupTrim() {
+        let r = rows(18) { i in
+            ["fps": i < 10 ? "200" : (i == 12 ? "300" : "60"), "fps_app": "game"]
+        }
+        let s = RunSummary(bundle(rows: r))
+        #expect(s.steadySeconds == [10, 11, 13, 14, 15, 16, 17])
+    }
 }
