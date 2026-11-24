@@ -32,6 +32,18 @@ enum Fmt {
     static func systemW(_ sample: TelemetrySample) -> Double? { sample.smcPower["PSTR"] }
 }
 
+// MARK: - Chart palette
+
+/// Series colours for the Live charts: system colours (they adapt to light and dark), chosen to stay distinct for
+/// the common colour-vision deficiencies (blue/orange carry the main pairs; green and purple are the third and
+/// fourth). The same quantity keeps its colour on every chart: GPU is always orange.
+enum ChartPalette {
+    static let primary = Color.blue
+    static let gpu = Color.orange
+    static let third = Color.green
+    static let fourth = Color.purple
+}
+
 // MARK: - Shared pieces
 
 /// Followed game and its stack, or what to do when there is none.
@@ -108,7 +120,8 @@ struct RecordButton: View {
                 Image(systemName: recording ? "stop.fill" : "record.circle")
                 Text(recording ? "Stop recording" : "Record")
                 if fullWidth { Spacer(minLength: 4) }
-                Text(model.recordCombo.display).foregroundStyle(.secondary)
+                // On a prominent (filled) button `.secondary` is low-contrast; white at reduced opacity reads.
+                Text(model.recordCombo.display).foregroundStyle(.white.opacity(0.75))
             }
             .frame(maxWidth: fullWidth ? .infinity : nil)
         }

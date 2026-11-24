@@ -1,0 +1,65 @@
+import Combine
+import Foundation
+import MPTCore
+
+/// A view's hold on one hub need while it is visible: `hold` on appear, `release` on disappear (and on deinit,
+/// through the token). Holding twice keeps one token.
+@MainActor
+public final class HubLease: ObservableObject {
+    private var token: TelemetryHub.Token?
+
+    public init() {}
+
+    public var isHeld: Bool { token != nil }
+
+    public func hold(_ need: TelemetryHub.Need, on hub: TelemetryHub) {
+        guard token == nil else { return }
+        token = hub.acquire(need)
+    }
+
+    public func release() {
+        let t = token
+        token = nil
+        t?.release()
+    }
+}
+
+/// One chart point: x is seconds before the newest snapshot (−300…0). `segment` numbers each unbroken run of
+/// values, so a chart drawing one line per segment shows a gap where a value was unknown.
+public struct LivePoint: Sendable, Equatable {
+    public let secondsAgo: Double
+    public let value: Double
+    public let segment: Int
+
+    public init(secondsAgo: Double, value: Double, segment: Int) {
+        self.secondsAgo = secondsAgo
+        self.value = value
+        self.segment = segment
+    }
+}
+
+public enum LiveSeries {
+    /// The window the Live charts show, seconds.
+    public static let window = Double(TelemetryHub.historyLimit)
+
+    /// Points of `value` over `history` (oldest first), relative to its newest snapshot. Unknown or non-finite
+    /// values are skipped and start a new segment; snapshots older than `window` are dropped.
+    public static func points(_ history: [HubSnapshot], _ value: (HubSnapshot) -> Double?) -> [LivePoint] {
+        guard let now = history.last?.time else { return [] }
+        var out: [LivePoint] = []
+        var segment = 0
+        var inRun = false
+        for snap in history {
+            let ago = snap.time - now
+            guard ago >= -window else { continue }
+            if let v = value(snap), v.isFinite {
+                out.append(LivePoint(secondsAgo: ago, value: v, segment: segment))
+                inRun = true
+            } else if inRun {
+                segment += 1
+                inRun = false
+            }
+        }
+        return out
+    }
+}

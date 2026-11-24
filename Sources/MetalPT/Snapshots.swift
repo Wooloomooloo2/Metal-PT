@@ -45,13 +45,16 @@ enum Snapshots {
     // MARK: - Shots
 
     static func shots() -> [Shot] {
-        let following = Fixture.model(following: true)
-        let idle = Fixture.model(following: false)
+        let following = Fixture.model(.following)
+        let idle = Fixture.model(.loggingOff)
+        let noGame = Fixture.model(.noGame)
         var list: [Shot] = Page.allCases.map { page in
             Shot(name: page.rawValue, size: windowSize, width: windowSize.width,
                  view: AnyView(WindowFrame(page: page, model: following, hub: following.hub)))
         }
         list.append(Shot(name: "live-nogame", size: windowSize, width: windowSize.width,
+                         view: AnyView(WindowFrame(page: .live, model: noGame, hub: noGame.hub))))
+        list.append(Shot(name: "live-loggingoff", size: windowSize, width: windowSize.width,
                          view: AnyView(WindowFrame(page: .live, model: idle, hub: idle.hub))))
         list.append(Shot(name: "menu", size: nil, width: MenuBarView.width,
                          view: AnyView(MenuBarView(model: following, hub: following.hub))))
@@ -144,24 +147,43 @@ private struct MenuBarStrip: View {
 
 // MARK: - Fixture
 
-/// A followed game five minutes into play, recording for 1:23, on inert sources.
+/// Fixture states: a followed game five minutes into play, recording for 1:23; FPS logging on but no game yet;
+/// FPS logging off. All on inert sources.
 @MainActor
 enum Fixture {
+    enum State {
+        case following, noGame, loggingOff
+    }
+
     static let game = "HorizonZeroDawnRemastered"
     static let stack = Stack(runtime: "Protium", translator: "FEX", graphics: ["DXMT"])
 
-    static func model(following: Bool) -> AppModel {
+    /// FPS for second `i`: ~55–60 with a few sharp dips, and a 4 s gap (a loading screen, no frames logged).
+    static func fps(_ i: Int) -> Double? {
+        if (150..<154).contains(i) { return nil }
+        let x = Double(i)
+        let dip: Double = [41, 42, 97, 198, 199, 263].contains(i) ? 16 : 0
+        return 57.5 + 2 * sin(x / 5) + 0.8 * sin(x * 1.7) - dip
+    }
+
+    static func model(_ state: State) -> AppModel {
+        let following = state == .following
         let hub = TelemetryHub(dependencies: .inert)
         let t0 = 1_790_000_000.0
         let history = (0..<TelemetryHub.historyLimit).map { i -> HubSnapshot in
             let x = Double(i)
+            let load = following ? 1.0 : 0.25
             let sample = TelemetrySample(
-                gpuW: 18 + 2 * sin(x / 9), cpuPUtilPct: 31 + 4 * sin(x / 7), cpuEUtilPct: 12,
-                cpuCoreMaxPct: 70, gpuBusyPct: 92 + 3 * sin(x / 11),
-                smcPower: ["PSTR": 41 + 2 * sin(x / 13)], tempMaxC: 78 + sin(x / 30), tempBatteryC: 33,
-                fanRPM: [3100, 3050], memUsedGB: 14.2, batteryPct: 80, batteryW: 0.4, onAC: true)
+                gpuW: (18 + 2 * sin(x / 9)) * load, cpuPUtilPct: (31 + 4 * sin(x / 7)) * load,
+                cpuEUtilPct: 12 + 3 * sin(x / 17), cpuCoreMaxPct: 70, gpuBusyPct: following ? 92 + 3 * sin(x / 11) : 8,
+                smcPower: ["PSTR": following ? 40 + 2.5 * sin(x / 13) + 0.6 * sin(x * 1.3) : 9 + sin(x / 13)],
+                tempMaxC: following ? 72 + 4 * (1 - exp(-x / 60)) + 0.7 * sin(x / 6) : 48 + sin(x / 30),
+                tempBatteryC: 33,
+                fanRPM: following ? [2900 + 150 * (1 - exp(-x / 80)) + 20 * sin(x / 4),
+                                     2850 + 150 * (1 - exp(-x / 80)) + 20 * sin(x / 5)] : [0, 0],
+                memUsedGB: 14.2, batteryPct: 80, batteryW: 0.4, onAC: true)
             return HubSnapshot(time: t0 + x, sample: sample,
-                               fps: following ? 58 + 3 * sin(x / 5) - (i % 37 == 0 ? 14 : 0) : nil,
+                               fps: following ? fps(i) : nil,
                                followedPID: following ? 4242 : nil, followedApp: following ? game : nil,
                                stack: following ? stack : nil)
         }
@@ -179,8 +201,9 @@ enum Fixture {
                                            "Cyberpunk2077 2026-11-22 19.40"])
         } else {
             hub.showFixture(history: history)
-            model.showFixture(recordState: .idle, fpsLoggingOn: false, recentRuns: [],
-                              problems: ["Overlay hotkey: ⌃⇧F7 is already used by another app"])
+            model.showFixture(recordState: .idle, fpsLoggingOn: state == .noGame, recentRuns: [],
+                              problems: state == .loggingOff
+                                  ? ["Overlay hotkey: ⌃⇧F7 is already used by another app"] : [])
         }
         model.overlayOn = following
         return model

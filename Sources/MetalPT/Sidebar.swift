@@ -56,7 +56,7 @@ struct PageView: View {
 
     var body: some View {
         switch page {
-        case .live: LivePlaceholder(model: model, hub: hub)
+        case .live: LivePage(model: model, hub: hub)
         case .runs:
             PlaceholderPage(symbol: page.symbol, title: "Runs",
                             text: "Your recordings will be listed here, with each run's summary, notes and Submit.")

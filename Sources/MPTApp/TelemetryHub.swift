@@ -401,6 +401,9 @@ public final class TelemetryHub: ObservableObject {
 
     func applyForTesting(_ u: HubEngine.Update) { apply(u) }
 
+    /// Holds of `need` currently taken (tokens not yet released).
+    func holdCountForTesting(_ need: Need) -> Int { holds.values.filter { $0 == need }.count }
+
     // MARK: - Private
 
     /// The start task's own id must still be current: after `stopRecordingNow` (or for a newer recording) it only
