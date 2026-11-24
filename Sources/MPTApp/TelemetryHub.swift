@@ -197,11 +197,14 @@ public final class TelemetryHub: ObservableObject {
         case alreadyRecording
         /// The previous recording is still being finished (summary, rename); try again in a moment.
         case stillFinishing
+        /// `stopRecordingNow` (quit) ran while this recording was starting.
+        case stoppedWhileStarting
 
         public var description: String {
             switch self {
             case .alreadyRecording: "a recording is already running"
             case .stillFinishing: "the previous recording is still being saved"
+            case .stoppedWhileStarting: "the recording was stopped while it was starting"
             }
         }
     }
@@ -222,6 +225,8 @@ public final class TelemetryHub: ObservableObject {
     private var recordingID: UUID?
     /// The session being created and started off main; completes after `session` is installed.
     private var starting: Task<RecordingSession, Error>?
+    /// Shared with that start task, so `stopRecordingNow` (which cannot await it) can abort or stop it.
+    private var startBox: StartBox?
     private var session: RecordingSession?
     /// The stopped session while it finishes off main, and that finish.
     private var finishing: RecordingSession?
@@ -229,6 +234,9 @@ public final class TelemetryHub: ObservableObject {
     /// Sequence number of the newest update applied (older ones arriving late are dropped).
     private var appliedSeq: UInt64 = 0
     private(set) var latestUpdateForTesting: HubEngine.Update?
+    /// Runs in the start task just before `RecordingSession.start` (tests).
+    var beforeSessionStartForTesting: (@Sendable () -> Void)?
+    var startingSessionForTesting: RecordingSession? { startBox?.session }
 
     public init(dependencies: Dependencies = .live) {
         deps = dependencies
@@ -281,6 +289,8 @@ public final class TelemetryHub: ObservableObject {
         // The sampler is wanted before the session primes it (and the hub's own timer pauses).
         reconcile()
         let makeSession = deps.makeSession
+        let box = StartBox()
+        let beforeStart = beforeSessionStartForTesting
         let task = Task.detached { [weak self] () throws -> RecordingSession in
             let s: RecordingSession
             do {
@@ -289,6 +299,12 @@ public final class TelemetryHub: ObservableObject {
                 await self?.startFailed(id, result: nil)
                 throw error
             }
+            guard box.attach(s) else {
+                // Aborted by `stopRecordingNow` before the session existed: never start it.
+                s.stop()
+                await self?.startFailed(id, result: nil)
+                throw RecordingError.stoppedWhileStarting
+            }
             s.onTick = { status in engine.recordingTick(status, id: id) }
             s.onEnd = { [weak self] _ in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.sessionEnded(id) } }
@@ -296,7 +312,10 @@ public final class TelemetryHub: ObservableObject {
             s.onMessage = { [weak self] m in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.onRecordingMessage?(m) } }
             }
+            beforeStart?()
             do {
+                // A `stop` from `stopRecordingNow` may already have run (start then throws) or may run during it
+                // (the session finishes whatever bundle it created).
                 try s.start()
             } catch {
                 // `stop` still finishes a bundle created before the failure.
@@ -312,6 +331,7 @@ public final class TelemetryHub: ObservableObject {
             return s
         }
         starting = task
+        startBox = box
         _ = try await task.value
     }
 
@@ -334,9 +354,18 @@ public final class TelemetryHub: ObservableObject {
 
     /// Synchronous stop for quit and deinit only: blocks the main thread until the run is finished (up to ~2 s for a
     /// stack detection, plus the summary). Also completes a finish already under way (`stop` is idempotent).
-    /// A recording still starting is not stopped here.
+    /// A recording still starting is aborted: not started if its session does not exist yet, else that session is
+    /// stopped here (before its `start`, which then refuses; or during it, finishing the bundle it created). The
+    /// start task cannot be awaited here (it needs the main actor), so it is told through a lock-protected box.
     @discardableResult
     public func stopRecordingNow() -> RunResult? {
+        if starting != nil, let box = startBox, let id = recordingID {
+            let result = box.abort()?.stop()
+            starting = nil
+            startBox = nil
+            didFinish(id, result)
+            return result
+        }
         guard let s = session ?? finishing, let id = recordingID else { return nil }
         session = nil
         let result = s.stop()
@@ -353,15 +382,19 @@ public final class TelemetryHub: ObservableObject {
 
     // MARK: - Private
 
+    /// The start task's own id must still be current: after `stopRecordingNow` (or for a newer recording) it only
+    /// makes sure its session is stopped and leaves the state alone.
     private func installSession(_ s: RecordingSession, id: UUID) {
-        starting = nil
         guard recordingID == id else { s.stop(); return }
+        starting = nil
+        startBox = nil
         session = s
     }
 
     private func startFailed(_ id: UUID, result: RunResult?) {
-        starting = nil
         guard recordingID == id else { return }
+        starting = nil
+        startBox = nil
         recordingID = nil
         recording = nil
         if let result { lastRun = result }
@@ -415,6 +448,8 @@ public final class TelemetryHub: ObservableObject {
     /// arrive after a newer one: it is dropped (e.g. a tick made before the stream stopped must not bring the
     /// followed game back).
     private func apply(_ u: HubEngine.Update) {
+        // A pin found dead is dead even if the rest of the update is stale.
+        if let p = u.expiredPin, pinned == p { pinned = nil }
         guard u.seq > appliedSeq else { return }
         appliedSeq = u.seq
         latestUpdateForTesting = u
@@ -423,9 +458,34 @@ public final class TelemetryHub: ObservableObject {
             history.append(u.snapshot)
             if history.count > Self.historyLimit { history.removeFirst(history.count - Self.historyLimit) }
         }
-        if let p = u.expiredPin, pinned == p { pinned = nil }
         if let r = u.recording, u.recordingID != nil, u.recordingID == recordingID { recording = r }
         updateMenuBarHold()
+    }
+}
+
+/// The session a start task created, and whether `stopRecordingNow` aborted that start.
+final class StartBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: RecordingSession?
+    private var aborted = false
+
+    var session: RecordingSession? { lock.withLock { stored } }
+
+    /// Stores the new session; false if the start was already aborted.
+    func attach(_ s: RecordingSession) -> Bool {
+        lock.withLock {
+            guard !aborted else { return false }
+            stored = s
+            return true
+        }
+    }
+
+    /// Marks the start aborted; returns the session if one was attached (the caller stops it).
+    func abort() -> RecordingSession? {
+        lock.withLock {
+            aborted = true
+            return stored
+        }
     }
 }
 

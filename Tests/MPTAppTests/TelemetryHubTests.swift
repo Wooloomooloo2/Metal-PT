@@ -95,7 +95,11 @@ private final class Gate: @unchecked Sendable {
     private var isOpen = true
     func close() { cond.withLock { isOpen = false } }
     func open() { cond.withLock { isOpen = true; cond.broadcast() } }
-    func pass() { cond.withLock { while !isOpen { _ = cond.wait(until: Date() + 5) ; if !isOpen { return } } } }
+    /// Waits until open, at most 5 s in all (looping over spurious wakeups).
+    func pass() {
+        let deadline = Date() + 5
+        cond.withLock { while !isOpen && cond.wait(until: deadline) {} }
+    }
 }
 
 private let t0 = 1_700_000_000.0
@@ -108,11 +112,13 @@ private final class Fixture {
     let clock = FakeClock(t0)
     let scheduler = ManualScheduler()
     let detection = Gate()
+    /// Holds `makeSession` (before the session exists).
+    let creation = Gate()
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("mpthub-\(UUID().uuidString)")
     let hub: TelemetryHub
 
     init() {
-        let samplers = samplers, streams = streams, clock = clock, detection = detection
+        let samplers = samplers, streams = streams, clock = clock, detection = detection, creation = creation
         let deps = TelemetryHub.Dependencies(
             makeSampler: { samplers.make() },
             makeStream: { streams.make() },
@@ -122,7 +128,8 @@ private final class Fixture {
             detectStack: { _ in detection.pass(); return Stack(runtime: "native") },
             selfPID: selfPID,
             makeSession: { options, parts in
-                try RecordingSession(
+                creation.pass()
+                return try RecordingSession(
                     options: options, telemetry: parts.telemetry, hud: parts.hud, clock: parts.clock,
                     tickInterval: 0.01,
                     machine: { (RunInfo.Machine(modelID: "Mac16,5", chip: "Apple M4 Max", memoryGB: 64,
@@ -136,6 +143,12 @@ private final class Fixture {
 
     func options(seconds: Double? = nil) -> RecordingSession.Options {
         RecordingSession.Options(seconds: seconds, runsRoot: root, appVersion: "test")
+    }
+
+    /// Run folders created under the runs root.
+    var bundles: [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "mptrun" }
     }
 
     /// Two lines `frames` apart, ending at `at` (1 s apart).
@@ -431,5 +444,58 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         try await waitUntil("the hold to drop") { f.scheduler.activeRepeating == 0 }
         f.hub.waitForSamplerWork()
         #expect(f.samplers.live == 0)
+    }
+
+    /// Quit while the session is still being created: the start is aborted, nothing is left running or half-written.
+    @Test func stopNowWhileCreatingAbortsStart() async throws {
+        let f = Fixture()
+        f.creation.close()
+        let start = Task { try await f.hub.startRecording(options: f.options()) }
+        try await waitUntil("the start to begin") { f.hub.isRecording }
+        #expect(f.hub.stopRecordingNow() == nil)
+        #expect(!f.hub.isRecording)
+        f.creation.open()
+        await #expect(throws: TelemetryHub.RecordingError.stoppedWhileStarting) { try await start.value }
+        #expect(f.bundles.isEmpty)
+        #expect(!f.hub.isRecording && f.hub.recording == nil)
+        f.hub.waitForSamplerWork()
+        #expect(f.samplers.live == 0)
+        try await f.hub.startRecording(options: f.options())   // the hub is usable again
+        #expect(f.hub.stopRecordingNow() != nil)
+    }
+
+    /// Quit after the session exists but before it starts: the session itself is stopped, so it never starts.
+    @Test func stopNowBeforeSessionStartStopsIt() async throws {
+        let f = Fixture()
+        let gate = Gate()
+        gate.close()
+        f.hub.beforeSessionStartForTesting = { gate.pass() }
+        let start = Task { try await f.hub.startRecording(options: f.options()) }
+        try await waitUntil("the session to exist") { f.hub.startingSessionForTesting != nil }
+        _ = f.hub.stopRecordingNow()
+        gate.open()
+        await #expect(throws: (any Error).self) { try await start.value }
+        #expect(f.bundles.isEmpty)
+        #expect(!f.hub.isRecording && !f.hub.isFinishingRecording)
+        // A stopped-before-start session refuses to start; nothing ticks.
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(f.hub.recording == nil && f.hub.history.isEmpty)
+    }
+
+    /// An expired pin is honoured even from an update too old to apply otherwise.
+    @Test func staleUpdateStillClearsDeadPin() async {
+        let f = Fixture()
+        let h = f.hub.acquire(.hud)
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        await settle()
+        f.hub.pinned = 100
+        let stale = HubEngine.Update(snapshot: HubSnapshot(time: t0, sample: TelemetrySample(), fps: nil,
+                                                           followedPID: nil, followedApp: nil, stack: nil),
+                                     addToHistory: false, expiredPin: 100, seq: 0)
+        f.hub.applyForTesting(stale)
+        #expect(f.hub.pinned == nil)
+        #expect(f.hub.latest?.followedPID == 4242)   // the rest of the stale update is still dropped
+        withExtendedLifetime(h) {}
     }
 }
