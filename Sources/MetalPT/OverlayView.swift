@@ -47,20 +47,20 @@ enum OverlayCorner: String, CaseIterable, Sendable {
 }
 
 enum OverlayDefaults {
-    static let opacity = 0.85
+    /// "Background opacity": the background's alpha (0…1). Text stays fully opaque.
+    static let opacity = 0.6
 }
 
 // MARK: - Text
 
 /// The overlay's numbers as text (pure, unit-tested). Unknown values are left out of the strip rather than shown
-/// as dashes, except FPS (always there, "–" without a game).
+/// as dashes, except FPS (always there, "–" without a game). No 1 % low (ruling R8): per-frame times are only in
+/// recorded runs.
 struct OverlayNumbers: Equatable {
     /// Recording elapsed seconds; nil when not recording.
     var recordingElapsed: Double?
     /// nil when no game is followed or no frames yet.
     var fps: Double?
-    /// The run's 1 % low, when known (not available live yet: shown only if a source provides it).
-    var low1: Double?
     var systemW: Double?
     var gpuPct: Double?
     var cpuPPct: Double?
@@ -70,12 +70,11 @@ struct OverlayNumbers: Equatable {
     var stack: String?
     var app: String?
 
-    init(recordingElapsed: Double? = nil, fps: Double? = nil, low1: Double? = nil, systemW: Double? = nil,
+    init(recordingElapsed: Double? = nil, fps: Double? = nil, systemW: Double? = nil,
          gpuPct: Double? = nil, cpuPPct: Double? = nil, cpuEPct: Double? = nil, dieC: Double? = nil,
          fanRPM: [Double] = [], stack: String? = nil, app: String? = nil) {
         self.recordingElapsed = recordingElapsed
         self.fps = fps
-        self.low1 = low1
         self.systemW = systemW
         self.gpuPct = gpuPct
         self.cpuPPct = cpuPPct
@@ -109,10 +108,9 @@ struct OverlayNumbers: Equatable {
     /// "● 01:23" while recording.
     var recText: String? { recordingElapsed.map { "● \(Fmt.elapsed($0))" } }
 
-    /// The strip after the recording mark: "58 fps · 1% 44 · 41 W · GPU 92% · 78 °C".
+    /// The strip after the recording mark: "58 fps · 41 W · GPU 92% · 78 °C".
     var stripParts: [String] {
         var p = ["\(Fmt.int(fps)) fps"]
-        if let v = Self.known(low1) { p.append("1% \(Fmt.int(v))") }
         if let v = Self.known(systemW) { p.append("\(Fmt.int(v)) W") }
         if let v = Self.known(gpuPct) { p.append("GPU \(Fmt.int(v))%") }
         if let v = Self.known(dieC) { p.append("\(Fmt.int(v)) °C") }
@@ -126,10 +124,7 @@ struct OverlayNumbers: Equatable {
     /// Detailed panel rows under the big FPS (rows with nothing known are left out).
     var detailLines: [String] {
         var lines: [String] = []
-        var frame: [String] = []
-        if let f = Self.known(fps), f > 0 { frame.append(String(format: "frame %.1f ms", 1000 / f)) }
-        if let v = Self.known(low1) { frame.append("1% low \(Fmt.int(v))") }
-        if !frame.isEmpty { lines.append(frame.joined(separator: " · ")) }
+        if let f = Self.known(fps), f > 0 { lines.append(String(format: "avg frame %.1f ms", 1000 / f)) }
         lines.append(Self.pair("System", systemW, "W", "GPU", gpuPct, "%"))
         lines.append(Self.pair("CPU P", cpuPPct, "%", "E", cpuEPct, "%"))
         var thermal = "Die \(Self.known(dieC).map { "\(Fmt.int($0)) °C" } ?? "–")"
@@ -188,9 +183,16 @@ struct OverlayView: View {
 
     private static let red = Color(red: 1, green: 0.353, blue: 0.306)
 
-    /// The background's black: the opacity setting (0.85 default) scales it to ~60 %; text stays fully opaque
-    /// so it reads over bright scenes.
-    nonisolated static func backgroundAlpha(_ setting: Double) -> Double { 0.7 * min(1, max(0, setting)) }
+    /// The background's black: the "Background opacity" setting is its alpha, clamped to 0…1 (0.6 default); text
+    /// stays fully opaque so it reads over bright scenes.
+    nonisolated static func backgroundAlpha(_ setting: Double) -> Double {
+        setting.isNaN ? OverlayDefaults.opacity : min(1, max(0, setting))
+    }
+
+    /// "60 %", as Settings labels the slider.
+    nonisolated static func opacityPercent(_ setting: Double) -> String {
+        "\(Int((backgroundAlpha(setting) * 100).rounded())) %"
+    }
 
     private var background: Color { .black.opacity(Self.backgroundAlpha(opacity)) }
 

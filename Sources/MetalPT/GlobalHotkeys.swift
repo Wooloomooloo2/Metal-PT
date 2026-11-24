@@ -5,9 +5,13 @@ import MPTApp
 /// fullscreen games and need no Accessibility permission. Handlers run on the main thread.
 @MainActor
 final class GlobalHotkeys {
-    enum Action: UInt32, CaseIterable {
+    enum Action: UInt32, CaseIterable, Sendable {
         case record = 1
         case overlay = 2
+
+        var title: String { self == .record ? "Record" : "Overlay" }
+        var defaultCombo: HotkeyCombo { self == .record ? .record : .overlay }
+        var settingsKey: String { self == .record ? SettingsKey.hotkeyRecord : SettingsKey.hotkeyOverlay }
     }
 
     /// 'MPTH'.

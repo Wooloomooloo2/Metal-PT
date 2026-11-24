@@ -16,6 +16,9 @@ final class ProjectsStore: ObservableObject {
     @Published private(set) var reportVersions: [String: Int] = [:]
 
     private(set) var library: CompareLibrary?
+    /// Old id → new id after a rename, so a selection made before the rename keeps pointing at the project while
+    /// the page catches up (no flash of another project).
+    private var renamed: [String: String] = [:]
     private var refreshing = false
     private var refreshAgain = false
 
@@ -40,7 +43,18 @@ final class ProjectsStore: ObservableObject {
         }
     }
 
-    func project(_ id: String) -> ProjectSummary? { projects.first { $0.id == id } }
+    func project(_ id: String) -> ProjectSummary? {
+        let id = currentID(id)
+        return projects.first { $0.id == id }
+    }
+
+    /// `id`, or what it was renamed to.
+    func currentID(_ id: String) -> String {
+        var id = id
+        var seen: Set<String> = []
+        while let next = renamed[id], seen.insert(id).inserted { id = next }
+        return id
+    }
 
     func url(of id: String) -> URL? { library?.url(of: id) }
 
@@ -85,6 +99,8 @@ final class ProjectsStore: ObservableObject {
         let library = try current()
         let newID = try await Task.detached { try library.rename(id, to: name) }.value
         if newID != id {
+            renamed[id] = newID
+            renamed[newID] = nil
             details[id] = nil
             reportVersions[newID] = (reportVersions[id] ?? 0) + 1
             reportVersions[id] = nil

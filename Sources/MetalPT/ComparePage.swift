@@ -24,7 +24,7 @@ struct ComparePage: View {
     }
 
     private var shown: ProjectSummary? {
-        if let selection, let p = store.project(selection) { return p }
+        if let selection, let p = store.project(selection) { return p }   // follows a rename
         return store.projects.first
     }
 
@@ -136,6 +136,8 @@ struct ComparePage: View {
                               },
                               onRename: { renaming = project },
                               onDelete: { deleting = project })
+            // Per-project state (load error, report) starts fresh when another project is shown.
+            .id(project.id)
         } else if !store.loaded {
             ProgressView().controlSize(.small)
         } else {
@@ -220,6 +222,8 @@ private struct CompareDetailView: View {
     let onRename: () -> Void
     let onDelete: () -> Void
     @Environment(\.rendersSnapshot) private var snapshot
+    /// Why the project's runs could not be loaded (then its edit controls are off).
+    @State private var detailError: String?
 
     private var detail: ProjectDetail? { store.details[project.id] }
     private var version: Int { store.reportVersions[project.id] ?? 0 }
@@ -245,6 +249,13 @@ private struct CompareDetailView: View {
             }
             if project.problem == nil {
                 controls
+                if let detailError {
+                    Label("Could not read this comparison's runs: \(detailError)",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                }
                 if let missing = missingText {
                     Label(missing, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -252,6 +263,8 @@ private struct CompareDetailView: View {
                         .lineLimit(2)
                 }
                 ReportArea(id: project.id, store: store, debug: debug)
+                    // A fresh area per project: never the previous project's report while the new one loads.
+                    .id(project.id)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
             } else {
@@ -263,7 +276,13 @@ private struct CompareDetailView: View {
         .padding(16)
         .task(id: "\(project.id)#\(version)") {
             guard !snapshot, project.problem == nil else { return }
-            try? await store.loadDetail(project.id)
+            do {
+                try await store.loadDetail(project.id)
+                detailError = nil
+            } catch is CancellationError {
+            } catch {
+                detailError = error.localizedDescription
+            }
         }
     }
 
@@ -303,6 +322,9 @@ private struct CompareDetailView: View {
             .disabled(runs.isEmpty)
             Button("Add Runs…", action: onAdd)
                 .disabled(detail == nil)
+                .help(detail == nil ? (detailError == nil ? "Loading the comparison's runs…"
+                                                          : "The comparison's runs could not be read (see below)")
+                                    : "Add finished runs to this comparison")
             SnapshotSafeMenu(title: "Remove", help: "Take a run out of this comparison (the run itself is kept)") {
                 ForEach(runs) { run in
                     Button(Self.title(run)) { onRemove(run.index) }

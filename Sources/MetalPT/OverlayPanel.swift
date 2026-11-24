@@ -112,9 +112,17 @@ final class OverlayController {
                 self?.reposition()
             }
         })
+        // Any defaults write posts this; re-lay out only when one of the overlay's own keys changed.
+        overlaySettings = currentOverlaySettings()
         observers.append(nc.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                         queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.repositionSoon() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = self.currentOverlaySettings()
+                guard now != self.overlaySettings else { return }
+                self.overlaySettings = now
+                self.repositionSoon()
+            }
         })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -131,6 +139,13 @@ final class OverlayController {
                     }
                 }
             })
+    }
+
+    /// The overlay's settings as last seen (style, corner, opacity), to filter defaults notifications.
+    private var overlaySettings: [String] = []
+
+    private func currentOverlaySettings() -> [String] {
+        SettingsKey.overlayKeys.map { defaults.object(forKey: $0).map { "\($0)" } ?? "" }
     }
 
     private func stopObserving() {

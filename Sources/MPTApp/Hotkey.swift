@@ -96,3 +96,48 @@ extension HotkeyCombo {
         return nil
     }
 }
+
+/// Settings' click-to-record hotkey field: what a key press means while a field is recording (pure; the app feeds it
+/// `NSEvent.keyCode` and `NSEvent.modifierFlags.rawValue`).
+public enum HotkeyCapture {
+    public enum Outcome: Equatable, Sendable {
+        /// Bare Esc: stop recording, keep the current combo.
+        case cancel
+        /// Bare Delete / Forward Delete: back to the default combo.
+        case reset
+        case combo(HotkeyCombo)
+    }
+
+    // `NSEvent.ModifierFlags` bits (AppKit is not imported here).
+    private static let cocoaShift: UInt = 1 << 17
+    private static let cocoaControl: UInt = 1 << 18
+    private static let cocoaOption: UInt = 1 << 19
+    private static let cocoaCommand: UInt = 1 << 20
+
+    /// The four modelled modifiers, Cocoa → Carbon; caps lock, fn and the rest are dropped.
+    public static func carbonModifiers(cocoaFlags: UInt) -> UInt32 {
+        var m = 0
+        if cocoaFlags & cocoaControl != 0 { m |= controlKey }
+        if cocoaFlags & cocoaOption != 0 { m |= optionKey }
+        if cocoaFlags & cocoaShift != 0 { m |= shiftKey }
+        if cocoaFlags & cocoaCommand != 0 { m |= cmdKey }
+        return UInt32(m)
+    }
+
+    public static func outcome(keyCode: UInt16, cocoaFlags: UInt) -> Outcome {
+        let mods = carbonModifiers(cocoaFlags: cocoaFlags)
+        if mods == 0 {
+            if Int(keyCode) == kVK_Escape { return .cancel }
+            if Int(keyCode) == kVK_Delete || Int(keyCode) == kVK_ForwardDelete { return .reset }
+        }
+        return .combo(HotkeyCombo(keyCode: UInt32(keyCode), modifiers: mods))
+    }
+
+    /// Why `combo` cannot be used when the other hotkey (`otherName`) is `other`, or nil if it can. Whether another
+    /// app holds it is only known by registering it.
+    public static func problem(_ combo: HotkeyCombo, other: HotkeyCombo, otherName: String) -> String? {
+        if let p = combo.registrationProblem { return p }
+        if combo == other { return "\(combo.display) is already the \(otherName) hotkey" }
+        return nil
+    }
+}

@@ -5,11 +5,26 @@ import MPTCore
 /// ?? the Settings data-folder value (trimmed, `~` expanded) ?? `~/Documents/Metal-PT`, each with `name` appended.
 public enum AppFolders {
     public static func url(_ name: String, setting: String?, env: [String: String]) -> URL {
-        let envSet = !(env["MPT_DATA_ROOT"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let root = setting.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
-        let override = envSet ? nil : root.map {
+        let override = envRoot(env) != nil ? nil : settingRoot(setting).map {
             (($0 as NSString).expandingTildeInPath as NSString).appendingPathComponent(name)
         }
         return DataRoot.resolve(override: override, env: env, name: name)
+    }
+
+    /// The data root itself (what Settings shows), in the same order as `url`.
+    public static func root(setting: String?, env: [String: String]) -> URL {
+        url("runs", setting: setting, env: env).deletingLastPathComponent()
+    }
+
+    /// `$MPT_DATA_ROOT` when set and not blank: it overrides the Settings value (Settings shows it locked).
+    public static func envRoot(_ env: [String: String]) -> String? {
+        guard let v = env["MPT_DATA_ROOT"], !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return v
+    }
+
+    private static func settingRoot(_ setting: String?) -> String? {
+        setting.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
     }
 }

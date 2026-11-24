@@ -10,18 +10,24 @@ struct AddRunsSheet: View {
     let onAdd: ([String]) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var ticked: Set<String>
+    /// Worked out when the sheet opens and when the runs index or the project changes, not on every redraw.
+    @State private var candidates: [RunEntry]
 
     /// `ticked` given: snapshots.
     init(detail: ProjectDetail, store: ProjectsStore, runs: RunsStore, ticked: Set<String> = [],
-         onAdd: @escaping ([String]) -> Void) {
+         candidates: [RunEntry] = [], onAdd: @escaping ([String]) -> Void) {
         self.detail = detail
         self.store = store
         self.runs = runs
         self.onAdd = onAdd
         _ticked = State(initialValue: ticked)
+        _candidates = State(initialValue: candidates)
     }
 
-    private var candidates: [RunEntry] { store.candidates(detail.id, from: runs.entries) }
+    private func updateCandidates() {
+        candidates = store.candidates(detail.id, from: runs.entries)
+        ticked.formIntersection(candidates.map(\.id))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -69,9 +75,9 @@ struct AddRunsSheet: View {
         }
         .padding(20)
         .frame(width: 520)
-        .onChange(of: runs.entries) {
-            ticked.formIntersection(candidates.map(\.id))
-        }
+        .onAppear(perform: updateCandidates)
+        .onChange(of: runs.entries) { updateCandidates() }
+        .onChange(of: store.details[detail.id]) { updateCandidates() }
     }
 
     private var addTitle: String {

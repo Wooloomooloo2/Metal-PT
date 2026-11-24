@@ -63,9 +63,7 @@ struct PageView: View {
         case .live: LivePage(model: model, hub: hub)
         case .runs: RunsPage(model: model)
         case .compare: ComparePage(model: model)
-        case .settings:
-            PlaceholderPage(symbol: page.symbol, title: "Settings",
-                            text: "Hotkeys, overlay, FPS logging, data folder and launch at login will be set here.")
+        case .settings: SettingsPage(model: model)
         }
     }
 }

@@ -17,8 +17,10 @@ enum SettingsKey {
     static let overlayStyle = "overlayStyle"
     /// String `OverlayCorner`: "topLeft" (default), "topRight", "bottomLeft", "bottomRight".
     static let overlayCorner = "overlayCorner"
-    /// Double, default 0.85.
+    /// Double 0…1, default 0.6: the overlay background's alpha ("Background opacity").
     static let overlayOpacity = "overlayOpacity"
+    /// The overlay's own keys: the panel re-lays itself out only when one of these changes.
+    static let overlayKeys = [overlayStyle, overlayCorner, overlayOpacity]
 }
 
 /// The app's state and its wiring to `MPTApp`: the telemetry hub, the FPS-logging lease, hotkeys, recording control.
@@ -39,6 +41,9 @@ final class AppModel: ObservableObject {
     /// the run number in the notification's object string (the Compare edit path without the menu).
     /// `MPT_DEBUG_PAGE=compare` opens that page at launch.
     static let debugCompareBaseline = "io.github.wooloomooloo2.metal-pt.debug.compareBaseline"
+    /// Dev/test only, as `debugToggleRecording`: turns FPS logging on (object "1") or off (anything else) through
+    /// the same path as the Settings toggle. `MPT_DEBUG_PAGE=settings` opens Settings at launch.
+    static let debugSetFPSLogging = "io.github.wooloomooloo2.metal-pt.debug.setFPSLogging"
 
     enum RecordState: Equatable {
         case idle
@@ -55,7 +60,8 @@ final class AppModel: ObservableObject {
     let windowState = MainWindowState()
     let live: Bool
     let usesAppKit: Bool
-    private let defaults: UserDefaults
+    /// Settings' store (`.standard` in the app; a suite in tests and snapshots).
+    let defaults: UserDefaults
     private let env: [String: String]
     private let notifier: RecordingNotifying?
 
@@ -75,8 +81,12 @@ final class AppModel: ObservableObject {
     /// The compare projects, for the Compare page.
     let projects = ProjectsStore()
     @Published private(set) var recordState: RecordState = .idle
-    /// Hotkeys that could not be registered (shown as warnings).
-    @Published private(set) var hotkeyProblems: [String] = []
+    /// Why each hotkey could not be registered (shown inline in Settings and as warnings elsewhere).
+    @Published private(set) var hotkeyRegistration: [GlobalHotkeys.Action: String] = [:]
+    /// `hotkeyRegistration` as warning lines.
+    var hotkeyProblems: [String] {
+        GlobalHotkeys.Action.allCases.compactMap { a in hotkeyRegistration[a].map { "\(a.title) hotkey: \($0)" } }
+    }
     /// `FPSLogging.lastError` (or an unexpected error), copied after each lease operation.
     @Published private(set) var fpsLoggingError: String?
     @Published private(set) var fpsLoggingOn = false
@@ -149,9 +159,66 @@ final class AppModel: ObservableObject {
         defaults.string(forKey: SettingsKey.hotkeyOverlay).flatMap(HotkeyCombo.init(display:)) ?? .overlay
     }
 
+    func combo(for action: GlobalHotkeys.Action) -> HotkeyCombo {
+        action == .record ? recordCombo : overlayCombo
+    }
+
+    /// Settings: sets `action`'s hotkey (nil: back to the default), saves it and re-registers at once. Returns why
+    /// it was refused (a bare key, the other action's combo, or taken by another app); then the previous combo
+    /// stays, saved and registered.
+    func setHotkey(_ combo: HotkeyCombo?, for action: GlobalHotkeys.Action) -> String? {
+        let other: GlobalHotkeys.Action = action == .record ? .overlay : .record
+        let new = combo ?? action.defaultCombo
+        if let p = HotkeyCapture.problem(new, other: self.combo(for: other), otherName: other.title) { return p }
+        let previous = defaults.string(forKey: action.settingsKey)
+        objectWillChange.send()
+        if combo == nil {
+            defaults.removeObject(forKey: action.settingsKey)
+        } else {
+            defaults.set(new.display, forKey: action.settingsKey)
+        }
+        guard live, usesAppKit else { return nil }
+        registerHotkeys()
+        guard let problem = hotkeyRegistration[action] else { return nil }
+        // Taken by another app: keep the combo that was there.
+        defaults.set(previous, forKey: action.settingsKey)
+        registerHotkeys()
+        return "\(problem); kept \(self.combo(for: action).display)"
+    }
+
+    /// Settings: while a hotkey field records, the global hotkeys are off (else pressing the current combo would
+    /// fire it instead of being recorded). `resumeHotkeys` registers them again.
+    func suspendHotkeys() {
+        guard live, usesAppKit else { return }
+        for a in GlobalHotkeys.Action.allCases { hotkeys?.unregister(a) }
+    }
+
+    func resumeHotkeys() { registerHotkeys() }
+
     /// `runs`, `projects` or `exports` under the data root (R1: `$MPT_DATA_ROOT` ?? Settings ?? default).
     func folder(_ name: String) -> URL {
         AppFolders.url(name, setting: defaults.string(forKey: SettingsKey.dataFolder), env: env)
+    }
+
+    /// The data root Settings shows.
+    var dataRoot: URL { AppFolders.root(setting: defaults.string(forKey: SettingsKey.dataFolder), env: env) }
+    /// `$MPT_DATA_ROOT`, when it overrides the Settings value (Settings then cannot change it).
+    var dataFolderEnvRoot: String? { AppFolders.envRoot(env) }
+    var dataFolderIsDefault: Bool { defaults.string(forKey: SettingsKey.dataFolder) == nil }
+
+    /// Settings: a new data folder (nil: back to `~/Documents/Metal-PT`). Existing files are not moved. Runs and
+    /// Compare switch to the new folders at once. Ignored while `$MPT_DATA_ROOT` is set.
+    func setDataFolder(_ url: URL?) {
+        guard dataFolderEnvRoot == nil else { return }
+        objectWillChange.send()
+        if let url {
+            defaults.set(url.standardizedFileURL.path, forKey: SettingsKey.dataFolder)
+        } else {
+            defaults.removeObject(forKey: SettingsKey.dataFolder)
+        }
+        guard live else { return }
+        runs.refresh(root: folder("runs"))
+        projects.refresh(projectsRoot: folder("projects"), runsRoot: folder("runs"))
     }
 
     // MARK: - Lifecycle
@@ -191,9 +258,19 @@ final class AppModel: ObservableObject {
                     let number = (note.object as? String).flatMap { Int($0) } ?? 1
                     MainActor.assumeIsolated { self?.debugSetBaseline(number: number) }
                 })
+            debugObservers.append(center.addObserver(
+                forName: Notification.Name(Self.debugSetFPSLogging), object: nil, queue: .main) { [weak self] note in
+                    let on = (note.object as? String) == "1"
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.setFPSLogging(on)
+                        Self.log("debug: FPS logging \(on ? "on" : "off") -> isOn \(self.fpsLoggingOn)"
+                                 + (self.fpsLoggingError.map { ", error: \($0)" } ?? ""))
+                    }
+                })
             if let p = env["MPT_DEBUG_PAGE"].flatMap(Page.init(rawValue:)) { page = p }
             Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay), "
-                     + "\(Self.debugEditRun), \(Self.debugCompareBaseline)")
+                     + "\(Self.debugEditRun), \(Self.debugCompareBaseline), \(Self.debugSetFPSLogging)")
         }
     }
 
@@ -241,19 +318,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Settings' "Try again": the saved choice once more.
+    func retryFPSLogging() {
+        setFPSLogging(defaults.bool(forKey: SettingsKey.fpsLogging))
+    }
+
     func registerHotkeys() {
-        guard live, usesAppKit else { return }
+        guard live, usesAppKit, !quitDone else { return }
         let keys = hotkeys ?? GlobalHotkeys()
         hotkeys = keys
-        var problems: [String] = []
-        if let p = keys.register(recordCombo, for: .record, handler: { [weak self] in self?.toggleRecording() }) {
-            problems.append("Record hotkey: \(p)")
-        }
-        if let p = keys.register(overlayCombo, for: .overlay, handler: { [weak self] in self?.toggleOverlay() }) {
-            problems.append("Overlay hotkey: \(p)")
-        }
-        hotkeyProblems = problems
-        for p in problems { Self.log(p) }
+        var problems: [GlobalHotkeys.Action: String] = [:]
+        problems[.record] = keys.register(recordCombo, for: .record) { [weak self] in self?.toggleRecording() }
+        problems[.overlay] = keys.register(overlayCombo, for: .overlay) { [weak self] in self?.toggleOverlay() }
+        hotkeyRegistration = problems
+        for p in hotkeyProblems { Self.log(p) }
     }
 
     // MARK: - Window and Dock icon
@@ -466,10 +544,11 @@ final class AppModel: ObservableObject {
 
     /// Snapshots only: fixed values for the published state.
     func showFixture(recordState: RecordState, fpsLoggingOn: Bool, recentRuns: [String],
-                     problems: [String] = []) {
+                     hotkeyRegistration: [GlobalHotkeys.Action: String] = [:], fpsLoggingError: String? = nil) {
         self.recordState = recordState
         self.fpsLoggingOn = fpsLoggingOn
         self.recentRuns = recentRuns
-        self.hotkeyProblems = problems
+        self.hotkeyRegistration = hotkeyRegistration
+        self.fpsLoggingError = fpsLoggingError
     }
 }

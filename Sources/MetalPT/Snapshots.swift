@@ -44,6 +44,7 @@ enum Snapshots {
             }
         }
         Fixture.removeRuns()
+        Fixture.removeDefaults()
         return ok
     }
 
@@ -53,7 +54,7 @@ enum Snapshots {
         let following = Fixture.model(.following)
         let idle = Fixture.model(.loggingOff)
         let noGame = Fixture.model(.noGame)
-        var list: [Shot] = Page.allCases.filter { $0 != .runs && $0 != .compare }.map { page in
+        var list: [Shot] = Page.allCases.filter { $0 != .runs && $0 != .compare && $0 != .settings }.map { page in
             Shot(name: page.rawValue, size: windowSize, width: windowSize.width,
                  view: AnyView(WindowFrame(page: page, model: following, hub: following.hub)))
         }
@@ -70,7 +71,36 @@ enum Snapshots {
         list.append(Shot(name: "menubar-label", size: nil, width: 160,
                          view: AnyView(MenuBarStrip(hub: following.hub))))
         list += overlayShots()
+        list += settingsShots()
         return list
+    }
+
+    /// Settings: defaults (unbundled, so launch at login is off with its note); recording the Record hotkey with a
+    /// refused combo on Overlay; and the data folder locked by `MPT_DATA_ROOT` with an FPS-logging failure.
+    private static func settingsShots() -> [Shot] {
+        let plain = Fixture.model(.loggingOff, suite: "settings")
+        plain.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [])
+        let recording = Fixture.model(.loggingOff, suite: "settings-hotkey")
+        recording.defaults.set("⌃⌥R", forKey: SettingsKey.hotkeyOverlay)
+        recording.defaults.set(OverlayStyle.detailed.rawValue, forKey: SettingsKey.overlayStyle)
+        recording.defaults.set(OverlayCorner.bottomRight.rawValue, forKey: SettingsKey.overlayCorner)
+        recording.defaults.set(0.35, forKey: SettingsKey.overlayOpacity)
+        let locked = Fixture.model(.loggingOff, suite: "settings-envlocked",
+                                   env: ["MPT_DATA_ROOT": "/tmp/mpt-dev-data"])
+        locked.showFixture(recordState: .idle, fpsLoggingOn: false, recentRuns: [],
+                           fpsLoggingError: "\(FPSLoggingError.commandFailed(operation: "setenv", name: "MTL_HUD_ENABLED", status: 1))")
+        // Taller than the window: the whole form (it scrolls in the app).
+        func shot(_ name: String, _ model: AppModel, _ page: SettingsPage) -> Shot {
+            Shot(name: name, size: CGSize(width: windowSize.width, height: 1020), width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .settings, model: model, hub: model.hub) { page }))
+        }
+        return [
+            shot("settings", plain, SettingsPage(model: plain)),
+            shot("settings-hotkey", recording,
+                 SettingsPage(model: recording, recordingField: .record,
+                              hotkeyMessages: [.overlay: "⌃⇧F6 is already the Record hotkey"])),
+            shot("settings-envlocked", locked, SettingsPage(model: locked)),
+        ]
     }
 
     /// Runs with three fixture bundles (two ticked for comparison), the edit sheet, and the empty folder.
@@ -146,7 +176,8 @@ enum Snapshots {
             let candidates = model.projects.candidates(detail.id, from: model.runs.entries)
             list.append(Shot(name: "compare-add", size: nil, width: 520,
                              view: AnyView(AddRunsSheet(detail: detail, store: model.projects, runs: model.runs,
-                                                        ticked: Set(candidates.prefix(1).map(\.id)), onAdd: { _ in }))))
+                                                        ticked: Set(candidates.prefix(1).map(\.id)),
+                                                        candidates: candidates, onAdd: { _ in }))))
         }
         list.append(Shot(name: "compare-rename", size: nil, width: 420,
                          view: AnyView(RenameProjectSheet(
@@ -170,7 +201,7 @@ enum Snapshots {
             ("overlay-detailed-bottomright", recording, .detailed, .bottomRight),
         ]
         return cases.map { name, model, style, corner in
-            let defaults = UserDefaults(suiteName: "metal-pt.snapshots.\(name)") ?? .standard
+            let defaults = Fixture.defaults(name)
             defaults.set(style.rawValue, forKey: SettingsKey.overlayStyle)
             defaults.set(OverlayDefaults.opacity, forKey: SettingsKey.overlayOpacity)
             return Shot(name: name, size: CGSize(width: 520, height: 300), width: 520,
@@ -316,7 +347,32 @@ enum Fixture {
         return 57.5 + 2 * sin(x / 5) + 0.8 * sin(x * 1.7) - dip
     }
 
-    static func model(_ state: State) -> AppModel {
+    /// Suites created for this render, removed (with their plist) afterwards.
+    private static var suites: [String] = []
+
+    /// A fresh defaults suite for one fixture (cleared first, in case an earlier render was killed).
+    static func defaults(_ name: String) -> UserDefaults {
+        let suite = "metal-pt.snapshots.\(name)"
+        if !suites.contains(suite) {
+            UserDefaults().removePersistentDomain(forName: suite)
+            suites.append(suite)
+        }
+        return UserDefaults(suiteName: suite) ?? .standard
+    }
+
+    static func removeDefaults() {
+        // Plus the single suite earlier versions left behind.
+        let prefs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences")
+        for suite in suites + ["metal-pt.snapshots"] {
+            UserDefaults().removePersistentDomain(forName: suite)
+            CFPreferencesAppSynchronize(suite as CFString)
+            // cfprefsd empties the domain but leaves its (empty) plist behind.
+            try? FileManager.default.removeItem(at: prefs.appendingPathComponent("\(suite).plist"))
+        }
+        suites.removeAll()
+    }
+
+    static func model(_ state: State, suite: String = "fixture", env: [String: String] = [:]) -> AppModel {
         let following = state == .following
         let hub = TelemetryHub(dependencies: .inert)
         let t0 = 1_790_000_000.0
@@ -338,7 +394,7 @@ enum Fixture {
                                stack: following ? stack : nil)
         }
         let model = AppModel(hub: hub, fpsLogging: FPSLogging(launchctl: NoLaunchctl()), live: false,
-                             defaults: UserDefaults(suiteName: "metal-pt.snapshots") ?? .standard, env: [:])
+                             defaults: defaults(suite), env: env)
         if following {
             let last = history[history.count - 1]
             let fixedLast = HubSnapshot(time: last.time, sample: last.sample, fps: 58.2, followedPID: 4242,
@@ -352,8 +408,8 @@ enum Fixture {
         } else {
             hub.showFixture(history: history)
             model.showFixture(recordState: .idle, fpsLoggingOn: state == .noGame, recentRuns: [],
-                              problems: state == .loggingOff
-                                  ? ["Overlay hotkey: ⌃⇧F7 is already used by another app"] : [])
+                              hotkeyRegistration: state == .loggingOff
+                                  ? [.overlay: "⌃⇧F7 is already used by another app"] : [:])
         }
         model.overlayOn = following
         return model

@@ -7,13 +7,13 @@ import Testing
 
 @Suite struct OverlayTextTests {
     @Test func stripWithEverythingKnown() {
-        let n = OverlayNumbers(recordingElapsed: 83, fps: 58.2, low1: 44.4, systemW: 40.6, gpuPct: 92.3, dieC: 78.1)
+        let n = OverlayNumbers(recordingElapsed: 83, fps: 58.2, systemW: 40.6, gpuPct: 92.3, dieC: 78.1)
         #expect(n.recText == "● 01:23")
-        #expect(n.stripParts == ["58 fps", "1% 44", "41 W", "GPU 92%", "78 °C"])
-        #expect(n.stripText == "● 01:23  58 fps · 1% 44 · 41 W · GPU 92% · 78 °C")
+        #expect(n.stripParts == ["58 fps", "41 W", "GPU 92%", "78 °C"])
+        #expect(n.stripText == "● 01:23  58 fps · 41 W · GPU 92% · 78 °C")
     }
 
-    /// Not recording: no mark; unknown 1 % low and others are left out; FPS shows "–" without a game.
+    /// Not recording: no mark; unknown values are left out; FPS shows "–" without a game.
     @Test func stripLeavesOutUnknowns() {
         let n = OverlayNumbers(fps: nil, systemW: 9.2, gpuPct: nil, dieC: .nan)
         #expect(n.recText == nil)
@@ -23,7 +23,7 @@ import Testing
     @Test func detailLines() {
         let n = OverlayNumbers(fps: 58.2, systemW: 41, gpuPct: 92, cpuPPct: 31, cpuEPct: 18, dieC: 78,
                                fanRPM: [3080, 3100.4], stack: "Protium · FEX · DXMT", app: "Game")
-        #expect(n.detailLines == ["frame 17.2 ms", "System 41 W · GPU 92%", "CPU P 31% · E 18%",
+        #expect(n.detailLines == ["avg frame 17.2 ms", "System 41 W · GPU 92%", "CPU P 31% · E 18%",
                                   "Die 78 °C · fans 3100"])
         #expect(n.stackLine == "Protium · FEX · DXMT")
         let none = OverlayNumbers()
@@ -42,9 +42,15 @@ import Testing
     }
 
     @Test func backgroundAlpha() {
-        #expect(abs(OverlayView.backgroundAlpha(0.85) - 0.595) < 1e-9)
-        #expect(OverlayView.backgroundAlpha(2) == 0.7)
+        // "Background opacity" is the background's alpha, directly; the default keeps the earlier look (~60 %).
+        #expect(OverlayDefaults.opacity == 0.6)
+        #expect(OverlayView.backgroundAlpha(0.6) == 0.6)
+        #expect(OverlayView.backgroundAlpha(1) == 1)
+        #expect(OverlayView.backgroundAlpha(2) == 1)
         #expect(OverlayView.backgroundAlpha(-1) == 0)
+        #expect(OverlayView.backgroundAlpha(.nan) == OverlayDefaults.opacity)
+        #expect(OverlayView.opacityPercent(0.6) == "60 %")
+        #expect(OverlayView.opacityPercent(0.004) == "0 %")
     }
 }
 
