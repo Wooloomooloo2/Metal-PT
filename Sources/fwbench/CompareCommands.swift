@@ -107,12 +107,7 @@ enum CompareCommands {
     }
 
     /// `--projects DIR`, else `~/Documents/FW Benchmark/projects`.
-    static func projectsRoot(_ dir: String?) -> URL {
-        if let dir { return URL(fileURLWithPath: (dir as NSString).expandingTildeInPath, isDirectory: true) }
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
-        return docs.appendingPathComponent("FW Benchmark/projects", isDirectory: true)
-    }
+    static func projectsRoot(_ dir: String?) -> URL { benchFolder("projects", override: dir) }
 
     static func list(_ root: URL) throws {
         let files = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])

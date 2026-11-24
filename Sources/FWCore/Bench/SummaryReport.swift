@@ -144,34 +144,27 @@ public enum SummaryReport {
         return rows
     }
 
-    private static func tile(_ eyebrow: String, _ value: String, _ detail: String, hint: String = "") -> String {
-        var t = "<div class=\"tile\"><div class=\"eyebrow\">\(HTML.escape(eyebrow))</div><div class=\"k\">\(value)</div>"
-        if !detail.isEmpty { t += "<div class=\"d\">\(HTML.escape(detail))</div>" }
-        if !hint.isEmpty { t += "<div class=\"hint\">\(HTML.escape(hint))</div>" }
-        return t + "</div>"
-    }
-
     private static func tiles(_ info: RunInfo, _ s: RunSummary) -> String {
         let noFPS = s.medianFPS == nil ? "no FPS recorded" : ""
         let lowHint = s.lowsMixed ? mixedHint : (info.fpsSource == "stderr" ? "" : "needs fwbench run")
         let lowDetail = info.fpsSource == "stderr" && !s.lowsMixed ? "from per-frame times" : ""
         var out = "<div class=\"tiles\">"
-        out += tile("Median FPS", HTML.number(s.medianFPS, digits: 1),
+        out += HTML.tile("Median FPS", HTML.number(s.medianFPS, digits: 1),
                     s.medianFPS == nil ? noFPS : "over \(s.steadySeconds.count) steady s")
-        out += tile("5 % second", HTML.number(s.p5FPS, digits: 1),
+        out += HTML.tile("5 % second", HTML.number(s.p5FPS, digits: 1),
                     s.p5FPS == nil ? noFPS : "slowest 1 s in 20")
-        out += tile("1 % low", HTML.number(s.low1, digits: 1), s.low1 == nil ? "" : lowDetail,
+        out += HTML.tile("1 % low", HTML.number(s.low1, digits: 1), s.low1 == nil ? "" : lowDetail,
                     hint: s.low1 == nil ? lowHint : "")
-        out += tile("0.1 % low", HTML.number(s.low01, digits: 1), s.low01 == nil ? "" : lowDetail,
+        out += HTML.tile("0.1 % low", HTML.number(s.low01, digits: 1), s.low01 == nil ? "" : lowDetail,
                     hint: s.low01 == nil ? lowHint : "")
         if let col = s.powerColumn, let mean = s.stats[col]?.mean {
             let perW = s.fpsPerWatt.map { "\(HTML.number($0, digits: 2)) FPS/W" } ?? "mean over steady seconds"
             let gpuOnly = col == "gpu_w"
-            out += tile(gpuOnly ? "GPU power (may under-read)" : "System power",
+            out += HTML.tile(gpuOnly ? "GPU power (may under-read)" : "System power",
                         "\(HTML.number(mean, digits: 1))<small> W</small>", perW,
                         hint: gpuOnly ? "no system power key — FPS/W not comparable" : "")
         } else {
-            out += tile("Power", "—", "no power readings")
+            out += HTML.tile("Power", "—", "no power readings")
         }
         return out + "</div>\n"
     }

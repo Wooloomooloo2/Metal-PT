@@ -255,13 +255,6 @@ public enum CompareReport {
         return "\(HTML.number(p, digits: 1)) W" + (it.summary.powerColumn == "gpu_w" ? " GPU-only" : "")
     }
 
-    private static func tile(_ eyebrow: String, _ value: String, _ detail: String, hint: String = "") -> String {
-        var t = "<div class=\"tile\"><div class=\"eyebrow\">\(HTML.escape(eyebrow))</div><div class=\"k\">\(value)</div>"
-        if !detail.isEmpty { t += "<div class=\"d\">\(HTML.escape(detail))</div>" }
-        if !hint.isEmpty { t += "<div class=\"hint\">\(HTML.escape(hint))</div>" }
-        return t + "</div>"
-    }
-
     private static func tiles(_ items: [Item], base: Item, efficient: [Item]) -> String {
         var out = "<div class=\"tiles\" style=\"--tiles:3\">"
         let baseFPS = base.summary.medianFPS
@@ -269,18 +262,18 @@ public enum CompareReport {
             // A no-break space keeps "%" with its number when the detail wraps.
             let g = fastest.isBase ? "the baseline"
                 : "\(gain(fastest.summary.medianFPS, baseline: baseFPS).replacingOccurrences(of: " %", with: "\u{00A0}%")) vs baseline"
-            out += tile("Fastest", "\(HTML.number(fastest.summary.medianFPS, digits: 1))<small> fps</small>",
+            out += HTML.tile("Fastest", "\(HTML.number(fastest.summary.medianFPS, digits: 1))<small> fps</small>",
                         "\(fastest.label) · \(g)")
         } else {
-            out += tile("Fastest", dash, "no FPS recorded")
+            out += HTML.tile("Fastest", dash, "no FPS recorded")
         }
-        out += tile("Baseline", "\(HTML.number(baseFPS, digits: 1))<small> fps</small>", base.label)
+        out += HTML.tile("Baseline", "\(HTML.number(baseFPS, digits: 1))<small> fps</small>", base.label)
         if let best = efficient.max(by: { $0.summary.fpsPerWatt! < $1.summary.fpsPerWatt! }) {
             let gpuOnly = best.summary.powerColumn == "gpu_w"
-            out += tile("Most efficient", "\(HTML.number(best.summary.fpsPerWatt, digits: 2))<small> FPS/W</small>",
+            out += HTML.tile("Most efficient", "\(HTML.number(best.summary.fpsPerWatt, digits: 2))<small> FPS/W</small>",
                         best.label, hint: gpuOnly ? "GPU-only power, may under-read" : "")
         } else {
-            out += tile("Most efficient", dash, "no FPS and power for the same runs")
+            out += HTML.tile("Most efficient", dash, "no FPS and power for the same runs")
         }
         return out + "</div>\n"
     }

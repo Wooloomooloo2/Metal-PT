@@ -28,6 +28,14 @@ public enum HTML {
         return s.isEmpty ? "—" : s
     }
 
+    /// One stat tile: `value` is HTML (it may carry a `<small>` unit); the other texts are escaped.
+    public static func tile(_ eyebrow: String, _ value: String, _ detail: String, hint: String = "") -> String {
+        var t = "<div class=\"tile\"><div class=\"eyebrow\">\(escape(eyebrow))</div><div class=\"k\">\(value)</div>"
+        if !detail.isEmpty { t += "<div class=\"d\">\(escape(detail))</div>" }
+        if !hint.isEmpty { t += "<div class=\"hint\">\(escape(hint))</div>" }
+        return t + "</div>"
+    }
+
     /// `m:ss`, or `h:mm:ss` from one hour.
     public static func duration(_ seconds: Double) -> String {
         let s = max(0, Int(seconds.rounded()))

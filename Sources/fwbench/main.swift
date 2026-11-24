@@ -80,6 +80,14 @@ func number(_ options: [String: String], _ name: String) throws -> Double? {
     return v
 }
 
+/// `override` (tilde-expanded) if given, else `~/Documents/FW Benchmark/<name>`.
+func benchFolder(_ name: String, override: String?) -> URL {
+    if let override { return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true) }
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
+    return docs.appendingPathComponent("FW Benchmark/\(name)", isDirectory: true)
+}
+
 func printError(_ text: String) {
     FileHandle.standardError.write(Data((text + "\n").utf8))
 }
