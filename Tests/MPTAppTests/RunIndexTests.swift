@@ -42,6 +42,109 @@ import MPTCore
         return dir
     }
 
+    /// An unfinished bundle (no `end`): 30 s of rows, frames with one 100 ms spike per second for the first 15 s.
+    private func makeUnfinished(in root: URL, game: String = "live.exe") throws -> (URL, RunBundleWriter) {
+        let startDate = Date(timeIntervalSince1970: 1_800_000_500)
+        let dir = RunBundle.availableDirectory(in: root, start: startDate, game: game)
+        let info = RunInfo(appVersion: "0.2", machine: .init(modelID: "Mac15,6", chip: "Apple M3 Pro", gpuCores: 14,
+                                                             memoryGB: 36, osVersion: "15.1", osBuild: "24B83"),
+                           game: .init(exe: game), start: startDate, fpsSource: "log")
+        let w = try RunBundleWriter(directory: dir, info: info)
+        for i in 1...30 { try w.append(sample: ["elapsed_s": "\(i)", "fps": "60", "fps_app": game]) }
+        var frames = (0..<900).map { _ in FrameTime(intervalMs: 16.7, presentDelayMs: 1) }
+        for i in stride(from: 0, to: 900, by: 60) { frames[i] = FrameTime(intervalMs: 100, presentDelayMs: 1) }
+        try w.append(frames: frames, endingAtMs: 15_000)
+        return (dir, w)
+    }
+
+    @Test func unfinishedRunIsInProgressAndLocked() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (dir, w) = try makeUnfinished(in: root)
+        let index = RunIndex(root: root)
+        let e = try #require(index.entries().first)
+        #expect(!e.finished)
+        #expect(e.inProgress)   // samples.csv written just now
+        #expect(throws: RunIndexError.self) {
+            try index.update(dir: dir.lastPathComponent, settings: "x", notes: "", label: "")
+        }
+        #expect(throws: RunIndexError.self) { try index.delete(dir: dir.lastPathComponent) }
+        #expect(FileManager.default.fileExists(atPath: dir.path))
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(SummaryReport.fileName).path))
+
+        try w.finish { $0.end = $0.start.addingTimeInterval(30) }
+        let done = try #require(index.entries().first)
+        #expect(done.finished)
+        #expect(!done.inProgress)
+        try index.update(dir: dir.lastPathComponent, settings: "x", notes: "", label: "")
+        #expect(index.entries().first?.settings == "x")
+    }
+
+    @Test func staleUnfinishedRunIsNotInProgress() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (dir, _) = try makeUnfinished(in: root)
+        // A crashed recording: samples.csv untouched for a minute.
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)],
+                                              ofItemAtPath: dir.appendingPathComponent("samples.csv").path)
+        let index = RunIndex(root: root)
+        let e = try #require(index.entries().first)
+        #expect(!e.finished)
+        #expect(!e.inProgress)
+        try index.update(dir: dir.lastPathComponent, settings: "y", notes: "", label: "")   // allowed
+    }
+
+    @Test func activeDirectoryIsInProgressWhateverTheTimes() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (dir, _) = try makeUnfinished(in: root)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)],
+                                              ofItemAtPath: dir.appendingPathComponent("samples.csv").path)
+        let index = RunIndex(root: root)
+        index.activeDirectory = dir.lastPathComponent
+        #expect(index.entries().first?.inProgress == true)
+        #expect(throws: RunIndexError.self) { try index.delete(dir: dir.lastPathComponent) }
+    }
+
+    @Test func lowIsRecomputedWhenAnUnfinishedRunFinishes() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (dir, w) = try makeUnfinished(in: root)
+        let counter = CountingLoader()
+        let index = RunIndex(root: root, loader: counter.load)
+        let partial = try #require(index.entries().first)
+        #expect(counter.withFrames == 1)
+        // The rest of the run: smooth frames for 15 s, then finish.
+        try w.append(frames: (0..<900).map { _ in FrameTime(intervalMs: 16.7, presentDelayMs: 1) },
+                     endingAtMs: 30_000)
+        try w.finish { $0.end = $0.start.addingTimeInterval(30) }
+        let final = try #require(index.entries().first)
+        #expect(counter.withFrames == 2)
+        let expected = RunSummary(try RunBundle.load(dir)).low1
+        #expect(final.low1 == expected)
+        #expect(final.low1 != partial.low1)
+        // Finished now: an edit reuses it.
+        try index.update(dir: dir.lastPathComponent, settings: "s", notes: "", label: "")
+        #expect(index.entries().first?.low1 == expected)
+        #expect(counter.withFrames == 2)
+    }
+
+    @Test func brokenRecordDoesNotReuseLow() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "a.exe", start: 1_800_000_000)
+        let runJSON = dir.appendingPathComponent("run.json")
+        let good = try Data(contentsOf: runJSON)
+        try Data("{broken".utf8).write(to: runJSON)
+        let counter = CountingLoader()
+        let index = RunIndex(root: root, loader: counter.load)
+        #expect(index.entries().isEmpty)
+        try good.write(to: runJSON)
+        let e = try #require(index.entries().first)
+        #expect(e.low1 != nil)
+        #expect(counter.withFrames == 2)   // the broken attempt, then a full parse
+    }
+
     @Test func indexSkipsFramesAndCaches() throws {
         let root = tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -8,6 +8,8 @@ import WebKit
 struct RunDetailView: View {
     let entry: RunEntry
     @ObservedObject var store: RunsStore
+    /// `MPT_DEBUG=1`: log web view loads.
+    var debug = false
     let onEdit: () -> Void
 
     var body: some View {
@@ -30,6 +32,7 @@ struct RunDetailView: View {
                 Spacer(minLength: 8)
                 HStack {
                     Button("Edit Settings/Notes…", action: onEdit)
+                        .disabled(entry.inProgress)
                     // Submit (export / upload) arrives in the next step (T13).
                     Button("Submit…") {}
                         .disabled(true)
@@ -37,7 +40,20 @@ struct RunDetailView: View {
                 }
                 .fixedSize()
             }
-            SummaryArea(id: entry.id, store: store)
+            Group {
+                if entry.inProgress {
+                    // No summary of half a run: it would stay behind as summary.html.
+                    VStack(spacing: 8) {
+                        Image(systemName: "record.circle").font(.system(size: 30, weight: .light)).foregroundStyle(.red)
+                        Text("Recording… The summary appears when the recording stops.")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.primary.opacity(0.04))
+                } else {
+                    SummaryArea(id: entry.id, store: store, debug: debug)
+                }
+            }
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
         }
@@ -49,6 +65,7 @@ struct RunDetailView: View {
 private struct SummaryArea: View {
     let id: String
     @ObservedObject var store: RunsStore
+    let debug: Bool
     @Environment(\.rendersSnapshot) private var snapshot
     @State private var result: Result<URL, Error>?
 
@@ -71,7 +88,7 @@ private struct SummaryArea: View {
             } else {
                 switch result {
                 case .success(let url):
-                    SummaryWebView(file: url, folder: url.deletingLastPathComponent(), version: version)
+                    SummaryWebView(file: url, folder: url.deletingLastPathComponent(), version: version, debug: debug)
                 case .failure(let error):
                     Text("Could not show this run's summary: \(error.localizedDescription)")
                         .foregroundStyle(.secondary)
@@ -96,8 +113,9 @@ struct SummaryWebView: NSViewRepresentable {
     let folder: URL
     /// Bumped when the file is rewritten: reload.
     let version: Int
+    var debug = false
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(debug: debug) }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -122,7 +140,9 @@ struct SummaryWebView: NSViewRepresentable {
         var file: URL?
         var folder: URL?
         var version = -1
-        private let debug = ProcessInfo.processInfo.environment["MPT_DEBUG"] == "1"
+        private let debug: Bool
+
+        init(debug: Bool) { self.debug = debug }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
@@ -142,6 +162,18 @@ struct SummaryWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             if debug { log("summary loaded \(file?.deletingLastPathComponent().lastPathComponent ?? "?") (v\(version))") }
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+                     withError error: Error) {
+            // Cancelled by our own policy (a blocked link) is not a failure worth reporting.
+            let e = error as NSError
+            // 102: "Frame load interrupted", what a cancelled policy decision reports.
+            if e.code == NSURLErrorCancelled || (e.domain == "WebKitErrorDomain" && e.code == 102) {
+                if debug { log("summary navigation stopped: \(error.localizedDescription)") }
+                return
+            }
+            log("summary failed to load: \(error.localizedDescription)")
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

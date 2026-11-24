@@ -94,6 +94,7 @@ final class AppModel: ObservableObject {
     /// From a stop press until the run is saved: the state stays `.saving`.
     private var stopping = false
     private var lastSeenRun: RunResult?
+    private var lastIndexedRun: RunResult?
 
     init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, usesAppKit: Bool? = nil,
          defaults: UserDefaults = .standard, env: [String: String] = ProcessInfo.processInfo.environment,
@@ -128,6 +129,9 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
     }
+
+    /// `MPT_DEBUG=1`: extra logging (and the debug notifications).
+    var debugLogging: Bool { env["MPT_DEBUG"] == "1" }
 
     // MARK: - Settings
 
@@ -404,8 +408,14 @@ final class AppModel: ObservableObject {
         if let run = hub.lastRun, run != lastSeenRun {
             lastSeenRun = run
             noteRun(run)
-            runs.refresh(root: folder("runs"))
             if !quitDone { notifier?.post(.saved(run)) }
+        }
+        // The recording's folder is locked in Runs while it is written; rescan when it appears or is finished.
+        let recordingDir = hub.recordingDirectory
+        if recordingDir != runs.recordingDirectory || hub.lastRun != lastIndexedRun {
+            runs.recordingDirectory = recordingDir
+            lastIndexedRun = hub.lastRun
+            runs.refresh(root: folder("runs"))
         }
         let state: RecordState
         if stopping || hub.isFinishingRecording {

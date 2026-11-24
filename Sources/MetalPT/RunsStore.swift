@@ -16,6 +16,11 @@ final class RunsStore: ObservableObject {
 
     private(set) var root: URL?
     private var index: RunIndex?
+
+    /// The bundle the app is recording now (the hub's), shown as "Recording…" and locked until it is finished.
+    var recordingDirectory: URL? {
+        didSet { applyRecordingDirectory() }
+    }
     private var refreshing = false
     private var refreshAgain = false
 
@@ -51,7 +56,7 @@ final class RunsStore: ObservableObject {
 
     /// Saves the user fields, regenerates the summary and refreshes the list.
     func update(_ id: String, settings: String, notes: String, label: String) async throws {
-        guard let index else { return }
+        guard let index else { throw CocoaError(.fileNoSuchFile) }
         let list = try await Task.detached {
             try index.update(dir: id, settings: settings, notes: notes, label: label)
             return index.entries()
@@ -62,22 +67,20 @@ final class RunsStore: ObservableObject {
 
     /// Moves the run to the Trash.
     func delete(_ id: String) async throws {
-        guard let index else { return }
+        guard let index else { throw CocoaError(.fileNoSuchFile) }
         let list = try await Task.detached {
             try index.delete(dir: id)
             return index.entries()
         }.value
         entries = list
+        summaryVersions[id] = nil
     }
 
-    /// The run's summary.html, written first if it is missing (e.g. a run copied from the CLI without one).
+    /// The run's summary.html, written first if it is missing (e.g. a run copied from the CLI without one), under
+    /// the index's lock; refused while the run is being recorded.
     func summaryURL(_ id: String) async -> Result<URL, Error> {
-        guard let dir = url(of: id) else { return .failure(CocoaError(.fileNoSuchFile)) }
-        return await Task.detached {
-            let file = dir.appendingPathComponent(SummaryReport.fileName)
-            if FileManager.default.fileExists(atPath: file.path) { return .success(file) }
-            return Result { try SummaryReport.write(bundleAt: dir) }
-        }.value
+        guard let index else { return .failure(CocoaError(.fileNoSuchFile)) }
+        return await Task.detached { Result { try index.summary(dir: id) } }.value
     }
 
     /// Snapshots: index `root` synchronously.
@@ -92,8 +95,18 @@ final class RunsStore: ObservableObject {
         let index = RunIndex(root: root)
         self.index = index
         self.root = root
+        applyRecordingDirectory()
         entries = []
         loaded = false
         return index
+    }
+
+    private func applyRecordingDirectory() {
+        guard let index, let root else { return }
+        let dir = recordingDirectory.flatMap {
+            $0.deletingLastPathComponent().standardizedFileURL.path == root.standardizedFileURL.path
+                ? $0.lastPathComponent : nil
+        }
+        index.activeDirectory = dir
     }
 }

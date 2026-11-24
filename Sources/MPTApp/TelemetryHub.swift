@@ -228,6 +228,8 @@ public final class TelemetryHub: ObservableObject {
 
     /// True from `startRecording` until `stopRecording` begins finishing the run.
     public var isRecording: Bool { session != nil || starting != nil }
+    /// The bundle folder of the recording running or being finished (nil before the session has made it).
+    public var recordingDirectory: URL? { (session ?? finishing)?.directory }
     /// True while a stopped recording is being finished off the main actor.
     public var isFinishingRecording: Bool { finishing != nil }
 

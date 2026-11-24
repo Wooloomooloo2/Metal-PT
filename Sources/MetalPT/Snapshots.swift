@@ -77,6 +77,8 @@ enum Snapshots {
         let withRuns = Fixture.model(.loggingOff)
         withRuns.runs.showFixture(root: Fixture.makeRuns())
         let ids = withRuns.runs.entries.map(\.id)
+        let recording = Fixture.model(.loggingOff)
+        recording.runs.showFixture(root: Fixture.makeRuns(recording: true))
         let empty = Fixture.model(.loggingOff)
         empty.runs.showFixture(root: Fixture.emptyRunsRoot())
         var list = [
@@ -88,6 +90,8 @@ enum Snapshots {
                  view: AnyView(WindowFrame(page: .runs, model: withRuns, hub: withRuns.hub) {
                      RunsPage(model: withRuns, filter: "crossover")
                  })),
+            Shot(name: "runs-recording", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .runs, model: recording, hub: recording.hub))),
             Shot(name: "runs-empty", size: windowSize, width: windowSize.width,
                  view: AnyView(WindowFrame(page: .runs, model: empty, hub: empty.hub))),
         ]
@@ -326,8 +330,9 @@ extension Fixture {
 
     /// Three finished runs written by the real bundle writer: two of the same game on different stacks (today), one
     /// of another game (yesterday). Two minutes or three, 1 Hz rows and per-frame times.
-    static func makeRuns() -> URL {
-        let root = tempRoot().appendingPathComponent("runs")
+    /// `recording`: a separate folder whose newest run is still being written (no end, samples just now).
+    static func makeRuns(recording: Bool = false) -> URL {
+        let root = tempRoot().appendingPathComponent(recording ? "recording/runs" : "runs")
         let now = Date()
         let cases: [(exe: String, stack: Stack, settings: String, label: String, ago: Double, seconds: Int,
                      fps: Double, frames: Bool)] = [
@@ -340,7 +345,7 @@ extension Fixture {
             ("Cyberpunk2077.exe", Stack(runtime: "CrossOver", runtimeVersion: "25.1", graphics: ["D3DMetal"]),
              "Medium", "", 26 * 3600, 180, 41.0, true),
         ]
-        for c in cases {
+        for (n, c) in cases.enumerated() {
             let start = now.addingTimeInterval(-c.ago)
             let dir = RunBundle.availableDirectory(in: root, start: start, game: c.exe)
             let info = RunInfo(appVersion: AppModel.appVersion,
@@ -364,6 +369,7 @@ extension Fixture {
                 }
                 try? w.append(frames: frames, endingAtMs: Double(c.seconds) * 1000)
             }
+            if recording && n == 0 { continue }   // left open: in progress
             try? w.finish { $0.end = start.addingTimeInterval(Double(c.seconds)) }
         }
         return root

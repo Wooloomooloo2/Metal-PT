@@ -116,7 +116,7 @@ struct EditNotesSheet: View {
                 try await store.update(entry.id, settings: s, notes: n, label: l)
                 dismiss()
             } catch {
-                problem = "Could not save: \(error)"
+                problem = "Could not save: \(error.localizedDescription)"
                 saving = false
             }
         }

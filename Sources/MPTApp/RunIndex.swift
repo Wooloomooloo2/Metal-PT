@@ -16,11 +16,17 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     public var duration: Double
     public var medianFPS: Double?
     public var low1: Double?
+    /// run.json has an end time.
+    public var finished: Bool
+    /// Being recorded right now (unfinished and still being written, or the app's current recording): listed as
+    /// "Recording…", not editable, deletable or summarised. Worked out at each scan, never cached.
+    public var inProgress: Bool
 
     public init(id: String, game: String, stackLine: String, settings: String, label: String, start: Date,
-                duration: Double, medianFPS: Double?, low1: Double?) {
+                duration: Double, medianFPS: Double?, low1: Double?, finished: Bool = true, inProgress: Bool = false) {
         self.id = id; self.game = game; self.stackLine = stackLine; self.settings = settings; self.label = label
         self.start = start; self.duration = duration; self.medianFPS = medianFPS; self.low1 = low1
+        self.finished = finished; self.inProgress = inProgress
     }
 
     /// Case-insensitive match on game, stack, settings and label; an empty filter matches everything.
@@ -38,14 +44,18 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     }
 }
 
-public enum RunIndexError: Error, CustomStringConvertible {
+public enum RunIndexError: LocalizedError, CustomStringConvertible {
     case newerFormat(Int)
+    case inProgress
 
     public var description: String {
         switch self {
         case .newerFormat(let s): "this run was saved by a newer Metal-PT (format \(s)); edit it there"
+        case .inProgress: "this run is still being recorded; try again once it has stopped"
         }
     }
+
+    public var errorDescription: String? { description.prefix(1).uppercased() + description.dropFirst() + "." }
 }
 
 /// A cached index of the runs folder, so the Runs list opens without parsing every bundle (and never frames.csv
@@ -54,13 +64,21 @@ public enum RunIndexError: Error, CustomStringConvertible {
 /// rebuilt silently. `low1` needs frames.csv: it is computed once, when a finished run is first indexed, and carried
 /// over when only run.json changes (an edit).
 ///
+/// A run without an end time whose samples.csv was written in the last `activeWindow` seconds (or whose folder is
+/// `activeDirectory`, the app's own recording) is in progress: `update` and `delete` refuse it (the recorder still
+/// owns the folder and rewrites run.json when it finishes). An unfinished run that has gone quiet (a crash) is
+/// treated as an ordinary run.
+///
 /// Thread-safe (one lock; all calls are synchronous and may touch hundreds of bundles): call off the main actor.
 public final class RunIndex: @unchecked Sendable {
     public typealias Loader = @Sendable (URL, Bool) throws -> RunBundle
     public typealias Trash = @Sendable (URL) throws -> Void
 
     public static let cacheFileName = ".index.json"
-    static let cacheVersion = 1
+    static let cacheVersion = 2
+    /// Seconds since samples.csv was last written for an unfinished run to still count as being recorded (the
+    /// recorder appends once a second).
+    public static let activeWindow: TimeInterval = 10
 
     struct Record: Codable, Equatable {
         /// run.json's modification time (seconds since 1970) and size: the record is current while both match.
@@ -82,6 +100,13 @@ public final class RunIndex: @unchecked Sendable {
     private let trash: Trash
     private let lock = NSLock()
     private var records: [String: Record]?
+    private var active: String?
+
+    /// The folder name of the run the app is recording now, if any (in progress whatever its file times).
+    public var activeDirectory: String? {
+        get { lock.withLock { active } }
+        set { lock.withLock { active = newValue } }
+    }
 
     public init(root: URL,
                 loader: @escaping Loader = { try RunBundle.load($0, frames: $1) },
@@ -112,12 +137,30 @@ public final class RunIndex: @unchecked Sendable {
         try loader(root.appendingPathComponent(dir), false).info.user
     }
 
+    /// Whether the run is being recorded now (see the type's notes).
+    public func isInProgress(dir: String) -> Bool {
+        lock.withLock { inProgressLocked(dir, finished: nil) }
+    }
+
+    /// Returns `<dir>/summary.html`, writing it first if missing, under the index lock (so it never races an edit).
+    /// Refuses a run in progress (a summary of half a run would stay behind).
+    public func summary(dir: String) throws -> URL {
+        try lock.withLock {
+            guard !inProgressLocked(dir, finished: nil) else { throw RunIndexError.inProgress }
+            let url = root.appendingPathComponent(dir)
+            let file = url.appendingPathComponent(SummaryReport.fileName)
+            if FileManager.default.fileExists(atPath: file.path) { return file }
+            return try SummaryReport.write(bundleAt: url)
+        }
+    }
+
     /// Rewrites the run's user fields (privacy-scrubbed, by the bundle writer), regenerates summary.html and
-    /// refreshes the run's entry. The folder name does not change.
+    /// refreshes the run's entry. The folder name does not change. Refuses a run in progress.
     public func update(dir: String, settings: String, notes: String, label: String) throws {
         try lock.withLock {
             let url = root.appendingPathComponent(dir)
             var info = try loader(url, false).info
+            guard !inProgressLocked(dir, finished: info.end != nil) else { throw RunIndexError.inProgress }
             guard info.schema <= RunInfo.currentSchema else { throw RunIndexError.newerFormat(info.schema) }
             info.user.gameSettings = settings
             info.user.notes = notes
@@ -128,9 +171,10 @@ public final class RunIndex: @unchecked Sendable {
         }
     }
 
-    /// Moves the run folder to the Trash and drops it from the index.
+    /// Moves the run folder to the Trash and drops it from the index. Refuses a run in progress.
     public func delete(dir: String) throws {
         try lock.withLock {
+            guard !inProgressLocked(dir, finished: nil) else { throw RunIndexError.inProgress }
             try trash(root.appendingPathComponent(dir))
             refreshLocked()
         }
@@ -139,9 +183,35 @@ public final class RunIndex: @unchecked Sendable {
     // MARK: - Private (lock held)
 
     private func sortedLocked() -> [RunEntry] {
-        (records ?? [:]).values.compactMap(\.entry).sorted {
+        (records ?? [:]).values.compactMap { r -> RunEntry? in
+            guard var e = r.entry else { return nil }
+            e.inProgress = inProgressLocked(e.id, finished: r.finished)
+            return e
+        }.sorted {
             $0.start != $1.start ? $0.start > $1.start : $0.id > $1.id
         }
+    }
+
+    /// `finished` nil: read from the record, else from run.json itself (a run not indexed yet).
+    private func inProgressLocked(_ dir: String, finished: Bool?) -> Bool {
+        if dir == active { return true }
+        let url = root.appendingPathComponent(dir)
+        let done: Bool
+        if let finished {
+            done = finished
+        } else if let r = records?[dir], r.entry != nil {
+            // The record may be stale: re-read run.json when it changed since.
+            let attrs = try? FileManager.default.attributesOfItem(atPath: url.appendingPathComponent("run.json").path)
+            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970
+            done = mtime == r.mtime ? r.finished : ((try? loader(url, false))?.info.end != nil)
+        } else {
+            done = (try? loader(url, false))?.info.end != nil
+        }
+        guard !done else { return false }
+        let samples = url.appendingPathComponent("samples.csv")
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: samples.path),
+              let written = attrs[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(written) < Self.activeWindow
     }
 
     private func refreshLocked() {
@@ -183,7 +253,7 @@ public final class RunIndex: @unchecked Sendable {
                              stackLine: SummaryReport.stackLine(info.stack) ?? "",
                              settings: info.user.gameSettings, label: info.user.label, start: info.start,
                              duration: max(0, duration), medianFPS: summary.medianFPS,
-                             low1: reuseLow ? previous?.entry?.low1 : summary.low1)
+                             low1: reuseLow ? previous?.entry?.low1 : summary.low1, finished: info.end != nil)
         return Record(mtime: mtime, size: size, entry: entry, finished: info.end != nil)
     }
 

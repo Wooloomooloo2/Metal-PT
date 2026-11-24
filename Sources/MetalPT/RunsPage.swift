@@ -49,7 +49,7 @@ struct RunsPage: View {
             selectRequestedRun()
         }
         .onChange(of: store.entries) {
-            ticked.formIntersection(store.entries.map(\.id))
+            ticked.formIntersection(store.entries.filter { !$0.inProgress }.map(\.id))
             selectRequestedRun()
         }
         .onChange(of: model.selectedRun) { selectRequestedRun() }
@@ -119,17 +119,19 @@ struct RunsPage: View {
         .onTapGesture { selection = entry.id }
         .contextMenu {
             Button("Edit Settings and Notes…") { editing = entry }
+                .disabled(entry.inProgress)
             Button("Show in Finder") {
                 if let url = store.url(of: entry.id) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
             Divider()
             Button("Move to Trash…", role: .destructive) { deleting = entry }
+                .disabled(entry.inProgress)
         }
     }
 
     private var compareBar: some View {
         HStack {
-            Button(ticked.count >= 2 ? "Compare \(ticked.count) selected…" : "Compare selected…") { compare() }
+            Button(compareTitle) { compare() }
                 .disabled(ticked.count < 2)
             if ticked.count < 2 {
                 Text("Tick two or more runs")
@@ -146,12 +148,20 @@ struct RunsPage: View {
         .padding(10)
     }
 
+    /// "Compare 3 selected…", or "Compare 3 selected (1 hidden)…" when the filter hides some ticked runs (all ticked
+    /// runs are compared).
+    private var compareTitle: String {
+        guard ticked.count >= 2 else { return "Compare selected…" }
+        let hidden = ticked.subtracting(visible.map(\.id)).count
+        return hidden > 0 ? "Compare \(ticked.count) selected (\(hidden) hidden)…" : "Compare \(ticked.count) selected…"
+    }
+
     // MARK: - Detail
 
     @ViewBuilder
     private var detail: some View {
         if let entry = shown {
-            RunDetailView(entry: entry, store: store, onEdit: { editing = entry })
+            RunDetailView(entry: entry, store: store, debug: model.debugLogging, onEdit: { editing = entry })
         } else if !store.loaded {
             ProgressView().controlSize(.small)
         } else {
@@ -178,7 +188,7 @@ struct RunsPage: View {
     }
 
     private func compare() {
-        let runs = store.entries.filter { ticked.contains($0.id) }
+        let runs = store.entries.filter { ticked.contains($0.id) && !$0.inProgress }
         do {
             try model.compare(runs)
             ticked.removeAll()
@@ -215,7 +225,9 @@ private struct RunRow: View {
                     .foregroundStyle(ticked ? Color.accentColor : .secondary)
             }
             .buttonStyle(.plain)
-            .help(ticked ? "Untick (leave out of the comparison)" : "Tick to compare")
+            .disabled(entry.inProgress)
+            .opacity(entry.inProgress ? 0.35 : 1)
+            .help(entry.inProgress ? "Still recording" : ticked ? "Untick (leave out of the comparison)" : "Tick to compare")
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.game)
                     .font(.headline)
@@ -226,14 +238,23 @@ private struct RunRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                HStack(spacing: 0) {
-                    Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
-                    Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
-                    Text(" fps · 1% \(RunFormat.low(entry.low1))")
+                if entry.inProgress {
+                    HStack(spacing: 4) {
+                        Circle().fill(.red).frame(width: 7, height: 7)
+                        Text("Recording… · started \(RunFormat.date(entry.start))")
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.red)
+                } else {
+                    HStack(spacing: 0) {
+                        Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
+                        Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
+                        Text(" fps · 1% \(RunFormat.low(entry.low1))")
+                    }
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
                 }
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
