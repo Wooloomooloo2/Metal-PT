@@ -47,7 +47,7 @@ import Foundation
         }))
         #expect(a.primary == .frameCap)
         #expect(share(a, .frameCap) == 1.0)
-        #expect(a.suggestion == "The game is capped at 60 fps: raise or remove the cap (or V-Sync) if you want more.")
+        #expect(a.suggestion == "Looks capped at 60 fps (V-Sync or an in-game limit): raise or remove the cap if you want more.")
     }
 
     /// The measured 60 fps load: busy 82–95 % at ~35 % clock is a frame cap, not GPU-bound (ruling L1).
@@ -66,6 +66,7 @@ import Foundation
         }))
         #expect(share(a, .gpu) == 0)
         #expect(a.primary == .unclear)
+        #expect(a.verdict == "No single limit stood out")
         #expect(a.evidence.contains("GPU busy but running at 35 % of its top clock — the game isn't pushing it"))
     }
 
@@ -74,7 +75,8 @@ import Foundation
             ["fps": "52.0", "gpu_busy_pct": "60.0", "cpu_core_max_pct": "97.0", "cpu_p_util_pct": "40.0"]
         }))
         #expect(a.primary == .cpuOneThread)
-        #expect(a.suggestion?.hasPrefix("One CPU thread is the limit") == true)
+        #expect(a.suggestion == "One CPU thread is the limit: lowering graphics settings is unlikely to help; reduce "
+                + "CPU-heavy settings such as crowd density or simulation.")
         #expect(a.evidence.contains { $0.contains("97 %") })
     }
 
@@ -91,6 +93,8 @@ import Foundation
         }))
         #expect(a.primary == .gpuThermal)
         #expect(a.verdict == "Mostly GPU (thermal)")
+        #expect(a.suggestion == "macOS reported serious thermal pressure while the GPU was fully busy; "
+                + "performance may be limited by heat.")
     }
 
     /// Clock below 85 % of the run's highest clock while thermal ≥ fair → thermal, not plain GPU.
@@ -102,6 +106,54 @@ import Foundation
         #expect(share(a, .gpuThermal) == 0.8)
         #expect(share(a, .gpu) == 0.2)
         #expect(a.primary == .gpuThermal)
+        #expect(a.suggestion == "The GPU clock dropped to 82 % of its peak under heat: a cooler surface or (later) "
+                + "a stronger fan curve with Metal-PT Helper may help.")
+    }
+
+    /// One warm-up sample at 1600 MHz must not make a steady 1300 MHz at thermal fair look like a heat drop: the
+    /// reference is min(top clock, 95th percentile of steady clocks).
+    @Test func warmupClockSpikeIsNotThermal() {
+        var r = rows(100) { _ in
+            ["fps": "37.0", "gpu_busy_pct": "99.0", "gpu_mhz": "1300", "thermal_state": "fair"]
+        }
+        r[0]["gpu_mhz"] = "1600"
+        let b = bundle(r, steady: false)   // no FPS-app trimming issue: auto window drops the first 10 s
+        let a = analyse(b)
+        #expect(!RunSummary(b).steadySeconds.contains(0))
+        #expect(share(a, .gpuThermal) == 0)
+    }
+
+    @Test func fpsCapBoundary() {
+        let at = analyse(bundle(rows(50) { _ in ["fps": "59.0", "gpu_busy_pct": "70.0"] }))
+        #expect(at.primary == .frameCap)
+        let off = analyse(bundle(rows(50) { _ in ["fps": "58.5", "gpu_busy_pct": "70.0"] }))
+        #expect(share(off, .frameCap) == 0)
+    }
+
+    @Test func gpuBusyBoundary() {
+        let below = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "94.9"] }))
+        #expect(share(below, .gpu) == 0)
+        let at = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "95.0"] }))
+        #expect(at.primary == .gpu)
+    }
+
+    @Test func clockExactly85PercentIsGPU() {
+        let a = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "gpu_mhz": "1360"] }))
+        #expect(a.primary == .gpu)
+    }
+
+    @Test func pageoutsAloneAreMemory() {
+        let a = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "pageouts_per_s": "51"] }))
+        #expect(a.primary == .memory)
+        let calm = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "pageouts_per_s": "50"] }))
+        #expect(calm.primary == .gpu)
+    }
+
+    @Test func mixedWithUnclearNamesIt() {
+        let a = analyse(bundle(rows(100) { i in
+            ["fps": "52.0", "gpu_busy_pct": i % 2 == 0 ? "100.0" : "90.0"]
+        }))
+        #expect(a.verdict == "Mixed: GPU and no single limit")
     }
 
     @Test func memory() {
@@ -119,7 +171,7 @@ import Foundation
             i % 2 == 0 ? ["fps": "52.0", "gpu_busy_pct": "100.0"]
                        : ["fps": "52.0", "gpu_busy_pct": "60.0", "cpu_core_max_pct": "97.0"]
         }))
-        #expect(a.verdict == "Mixed: GPU and CPU (one thread)" || a.verdict == "Mixed: CPU (one thread) and GPU")
+        #expect(a.verdict == "Mixed: GPU and CPU (one thread)")
         #expect(a.primary == nil)
         #expect(share(a, .gpu) == 0.5)
     }

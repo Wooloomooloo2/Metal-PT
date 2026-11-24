@@ -13,7 +13,7 @@ public enum Limiter: String, Codable, Sendable, CaseIterable {
         case .gpu: "GPU"
         case .cpuOneThread: "CPU (one thread)"
         case .cpu: "CPU"
-        case .unclear: "unclear"
+        case .unclear: "no single limit"
         }
     }
 }
@@ -25,8 +25,8 @@ public enum Limiter: String, Codable, Sendable, CaseIterable {
 /// 1. memory — `mem_pressure` warn/critical, or `pageouts_per_s` > 50.
 /// 2. frameCap — FPS within ±2 % of a common cap and GPU busy < 90 %; or busy ≥ 90 % while the clock is below
 ///    85 % of the top clock (a capped game keeps the GPU busy at a low clock: measured 82–95 % busy at ~35 % clock).
-/// 3. gpuThermal — busy ≥ 95 % and (thermal ≥ serious, or clock < 85 % of the run's highest clock while thermal
-///    ≥ fair).
+/// 3. gpuThermal — busy ≥ 95 % and (thermal ≥ serious, or clock < 85 % of the reference clock while thermal ≥ fair).
+///    Reference = min(top clock, 95th percentile of the steady seconds' clocks), so one warm-up spike does not count.
 /// 4. gpu — busy ≥ 95 % and clock ≥ 85 % of the top clock. Without a clock (or top clock), busy alone.
 /// 5. cpuOneThread — busy < 85 % and busiest core ≥ 90 %.
 /// 6. cpu — busy < 85 % and P-cores ≥ 80 %.
@@ -72,7 +72,8 @@ public struct LimiterAnalysis: Sendable {
                 + "\(pct(t.frameCapMaxGPUBusyPct)) % (or above it while the GPU clock is under "
                 + "\(pct(t.gpuClockFraction * 100)) % of its top clock).",
             "GPU (thermal): GPU busy at least \(pct(t.gpuBusyPct)) % and thermal state serious, or the clock under "
-                + "\(pct(t.gpuClockFraction * 100)) % of the run's highest clock while thermal state is fair or worse.",
+                + "\(pct(t.gpuClockFraction * 100)) % of its steady peak (95th percentile, capped at the top clock) while "
+                + "thermal state is fair or worse.",
             "GPU: GPU busy at least \(pct(t.gpuBusyPct)) % with the clock at least \(pct(t.gpuClockFraction * 100)) % "
                 + "of its top clock (busy alone when no clock was recorded).",
             "CPU (one thread): GPU busy under \(pct(t.cpuMaxGPUBusyPct)) % and the busiest core at least "
@@ -125,9 +126,20 @@ public struct LimiterAnalysis: Sendable {
     public struct Clocks: Sendable {
         /// Top clock of the GPU (run.json `machine.gpuMaxMHz`).
         public var topMHz: Double?
-        /// Highest `gpu_mhz` in the run.
-        public var runMaxMHz: Double?
-        public init(topMHz: Double?, runMaxMHz: Double?) { self.topMHz = topMHz; self.runMaxMHz = runMaxMHz }
+        /// The clock a heat-driven drop is measured against: min(top clock, 95th percentile of steady `gpu_mhz`).
+        public var referenceMHz: Double?
+        public init(topMHz: Double?, referenceMHz: Double?) { self.topMHz = topMHz; self.referenceMHz = referenceMHz }
+
+        /// Builds the clocks for the steady seconds `steady` of a GPU whose top clock is `topMHz`.
+        public init(topMHz: Double?, steady: [Second]) {
+            let sorted = steady.compactMap(\.gpuMHz).sorted()
+            let p95 = sorted.isEmpty ? nil : RunSummary.percentile(sorted, 0.95)
+            self.topMHz = topMHz
+            switch (topMHz, p95) {
+            case let (t?, p?): referenceMHz = Swift.min(t, p)
+            case let (t, p): referenceMHz = t ?? p
+            }
+        }
     }
 
     /// The cap `fps` sits at, if any.
@@ -160,8 +172,8 @@ public struct LimiterAnalysis: Sendable {
         }
         if busy >= t.gpuBusyPct {
             if s.thermalLevel >= 2 { return .gpuThermal }
-            if s.thermalLevel >= 1, let mhz = s.gpuMHz, let runMax = c.runMaxMHz, runMax > 0,
-               mhz < runMax * t.gpuClockFraction { return .gpuThermal }
+            if s.thermalLevel >= 1, let mhz = s.gpuMHz, let ref = c.referenceMHz, ref > 0,
+               mhz < ref * t.gpuClockFraction { return .gpuThermal }
             if let f = fraction, f < t.gpuClockFraction { return .unclear }
             return .gpu
         }
@@ -176,8 +188,7 @@ public struct LimiterAnalysis: Sendable {
         let t = Self.thresholds
         let rows = bundle.rows
         let seconds = summary.steadySeconds.map { Second(row: rows[$0]) }
-        let allClocks = rows.compactMap { Second(row: $0).gpuMHz }
-        let clocks = Clocks(topMHz: bundle.info.machine.gpuMaxMHz.map(Double.init), runMaxMHz: allClocks.max())
+        let clocks = Clocks(topMHz: bundle.info.machine.gpuMaxMHz.map(Double.init), steady: seconds)
 
         var missing: [String] = []
         if !seconds.contains(where: { $0.fps != nil }) { missing.append("no FPS recorded") }
@@ -212,10 +223,10 @@ public struct LimiterAnalysis: Sendable {
             Self.evidence(for: l, seconds: members(l), all: seconds, clocks: clocks, thresholds: t)
         }
         if top.1 >= t.mostlyShare {
-            verdict = "Mostly \(top.0.displayName)"
+            verdict = top.0 == .unclear ? "No single limit stood out" : "Mostly \(top.0.displayName)"
             primary = top.0
             evidence = ev(top.0)
-            suggestion = Self.suggestion(for: top.0, seconds: members(top.0), thresholds: t)
+            suggestion = Self.suggestion(for: top.0, seconds: members(top.0), clocks: clocks, thresholds: t)
         } else {
             let second = shares[1]
             verdict = "Mixed: \(top.0.displayName) and \(second.0.displayName)"
@@ -268,7 +279,7 @@ public struct LimiterAnalysis: Sendable {
             for level in hot.keys.sorted(by: >) {
                 out.append("Thermal state \(["", "fair", "serious", "critical"][level]) for \(hot[level]!.count) s")
             }
-            if let line = clockLine(c.runMaxMHz, "the run's highest") { out.append(line) }
+            if let line = clockLine(c.referenceMHz, "its peak") { out.append(line) }
         case .gpu:
             if let busyLine { out.append(busyLine) }
             if let line = clockLine(c.topMHz, "its top clock") { out.append(line) }
@@ -300,21 +311,36 @@ public struct LimiterAnalysis: Sendable {
         return counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key
     }
 
-    static func suggestion(for l: Limiter, seconds s: [Second], thresholds t: Thresholds) -> String? {
+    /// Median clock of `s` as a fraction of the reference clock, when it dropped below the clock threshold.
+    static func clockDrop(_ s: [Second], _ c: Clocks, _ t: Thresholds) -> Double? {
+        guard let mhz = med(s.compactMap(\.gpuMHz)), let ref = c.referenceMHz, ref > 0,
+              mhz / ref < t.gpuClockFraction else { return nil }
+        return mhz / ref
+    }
+
+    /// One suggestion, worded to match what was measured.
+    static func suggestion(for l: Limiter, seconds s: [Second], clocks c: Clocks, thresholds t: Thresholds) -> String? {
         switch l {
         case .gpu:
             "Lower the resolution or GPU-heavy settings, or use MetalFX upscaling / frame generation; CPU-side changes won't help."
         case .gpuThermal:
-            "The GPU is slowing down from heat: a cooler surface or (later) a stronger fan curve with Metal-PT Helper."
+            if let f = clockDrop(s, c, t) {
+                "The GPU clock dropped to \(rounded(f * 100)) % of its peak under heat: a cooler surface or (later) "
+                    + "a stronger fan curve with Metal-PT Helper may help."
+            } else {
+                "macOS reported \(["fair", "fair", "serious", "critical"][s.map(\.thermalLevel).max() ?? 2]) thermal "
+                    + "pressure while the GPU was fully busy; performance may be limited by heat."
+            }
         case .cpuOneThread:
-            "One CPU thread is the limit: lowering graphics settings won't help; reduce CPU-heavy settings (crowd density, simulation, ray-traced shadows)."
+            "One CPU thread is the limit: lowering graphics settings is unlikely to help; reduce CPU-heavy settings such as "
+                + "crowd density or simulation."
         case .cpu:
             "The CPU is busy across cores: reduce CPU-heavy settings."
         case .memory:
             "Memory is under pressure: close other apps or lower texture quality."
         case .frameCap:
             mostCommonCap(s, t).map {
-                "The game is capped at \(pct($0)) fps: raise or remove the cap (or V-Sync) if you want more."
+                "Looks capped at \(pct($0)) fps (V-Sync or an in-game limit): raise or remove the cap if you want more."
             }
         case .unclear:
             nil
