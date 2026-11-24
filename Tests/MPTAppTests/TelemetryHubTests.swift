@@ -29,23 +29,46 @@ private final class Weak<T: AnyObject>: @unchecked Sendable {
 }
 
 private final class FakeStream: HUDEventSource, @unchecked Sendable {
+    struct StartFailed: Error {}
     private let lock = NSLock()
     private var handler: (@Sendable (HUDEvent) -> Void)?
+    private var onDeath: (@Sendable () -> Void)?
     private var isStarted = false
     private var isStopped = false
+    private var isDead = false
+    private let failStart: Bool
+    init(failStart: Bool = false) { self.failStart = failStart }
     var started: Bool { lock.withLock { isStarted } }
     var stopped: Bool { lock.withLock { isStopped } }
     func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws {
+        if failStart { throw StartFailed() }
         lock.withLock { guard !isStopped else { return }; isStarted = true; handler = onEvent }
     }
     func stop() { lock.withLock { isStopped = true; handler = nil } }
+    func setOnUnexpectedStop(_ handler: @escaping @Sendable () -> Void) { lock.withLock { onDeath = handler } }
+    var isRunning: Bool { lock.withLock { isStarted && !isStopped && !isDead } }
     func send(_ e: HUDEvent) { lock.withLock { handler }?(e) }
+    /// `log` exits on its own.
+    func die() {
+        let h: (@Sendable () -> Void)? = lock.withLock { isDead = true; handler = nil; return onDeath }
+        h?()
+    }
 }
 
 private final class Streams: @unchecked Sendable {
     private let lock = NSLock()
     private var all: [FakeStream] = []
-    func make() -> FakeStream { let s = FakeStream(); lock.withLock { all.append(s) }; return s }
+    private var failing = 0
+    /// The next `n` streams throw from `start`.
+    func failNext(_ n: Int) { lock.withLock { failing = n } }
+    func make() -> FakeStream {
+        lock.withLock {
+            let s = FakeStream(failStart: failing > 0)
+            failing = max(0, failing - 1)
+            all.append(s)
+            return s
+        }
+    }
     var count: Int { lock.withLock { all.count } }
     var last: FakeStream? { lock.withLock { all.last } }
 }
@@ -69,6 +92,8 @@ private final class ManualScheduler: HubScheduler, @unchecked Sendable {
     private var repeating: [UUID: @Sendable () -> Void] = [:]
     private var once: [UUID: @Sendable () -> Void] = [:]
     private(set) var repeatingIntervals: [Double] = []
+    private var onceDelaysStore: [Double] = []
+    var onceDelays: [Double] { lock.withLock { onceDelaysStore } }
 
     func repeating(every interval: Double, _ work: @escaping @Sendable () -> Void) -> HubTimer {
         let id = UUID()
@@ -77,7 +102,7 @@ private final class ManualScheduler: HubScheduler, @unchecked Sendable {
     }
     func once(after delay: Double, _ work: @escaping @Sendable () -> Void) -> HubTimer {
         let id = UUID()
-        lock.withLock { once[id] = work }
+        lock.withLock { once[id] = work; onceDelaysStore.append(delay) }
         return Handle { [weak self] in self?.lock.withLock { _ = self?.once.removeValue(forKey: id) } }
     }
     var activeRepeating: Int { lock.withLock { repeating.count } }
@@ -465,6 +490,58 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(f.activities.begun.count == 3)
         #expect(f.activities.active.isEmpty)
         withExtendedLifetime((samples, hud)) {}
+    }
+
+    /// `log` dying after it started is noticed: the follow clears, `streamError` says so, and the stream is restarted
+    /// after 1 s, 2 s, 5 s, then every 30 s while a `.hud` hold exists. A failed start is retried the same way.
+    /// Releasing the hold stops retrying.
+    @Test func deadStreamRestartsWithBackoff() async throws {
+        let f = Fixture()
+        let hud = f.hub.acquire(.hud)
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        try await waitUntil("the game to be followed") { f.hub.latest?.followedPID == 4242 }
+        f.scheduler.fireOnce()   // drop the quiet timer (the game is still live at t0 + 1)
+        let before = f.scheduler.onceDelays.count
+
+        f.streams.last?.die()
+        try await waitUntil("the death to be noticed") { f.hub.streamError != nil }
+        #expect(f.hub.latest?.followedPID == nil)
+        #expect(f.scheduler.onceDelays.dropFirst(before) == [1])
+        #expect(f.streams.count == 1)
+        f.scheduler.fireOnce()
+        try await waitUntil("the restart") { f.streams.count == 2 }
+        #expect(f.streams.last?.started == true)
+        #expect(f.hub.streamError == nil)
+
+        // Dies again at once (and again): the delays grow, then stay at 30 s. A start that fails counts too.
+        for _ in 0..<3 {
+            f.streams.last?.die()
+            try await waitUntil("the death") { f.hub.streamError != nil }
+            f.scheduler.fireOnce()
+            try await waitUntil("the restart") { f.hub.streamError == nil }
+        }
+        f.streams.failNext(1)
+        f.streams.last?.die()
+        try await waitUntil("the death") { f.hub.streamError != nil }
+        f.scheduler.fireOnce()                     // this start fails
+        try await waitUntil("the failed start") { f.scheduler.activeOnce == 1 }
+        #expect(f.hub.streamError != nil)
+        f.scheduler.fireOnce()
+        try await waitUntil("the restart") { f.hub.streamError == nil }
+        #expect(f.scheduler.onceDelays.dropFirst(before) == [1, 2, 5, 30, 30, 30])
+
+        // Dies; the hold is released before the retry: no retry, no error.
+        let count = f.streams.count
+        f.streams.last?.die()
+        try await waitUntil("the death") { f.hub.streamError != nil }
+        hud.release()
+        await settle()
+        #expect(f.scheduler.activeOnce == 0)
+        #expect(f.hub.streamError == nil)
+        f.scheduler.fireOnce()
+        await settle()
+        #expect(f.streams.count == count)
     }
 
     /// Quit path: finishes synchronously.

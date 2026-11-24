@@ -9,10 +9,14 @@ public protocol HUDEventSource: AnyObject {
     func stop()
     /// False when the source died on its own (checked once per tick). Defaults to true.
     var isRunning: Bool { get }
+    /// Registers what to call (once, on any thread) when the source stops on its own after `start`; never after
+    /// `stop`. Set before `start`. Defaults to never calling it.
+    func setOnUnexpectedStop(_ handler: @escaping @Sendable () -> Void)
 }
 
 extension HUDEventSource {
     public var isRunning: Bool { true }
+    public func setOnUnexpectedStop(_ handler: @escaping @Sendable () -> Void) {}
 }
 
 /// Streams Metal HUD log lines from the unified log (`/usr/bin/log stream`)
@@ -25,6 +29,8 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
     private var buffer = Data()
     /// Set by `stop`; a later `start` does nothing (a signal can stop a session before its stream has started).
     private var stopped = false
+    /// Under `lock`: called when `log` exits without `stop`.
+    private var onUnexpectedStop: (@Sendable () -> Void)?
 
     public init(onEvent: @escaping @Sendable (HUDEvent) -> Void) {
         self.onEvent = onEvent
@@ -63,6 +69,10 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
         try start()
     }
 
+    public func setOnUnexpectedStop(_ handler: @escaping @Sendable () -> Void) {
+        lock.withLock { onUnexpectedStop = handler }
+    }
+
     /// Launches `log stream`. Does nothing if already started or after `stop`.
     public func start() throws {
         lock.lock(); defer { lock.unlock() }
@@ -80,8 +90,19 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
             if chunk.isEmpty { handle.readabilityHandler = nil; return }
             self?.consume(chunk)
         }
+        p.terminationHandler = { [weak self] _ in self?.exited() }
         try p.run()
         process = p
+    }
+
+    /// `log` exited: unexpected unless `stop` ran first.
+    private func exited() {
+        let handler: (@Sendable () -> Void)? = lock.withLock {
+            guard !stopped else { return nil }
+            defer { onUnexpectedStop = nil }
+            return onUnexpectedStop
+        }
+        handler?()
     }
 
     public func stop() {

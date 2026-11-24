@@ -37,6 +37,11 @@ final class HubEngine: @unchecked Sendable {
     private var samplerWanted = false
     private var seq: UInt64 = 0
     private var stream: HUDEventSource?
+    /// The last stream exited on its own and none has started since (cleared by `setStream`).
+    private var streamDied = false
+    private var onStreamDeath: (@Sendable () -> Void)?
+    /// The current stream's `start` returned (before that, `isRunning` false does not mean dead).
+    private var streamStarted = false
     private var generation = 0
     private var tickTimer: HubTimer?
     private var quietTimer: HubTimer?
@@ -60,38 +65,72 @@ final class HubEngine: @unchecked Sendable {
     /// Starts (a fresh source each time: a stopped `MetalHUDLogStream` cannot restart) or stops the log stream.
     /// Stopping forgets the follow state and publishes a follow-only snapshot (no followed game), which also
     /// supersedes any update made before the stop that is still on its way to the main thread.
-    func setStream(_ on: Bool) throws {
-        if on {
-            let started: (HUDEventSource, Int)? = lock.withLock {
-                guard stream == nil else { return nil }
-                let s = deps.makeStream()
-                stream = s
-                generation += 1
-                return (s, generation)
-            }
-            guard let (s, gen) = started else { return }
-            do {
-                try s.start { [weak self] event in self?.hud(event, generation: gen) }
-            } catch {
-                lock.withLock { if generation == gen { stream = nil } }
-                throw error
-            }
-        } else {
-            let (old, update): (HUDEventSource?, Update?) = lock.withLock {
-                guard let old = stream else { return (nil, nil) }
-                stream = nil
-                generation += 1
-                counter = FrameCounter()
-                imagePaths = [:]
-                quietTimer?.cancel()
-                quietTimer = nil
-                lastFollow = Follow()
-                return (old, stamped(Update(snapshot: snapshot(lastSample ?? TelemetrySample(), Follow(), fps: nil),
-                                            addToHistory: false)))
+    /// Returns true when a new stream was started.
+    @discardableResult
+    func setStream(_ on: Bool) throws -> Bool {
+        guard on else {
+            let (old, update) = lock.withLock {
+                streamDied = false
+                return detachStreamLocked()
             }
             old?.stop()
             if let update { deliver(update) }
+            return false
         }
+        let started: (HUDEventSource, Int)? = lock.withLock {
+            guard stream == nil else { return nil }
+            let s = deps.makeStream()
+            stream = s
+            streamDied = false
+            streamStarted = false
+            generation += 1
+            return (s, generation)
+        }
+        guard let (s, gen) = started else { return false }
+        s.setOnUnexpectedStop { [weak self] in self?.streamExited(generation: gen) }
+        do {
+            try s.start { [weak self] event in self?.hud(event, generation: gen) }
+        } catch {
+            lock.withLock { if generation == gen { stream = nil } }
+            throw error
+        }
+        lock.withLock { if generation == gen { streamStarted = true } }
+        return true
+    }
+
+    /// Called (on the main thread) when the running stream exits on its own; the hub restarts it.
+    func setStreamDeathHandler(_ handler: @escaping @Sendable () -> Void) {
+        lock.withLock { onStreamDeath = handler }
+    }
+
+    /// Under `lock`: drops the stream and the follow state; the stream to stop and the follow-only update to deliver.
+    private func detachStreamLocked() -> (HUDEventSource?, Update?) {
+        guard let old = stream else { return (nil, nil) }
+        stream = nil
+        generation += 1
+        counter = FrameCounter()
+        imagePaths = [:]
+        names = [:]
+        quietTimer?.cancel()
+        quietTimer = nil
+        lastFollow = Follow()
+        return (old, stamped(Update(snapshot: snapshot(lastSample ?? TelemetrySample(), Follow(), fps: nil),
+                                    addToHistory: false)))
+    }
+
+    /// The stream of `gen` exited without `stop` (from its termination handler, or noticed on a tick): detach it
+    /// like a stop, mark the stream dead (`streamHealthy` false, so a recording warns) and tell the hub.
+    private func streamExited(generation gen: Int) {
+        let (old, update, handler): (HUDEventSource?, Update?, (@Sendable () -> Void)?) = lock.withLock {
+            guard gen == generation, stream != nil else { return (nil, nil, nil) }
+            let (old, update) = detachStreamLocked()
+            streamDied = true
+            return (old, update, onStreamDeath)
+        }
+        guard let old else { return }
+        old.stop()
+        if let update { deliver(update) }
+        handler?()
     }
 
     /// `active`: the sampler is wanted (created and primed off main, on `samplerQueue` or by the first
@@ -176,7 +215,8 @@ final class HubEngine: @unchecked Sendable {
 
     /// False only when the stream should be running and has died (no FPS logging is not a failure).
     var streamHealthy: Bool {
-        guard let s = lock.withLock({ stream }) else { return true }
+        let (s, died) = lock.withLock { (stream, streamDied) }
+        guard let s else { return !died }
         return s.isRunning
     }
 
@@ -191,6 +231,10 @@ final class HubEngine: @unchecked Sendable {
     // MARK: Private
 
     private func tick() {
+        // Belt and braces for the termination handler: a stream that is no longer running is dead.
+        if let (s, gen) = lock.withLock({ streamStarted ? stream.map { ($0, generation) } : nil }), !s.isRunning {
+            streamExited(generation: gen)
+        }
         guard let s = sampleNow() else { return }
         publish(sample: s, recording: nil, id: nil)
     }

@@ -184,6 +184,10 @@ public final class TelemetryHub: ObservableObject {
 
     public nonisolated static let historyLimit = 300
     public nonisolated static let tickInterval = 1.0
+    /// Seconds before each restart of a log stream that died or failed to start (the last one repeats).
+    public nonisolated static let streamRetryDelays: [Double] = [1, 2, 5, 30]
+    /// A stream that ran this long before dying starts the delays over.
+    nonisolated static let streamHealthyAfter = 60.0
 
     @Published public private(set) var latest: HubSnapshot?
     /// The last `historyLimit` sampled snapshots, oldest first (follow-only updates are not added).
@@ -250,6 +254,12 @@ public final class TelemetryHub: ObservableObject {
     private let engine: HubEngine
     private var holds: [UUID: Need] = [:]
     private var menuBarToken: Token?
+    /// The pending restart of the log stream (while a `.hud` hold exists), and how many restarts in a row so far.
+    private var streamRetry: HubTimer?
+    private var streamFailures = 0
+    private var streamRetryID: UInt64 = 0
+    /// When the current stream started (hub clock).
+    private var streamStartedAt: Double?
     /// `AppActivity.recording`, held exactly while `recordingID` is set (from start until finished or failed).
     private var recordingActivity: ActivityToken?
     /// Set from `startRecording` until the run is finished (keeps the sampler for a tick in flight).
@@ -275,9 +285,13 @@ public final class TelemetryHub: ObservableObject {
         engine.setSink { [weak self] update in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply(update) } }
         }
+        engine.setStreamDeathHandler { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.streamDied() } }
+        }
     }
 
     isolated deinit {
+        streamRetry?.cancel()
         stopRecordingNow()
         engine.shutdown()
     }
@@ -465,11 +479,22 @@ public final class TelemetryHub: ObservableObject {
         let wantStream = holds.values.contains(.hud)
         let wantSamples = holds.values.contains(.samples)
         let recordingActive = recordingID != nil
-        do {
-            try engine.setStream(wantStream)
+        if !wantStream {
+            streamRetry?.cancel()
+            streamRetry = nil
+            streamFailures = 0
+            streamStartedAt = nil
+            _ = try? engine.setStream(false)
             streamError = nil
-        } catch {
-            streamError = "\(error)"
+        } else if streamRetry == nil {
+            // While a restart is pending the stream stays down until that timer fires (the backoff).
+            do {
+                if try engine.setStream(true) { streamStartedAt = deps.clock() }
+                streamError = nil
+            } catch {
+                streamError = "\(error)"
+                scheduleStreamRetry()
+            }
         }
         engine.setSampling(active: wantSamples || recordingActive, ticking: wantSamples && !recordingActive)
         // Every recording exit path (stop, quit, session end, failed start) clears `recordingID` and reconciles.
@@ -482,6 +507,34 @@ public final class TelemetryHub: ObservableObject {
         if isSampling != (wantSamples || recordingActive) {
             isSampling = wantSamples || recordingActive
             onSamplingChange?(isSampling)
+        }
+    }
+
+    /// The log stream exited on its own: say so, and restart it after the next backoff delay while a `.hud` hold
+    /// exists.
+    private func streamDied() {
+        guard holds.values.contains(.hud) else { return }
+        if let at = streamStartedAt, deps.clock() - at >= Self.streamHealthyAfter { streamFailures = 0 }
+        streamStartedAt = nil
+        streamError = "log stream stopped unexpectedly; restarting"
+        scheduleStreamRetry()
+    }
+
+    private func scheduleStreamRetry() {
+        guard streamRetry == nil else { return }
+        let delay = Self.streamRetryDelays[min(streamFailures, Self.streamRetryDelays.count - 1)]
+        streamFailures += 1
+        streamRetryID &+= 1
+        let id = streamRetryID
+        streamRetry = deps.scheduler.once(after: delay) { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // A timer cancelled (hold released) after it fired must not clear a newer one.
+                    guard let self, self.streamRetry != nil, self.streamRetryID == id else { return }
+                    self.streamRetry = nil
+                    self.reconcile()
+                }
+            }
         }
     }
 
