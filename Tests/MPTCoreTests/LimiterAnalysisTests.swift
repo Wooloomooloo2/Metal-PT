@@ -3,12 +3,19 @@ import Foundation
 @testable import MPTCore
 
 @Suite struct LimiterAnalysisTests {
-    private func bundle(_ rows: [[String: String]], gpuMaxMHz: Int? = 1600, steady: Bool = true) -> RunBundle {
-        let info = RunInfo(appVersion: "0.2", machine: .init(modelID: "Mac16,5", chip: "M4 Max", memoryGB: 48,
-                                                             osVersion: "27.0", osBuild: "26A", gpuMaxMHz: gpuMaxMHz),
+    /// The measured M4 Max `pmgr` table (hardware-baseline), P1…P15; not monotonic at 1312/1242 and 1380/1326.
+    static let m4MaxTable = [338, 618, 796, 924, 952, 1056, 1062, 1182, 1182, 1312, 1242, 1380, 1326, 1470, 1578]
+
+    private func bundle(_ rows: [[String: String]], gpuMaxMHz: Int? = 1600, table: [Int]? = nil, steady: Bool = true,
+                        powerMode: String? = nil, refreshHz: Double? = nil) -> RunBundle {
+        var info = RunInfo(appVersion: "0.2", machine: .init(modelID: "Mac16,5", chip: "M4 Max", memoryGB: 48,
+                                                             osVersion: "27.0", osBuild: "26A", gpuMaxMHz: gpuMaxMHz,
+                                                             gpuClockTableMHz: table),
                            game: .init(exe: "g"), start: Date(timeIntervalSince1970: 1_800_000_000),
                            steadyStartS: steady ? 1 : nil, steadyEndS: steady ? Double(rows.count) : nil,
                            fpsSource: "log")
+        info.settings.powerMode = powerMode
+        info.settings.refreshHz = refreshHz
         return RunBundle(url: URL(fileURLWithPath: "/x.mptrun"), info: info, rows: rows, frames: nil, warnings: [])
     }
 
@@ -67,7 +74,9 @@ import Foundation
         #expect(share(a, .gpu) == 0)
         #expect(a.primary == .unclear)
         #expect(a.verdict == "No single limit stood out")
-        #expect(a.evidence.contains("GPU busy but running at 35 % of its top clock — the game isn't pushing it"))
+        #expect(a.evidence.contains("GPU busy at 35 % of its top clock — it may not be working flat out "
+                                    + "(clock reading unverified on this Mac)"))
+        #expect(a.notes.isEmpty)
     }
 
     @Test func oneThread() {
@@ -153,7 +162,101 @@ import Foundation
         let a = analyse(bundle(rows(100) { i in
             ["fps": "52.0", "gpu_busy_pct": i % 2 == 0 ? "100.0" : "90.0"]
         }))
-        #expect(a.verdict == "Mixed: GPU and no single limit")
+        #expect(a.verdict == "Partly GPU (otherwise no single limit)")
+        #expect(CompareReport.limiterSuffix(a) == " · limited partly by GPU")
+        // No single limit as the larger class reads the same way.
+        let b = analyse(bundle(rows(100) { i in
+            ["fps": "52.0", "gpu_busy_pct": i % 20 < 9 ? "100.0" : "90.0"]
+        }))
+        #expect(b.verdict == "Partly GPU (otherwise no single limit)")
+        #expect(CompareReport.limiterSuffix(b) == " · limited partly by GPU")
+    }
+
+    // MARK: - Ruling L3: clock rule unverified on real GPU-bound games
+
+    /// The top two steps of the measured (non-monotonic) table — P12 1380 MHz (87 %) and P13 1326 MHz (84 %) —
+    /// count as GPU-bound at busy ≥ 95 %.
+    @Test func topTableStepsAreGPUOnTheMeasuredTable() {
+        #expect(LimiterAnalysis.gpuBoundMHz(top: 1578, table: Self.m4MaxTable.map(Double.init), fraction: 0.85)
+                == 1326)
+        for mhz in ["1326", "1380", "1470", "1578"] {
+            let a = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "gpu_mhz": mhz] },
+                                   gpuMaxMHz: 1578, table: Self.m4MaxTable))
+            #expect(a.primary == .gpu, "\(mhz) MHz")
+        }
+        let low = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "gpu_mhz": "1242"] },
+                                 gpuMaxMHz: 1578, table: Self.m4MaxTable))
+        #expect(low.primary == .unclear)
+        // Without a table: 85 % of the top clock, as before.
+        let noTable = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "99.0", "gpu_mhz": "1326"] },
+                                     gpuMaxMHz: 1578))
+        #expect(noTable.primary == .unclear)
+    }
+
+    /// The second-highest distinct table value bounds the threshold even on a monotonic table.
+    @Test func secondHighestDistinctStepBoundsTheThreshold() {
+        #expect(LimiterAnalysis.gpuBoundMHz(top: 1000, table: [200, 400, 700, 1000, 1000], fraction: 0.85) == 700)
+        #expect(LimiterAnalysis.gpuBoundMHz(top: 1000, table: nil, fraction: 0.85) == 850)
+        #expect(LimiterAnalysis.gpuBoundMHz(top: nil, table: [200, 1000], fraction: 0.85) == nil)
+    }
+
+    @Test func lowPowerModeJudgesGPUOnBusyOnly() {
+        let a = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "98.0", "gpu_mhz": "560"] },
+                               powerMode: "low"))
+        #expect(a.primary == .gpu)
+        #expect(a.notes == ["power-managed clocks: GPU judged on busy % only"])
+        let auto = analyse(bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "98.0", "gpu_mhz": "560"] },
+                                  powerMode: "automatic"))
+        #expect(auto.primary == .unclear)
+        #expect(auto.notes.isEmpty)
+    }
+
+    @Test func onBatteryMajorityJudgesGPUOnBusyOnly() {
+        let battery = analyse(bundle(rows(100) { i in
+            ["fps": "52.0", "gpu_busy_pct": "98.0", "gpu_mhz": "560", "on_ac": i < 60 ? "0" : "1"]
+        }))
+        #expect(battery.primary == .gpu)
+        #expect(battery.notes == ["power-managed clocks: GPU judged on busy % only"])
+        let mains = analyse(bundle(rows(100) { i in
+            ["fps": "52.0", "gpu_busy_pct": "98.0", "gpu_mhz": "560", "on_ac": i < 40 ? "0" : "1"]
+        }))
+        #expect(mains.primary == .unclear)
+        #expect(mains.notes.isEmpty)
+    }
+
+    @Test func powerManagedNoteIsInTheReport() {
+        let b = bundle(rows(50) { _ in ["fps": "52.0", "gpu_busy_pct": "98.0", "gpu_mhz": "560"] }, powerMode: "low")
+        let html = SummaryReport.html(b, RunSummary(b))
+        #expect(html.contains("power-managed clocks: GPU judged on busy % only"))
+    }
+
+    // MARK: - M3: seconds without GPU busy
+
+    @Test func secondsWithoutBusyAreLeftOutUnlessMemory() {
+        let a = analyse(bundle(rows(100) { i in
+            i < 50 ? ["fps": "52.0", "gpu_busy_pct": "100.0"] : ["fps": "52.0"]
+        }))
+        #expect(a.primary == .gpu)
+        #expect(share(a, .gpu) == 1.0)
+        #expect(a.perSecond.count == 50)
+        let m = analyse(bundle(rows(100) { i in
+            i < 50 ? ["fps": "52.0", "gpu_busy_pct": "100.0"] : ["fps": "52.0", "mem_pressure": "warn"]
+        }))
+        #expect(share(m, .memory) == 0.5 && share(m, .gpu) == 0.5)
+    }
+
+    // MARK: - M5: the display's refresh rate is a cap
+
+    @Test func refreshRateAndHalfAreCaps() {
+        for fps in ["100.0", "50.0"] {
+            let a = analyse(bundle(rows(50) { _ in ["fps": fps, "gpu_busy_pct": "70.0"] }, refreshHz: 100))
+            #expect(a.primary == .frameCap, "\(fps) fps")
+        }
+        let none = analyse(bundle(rows(50) { _ in ["fps": "100.0", "gpu_busy_pct": "70.0"] }))
+        #expect(share(none, .frameCap) == 0)
+        #expect(LimiterAnalysis.frameCaps([30, 60, 120], refreshHz: 120) == [30, 60, 120])
+        #expect(LimiterAnalysis.frameCaps([30, 60], refreshHz: 100) == [30, 60, 100, 50])
+        #expect(LimiterAnalysis.frameCaps([30, 60], refreshHz: nil) == [30, 60])
     }
 
     @Test func memory() {

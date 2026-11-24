@@ -213,19 +213,23 @@ private struct BigNumber: View {
 
 // MARK: - Limited by
 
-/// This Mac's top GPU clock, read once (one IOReport sample and one IORegistry read) the first time the chip needs it.
+/// This Mac's GPU clock table (P1…Pn), read once (one IOReport sample and one IORegistry read) the first time the
+/// chip needs it.
 enum GPUTopClock {
-    static let mhz: Double? = GPUClock.currentMaxMHz().map(Double.init)
+    static let table: [Double]? = GPUClock.currentTableMHz()
 }
 
 /// "Limited by: GPU" over the last 30 s (`LiveLimiter`); hidden until there are 10 seconds to judge.
 private struct LimitedByChip: View {
     let history: [HubSnapshot]
-    @State private var topMHz: Double?
+    @State private var table: [Double]?
+    @State private var refreshHz: Double?
 
     var body: some View {
         Group {
-            if let reading = LiveLimiter.current(history, topMHz: topMHz) {
+            if let reading = LiveLimiter.current(history, topMHz: table?.max(), tableMHz: table,
+                                                 powerMode: ProcessInfo.processInfo.isLowPowerModeEnabled ? "low" : nil,
+                                                 refreshHz: refreshHz) {
                 HStack(spacing: 7) {
                     Circle().fill(Self.color(reading)).frame(width: 8, height: 8)
                     Text(LiveLimiter.label(reading)).font(.callout.weight(.medium))
@@ -238,7 +242,10 @@ private struct LimitedByChip: View {
                     + "as a run's \"What held it back\".")
             }
         }
-        .task { topMHz = await Task.detached(priority: .utility) { GPUTopClock.mhz }.value }
+        .task {
+            refreshHz = MachineInfo.withMainDisplay(.init()).refreshHz
+            table = await Task.detached(priority: .utility) { GPUTopClock.table }.value
+        }
     }
 
     /// Matches the charts: GPU orange, CPU blue.

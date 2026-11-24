@@ -9,6 +9,7 @@ public enum MachineInfo {
         let os = v.patchVersion > 0 ? "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
                                     : "\(v.majorVersion).\(v.minorVersion)"
         let bytes = sysctlInt("hw.memsize") ?? 0
+        let table = GPUClock.currentTableMHz()?.map { Int($0.rounded()) }
         return RunInfo.Machine(
             modelID: sysctlString("hw.model") ?? "",
             chip: sysctlString("machdep.cpu.brand_string") ?? "",
@@ -16,7 +17,8 @@ public enum MachineInfo {
             memoryGB: Int((Double(bytes) / 1_073_741_824).rounded()),
             osVersion: os,
             osBuild: sysctlString("kern.osversion") ?? "",
-            gpuMaxMHz: GPUClock.currentMaxMHz())
+            gpuMaxMHz: table?.max(),
+            gpuClockTableMHz: table)
     }
 
     /// `base` with the main display's size (CGDisplayPixelsWide/High) and refresh rate (its current mode).

@@ -31,6 +31,7 @@ or null. A reader must treat any missing optional key as unknown.
 | `machine.chip` | string | e.g. `Apple M4 Max`. |
 | `machine.gpuCores` | int? | GPU core count when known. |
 | `machine.gpuMaxMHz` | int? | Top GPU clock, MHz, from the IORegistry `pmgr` frequency table (the table whose entry count matches IOReport `GPUPH`'s states). Absent when no table fits, and in runs written before 2026-11-24. |
+| `machine.gpuClockTableMHz` | [int]? | The GPU frequency table, MHz per GPUPH state P1…P*n* (rounded, OFF left out), from the same `pmgr` table. [?] P*n* ↔ entry *n* is unverified; the limiter analysis uses it to bound its clock rule. Absent when no table fits, and in runs written before it. |
 | `machine.memoryGB` | int | Installed RAM, GB, rounded. |
 | `machine.osVersion` | string | macOS version, e.g. `26.6`. |
 | `machine.osBuild` | string | macOS build, e.g. `25G...`. |

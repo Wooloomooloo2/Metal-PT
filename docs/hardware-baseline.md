@@ -67,6 +67,11 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
   States / GPUPH` has states OFF, P1…P15 → [?] P*n* ↔ entry *n* (table not monotonic at 1312/1242 and 1380/1326;
   verify under a heavy game that the residency-weighted clock approaches 1578 MHz). Readable unprivileged
   (`ioreg -rn pmgr -l`).
+- [?] pending: verify with a heavy GPU-bound game run that gpu_mhz approaches 1578 MHz and the verdict is Mostly GPU.
+  Until then (ruling L3) the limiter counts a ≥ 95 %-busy second as GPU-bound at ≥ min(85 % of the top clock, the
+  table's second-highest distinct value, the lowest step from P12 on) — 1326 MHz on this table — judges on busy %
+  only in low power mode or on battery, and words a low clock as "may not be working flat out (clock reading
+  unverified on this Mac)". run.json records the table as `machine.gpuClockTableMHz`.
 - [M] 2026-11-24: memory pressure readable unprivileged — `sysctl kern.memorystatus_vm_pressure_level` (1 = normal,
   2 = warn, 4 = critical), `vm.swapusage` (total/used/free), `host_statistics64` compressor pages and pageouts
   (16 KB pages). During a Cyberpunk run: 32 of 48 GB used, swap used 4.6 GB (from earlier activity), level 1.

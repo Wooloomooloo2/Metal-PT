@@ -68,12 +68,17 @@ public enum GPUClock {
         return states.count
     }
 
-    /// This Mac's top GPU clock (MHz, rounded) for run.json; nil when there is no fitting table. Slow-ish (one
-    /// IOReport sample and one IORegistry read): call once per run.
-    public static func currentMaxMHz() -> Int? {
+    /// This Mac's GPU frequency table without the OFF entry (MHz for P1…Pn); nil when there is no fitting table.
+    /// Slow-ish (one IOReport sample and one IORegistry read): call once per run.
+    public static func currentTableMHz() -> [Double]? {
         guard let sampler = try? IOReportSampler(groups: ["GPU Stats"]), let sample = sampler.sample(),
               let count = gpuphStateCount(in: IOReportSampler.channels(in: sample, readValues: true)),
-              let max = loadTable(stateCount: count)?.max(), max > 0 else { return nil }
-        return Int(max.rounded())
+              let table = loadTable(stateCount: count), (table.max() ?? 0) > 0 else { return nil }
+        return Array(table.dropFirst())
+    }
+
+    /// This Mac's top GPU clock (MHz, rounded) for run.json; nil when there is no fitting table. Slow-ish: call once.
+    public static func currentMaxMHz() -> Int? {
+        currentTableMHz()?.max().map { Int($0.rounded()) }
     }
 }

@@ -10,11 +10,14 @@ public struct RunInfo: Codable, Sendable {
         public var osBuild: String
         /// Top GPU clock (MHz) from the `pmgr` frequency table; nil when unknown (and in runs written before it).
         public var gpuMaxMHz: Int?
+        /// The GPU frequency table (MHz per GPUPH state P1…Pn, rounded) from `pmgr`; nil when unknown (and in runs
+        /// written before it). [?] P*n* ↔ entry *n* is unverified; the limiter analysis uses it to bound its clock rule.
+        public var gpuClockTableMHz: [Int]?
         public init(modelID: String, chip: String, gpuCores: Int? = nil, memoryGB: Int,
-                    osVersion: String, osBuild: String, gpuMaxMHz: Int? = nil) {
+                    osVersion: String, osBuild: String, gpuMaxMHz: Int? = nil, gpuClockTableMHz: [Int]? = nil) {
             self.modelID = modelID; self.chip = chip; self.gpuCores = gpuCores
             self.memoryGB = memoryGB; self.osVersion = osVersion; self.osBuild = osBuild
-            self.gpuMaxMHz = gpuMaxMHz
+            self.gpuMaxMHz = gpuMaxMHz; self.gpuClockTableMHz = gpuClockTableMHz
         }
     }
     public struct Game: Codable, Sendable {

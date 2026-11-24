@@ -42,13 +42,15 @@ public enum CompareReport {
         return a.shares.count >= 2 ? "mixed" : dash
     }
 
-    /// The end of a run line: " · limited by GPU", " · limited by a mix of GPU and CPU", " · no single limit".
+    /// The end of a run line: " · limited by GPU", " · limited by a mix of GPU and CPU", " · limited partly by GPU"
+    /// (the rest no single limit), " · no single limit".
     static func limiterSuffix(_ a: LimiterAnalysis) -> String {
         switch a.primary {
         case .unclear?: return " · no single limit"
         case let p?: return " · limited by \(p.displayName)"
         case nil:
             guard a.shares.count >= 2 else { return "" }
+            if let p = a.partly { return " · limited partly by \(p.displayName)" }
             return " · limited by a mix of \(a.shares[0].0.displayName) and \(a.shares[1].0.displayName)"
         }
     }

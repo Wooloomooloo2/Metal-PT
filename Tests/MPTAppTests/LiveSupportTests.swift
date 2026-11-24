@@ -179,4 +179,32 @@ import MPTCore
         #expect(LiveLimiter.current(low, topMHz: 1578) == .limiter(.unclear))
         #expect(LiveLimiter.current(low, topMHz: nil) == .limiter(.gpu))
     }
+
+    /// Same clock rule as a run (ruling L3): the measured table's top steps count as GPU-bound.
+    @Test func measuredTableTopStepsAreGPU() {
+        let table: [Double] = [338, 618, 796, 924, 952, 1056, 1062, 1182, 1182, 1312, 1242, 1380, 1326, 1470, 1578]
+        let p13 = (0..<30).map { busy(Double($0), 99, mhz: $0 % 2 == 0 ? 1326 : 1380) }
+        #expect(LiveLimiter.current(p13, topMHz: 1578, tableMHz: table) == .limiter(.gpu))
+        #expect(LiveLimiter.current(p13, topMHz: 1578) == .mixed)   // without the table: 85 % only
+    }
+
+    @Test func lowPowerOrBatteryJudgesOnBusyOnly() {
+        let low = (0..<30).map { busy(Double($0), 100, mhz: 500) }
+        #expect(LiveLimiter.current(low, topMHz: 1578, powerMode: "low") == .limiter(.gpu))
+        let onBattery = (0..<30).map { i -> HubSnapshot in
+            HubSnapshot(time: Double(i), sample: TelemetrySample(cpuPUtilPct: 30, cpuCoreMaxPct: 50, gpuBusyPct: 100,
+                                                                 onAC: i >= 20 ? true : false, gpuMHz: 500),
+                        fps: 50, followedPID: 1, followedApp: "g", stack: nil)
+        }
+        #expect(LiveLimiter.current(onBattery, topMHz: 1578) == .limiter(.gpu))
+    }
+
+    /// Like a run: memory seconds count even without GPU busy.
+    @Test func memorySecondsWithoutBusyCount() {
+        let mem = (0..<30).map { i in
+            HubSnapshot(time: Double(i), sample: TelemetrySample(memPressure: "critical"), fps: 50, followedPID: 1,
+                        followedApp: "g", stack: nil)
+        }
+        #expect(LiveLimiter.current(mem, topMHz: nil) == .limiter(.memory))
+    }
 }

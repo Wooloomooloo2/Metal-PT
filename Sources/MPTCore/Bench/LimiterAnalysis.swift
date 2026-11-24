@@ -21,16 +21,21 @@ public enum Limiter: String, Codable, Sendable, CaseIterable {
 /// "What held it back": classifies each steady second of a run (the same steady seconds as `RunSummary`) and
 /// gives a verdict, the evidence for it and one suggestion. Pure: reads only the bundle and the summary.
 ///
-/// Rules, first match wins (spec §E, with ruling L1 on the GPU clock):
+/// Rules, first match wins (spec §E, with rulings L1 and L3 on the GPU clock):
 /// 1. memory — `mem_pressure` warn/critical, or `pageouts_per_s` > 50.
-/// 2. frameCap — FPS within ±2 % of a common cap and GPU busy < 90 %; or busy ≥ 90 % while the clock is below
-///    85 % of the top clock (a capped game keeps the GPU busy at a low clock: measured 82–95 % busy at ~35 % clock).
+/// 2. frameCap — FPS within ±2 % of a common cap (or the display's refresh rate or half of it) and GPU busy < 90 %;
+///    or busy ≥ 90 % at a low clock (a capped game keeps the GPU busy at a low clock: measured 82–95 % busy at ~35 %).
 /// 3. gpuThermal — busy ≥ 95 % and (thermal ≥ serious, or clock < 85 % of the reference clock while thermal ≥ fair).
 ///    Reference = min(top clock, 95th percentile of the steady seconds' clocks), so one warm-up spike does not count.
-/// 4. gpu — busy ≥ 95 % and clock ≥ 85 % of the top clock. Without a clock (or top clock), busy alone.
+/// 4. gpu — busy ≥ 95 % and the clock not low. "Low" = under `gpuBoundMHz` (85 % of the top clock, lowered to the
+///    table's top steps — ruling L3, the P*n* ↔ MHz mapping is [?]). Busy alone without a clock (or top clock), and
+///    when the clock is power-managed (low power mode, or most steady seconds on battery).
 /// 5. cpuOneThread — busy < 85 % and busiest core ≥ 90 %.
 /// 6. cpu — busy < 85 % and P-cores ≥ 80 %.
-/// 7. unclear — otherwise (including busy ≥ 95 % at a low clock without heat: the game isn't pushing the GPU).
+/// 7. unclear — otherwise (including busy ≥ 95 % at a low clock without heat).
+///
+/// Only seconds with GPU busy (or a memory signal that classifies them as memory) are judged (`isJudged`); the Live
+/// chip filters the same way.
 public struct LimiterAnalysis: Sendable {
     /// Every number the rules use, in one table. Defaults are spec §E plus ruling L1.
     public struct Thresholds: Sendable {
@@ -68,14 +73,16 @@ public struct LimiterAnalysis: Sendable {
         return [
             "Memory: memory pressure \(t.memoryPressureLevels.sorted().joined(separator: " or ")), or more than "
                 + "\(pct(t.pageoutsPerSecond)) pageouts per second.",
-            "Frame cap: FPS within ±\(pct(t.frameCapTolerance * 100)) % of \(caps) and GPU busy below "
-                + "\(pct(t.frameCapMaxGPUBusyPct)) % (or above it while the GPU clock is under "
-                + "\(pct(t.gpuClockFraction * 100)) % of its top clock).",
+            "Frame cap: FPS within ±\(pct(t.frameCapTolerance * 100)) % of \(caps) (or the display's refresh rate or "
+                + "half of it) and GPU busy below \(pct(t.frameCapMaxGPUBusyPct)) % (or above it while the GPU clock is "
+                + "low, as below).",
             "GPU (thermal): GPU busy at least \(pct(t.gpuBusyPct)) % and thermal state serious, or the clock under "
                 + "\(pct(t.gpuClockFraction * 100)) % of its steady peak (95th percentile, capped at the top clock) while "
                 + "thermal state is fair or worse.",
             "GPU: GPU busy at least \(pct(t.gpuBusyPct)) % with the clock at least \(pct(t.gpuClockFraction * 100)) % "
-                + "of its top clock (busy alone when no clock was recorded).",
+                + "of its top clock or at one of the top steps of its frequency table, whichever is lower (busy alone "
+                + "when no clock was recorded, or in low power mode or on battery, where macOS manages the clock). "
+                + "The clock reading is not yet verified on this Mac.",
             "CPU (one thread): GPU busy under \(pct(t.cpuMaxGPUBusyPct)) % and the busiest core at least "
                 + "\(pct(t.coreMaxPct)) %.",
             "CPU: GPU busy under \(pct(t.cpuMaxGPUBusyPct)) % and the P-cores at least \(pct(t.pCoresPct)) %.",
@@ -84,18 +91,24 @@ public struct LimiterAnalysis: Sendable {
         ]
     }
 
-    /// Share of steady seconds per class, largest first; classes with no seconds are left out.
+    /// Share of judged steady seconds per class, largest first; classes with no seconds are left out.
     public let shares: [(Limiter, Double)]
     public let verdict: String
     /// The class of a "Mostly" verdict; nil when mixed or when there are no steady seconds.
     public let primary: Limiter?
+    /// The limiter of a mixed verdict whose other class is `.unclear` ("Partly GPU (otherwise no single limit)").
+    public let partly: Limiter?
     /// Medians of the signals that triggered the verdict's class (or both classes of a mixed verdict).
     public let evidence: [String]
     public let suggestion: String?
     /// Inputs this run lacks ("no GPU clock recorded", "no memory pressure recorded", …).
     public let missing: [String]
-    /// The class of each steady second, in `summary.steadySeconds` order.
+    /// How the rules were applied to this run ("power-managed clocks: GPU judged on busy % only").
+    public let notes: [String]
+    /// The class of each judged steady second (`isJudged`), in `summary.steadySeconds` order.
     public let perSecond: [Limiter]
+
+    public static let powerManagedNote = "power-managed clocks: GPU judged on busy % only"
 
     /// The signals of one second the rules use. nil = not recorded.
     public struct Second: Sendable {
@@ -143,18 +156,70 @@ public struct LimiterAnalysis: Sendable {
         public var topMHz: Double?
         /// The clock a heat-driven drop is measured against: min(top clock, 95th percentile of steady `gpu_mhz`).
         public var referenceMHz: Double?
-        public init(topMHz: Double?, referenceMHz: Double?) { self.topMHz = topMHz; self.referenceMHz = referenceMHz }
+        /// The GPU frequency table, P1…Pn (run.json `machine.gpuClockTableMHz`); nil when unknown.
+        public var tableMHz: [Double]?
+        /// macOS manages the clock (low power mode, on battery): the GPU rule ignores the clock.
+        public var powerManaged: Bool
+
+        public init(topMHz: Double?, referenceMHz: Double?, tableMHz: [Double]? = nil, powerManaged: Bool = false) {
+            self.topMHz = topMHz; self.referenceMHz = referenceMHz
+            self.tableMHz = tableMHz; self.powerManaged = powerManaged
+        }
 
         /// Builds the clocks for the steady seconds `steady` of a GPU whose top clock is `topMHz`.
-        public init(topMHz: Double?, steady: [Second]) {
+        public init(topMHz: Double?, steady: [Second], tableMHz: [Double]? = nil, powerManaged: Bool = false) {
             let sorted = steady.compactMap(\.gpuMHz).sorted()
             let p95 = sorted.isEmpty ? nil : RunSummary.percentile(sorted, 0.95)
             self.topMHz = topMHz
+            self.tableMHz = tableMHz
+            self.powerManaged = powerManaged
             switch (topMHz, p95) {
             case let (t?, p?): referenceMHz = Swift.min(t, p)
             case let (t, p): referenceMHz = t ?? p
             }
         }
+    }
+
+    /// The clock at or above which a fully busy GPU counts as GPU-bound (ruling L3): `fraction` of the top clock,
+    /// lowered to the table's second-highest distinct value and to the lowest step at or after the first step that
+    /// reaches `fraction` (the measured table is not monotonic: P12 1380 MHz = 87 %, P13 1326 MHz = 84 %). The
+    /// P*n* ↔ MHz mapping is [?] until a GPU-bound game run confirms it. nil without a top clock.
+    public static func gpuBoundMHz(top: Double?, table: [Double]?, fraction: Double) -> Double? {
+        guard let top, top > 0 else { return nil }
+        var mhz = top * fraction
+        if let table = table?.filter({ $0 > 0 }), !table.isEmpty {
+            let distinct = Set(table).sorted(by: >)
+            if distinct.count >= 2 { mhz = Swift.min(mhz, distinct[1]) }
+            if let i = table.firstIndex(where: { $0 >= top * fraction }), let low = table[i...].min() {
+                mhz = Swift.min(mhz, low)
+            }
+        }
+        return mhz
+    }
+
+    /// True when the clock is power-managed: low power mode, or most of `onAC` (one per second) is false.
+    public static func powerManaged(powerMode: String?, onAC: [Bool?]) -> Bool {
+        powerMode == "low" || onAC.filter { $0 == false }.count * 2 > onAC.count
+    }
+
+    /// `base` plus the display's refresh rate and half of it, when known and not already listed (within 0.5 fps).
+    public static func frameCaps(_ base: [Double], refreshHz: Double?) -> [Double] {
+        guard let r = refreshHz, r.isFinite, r > 0 else { return base }
+        var caps = base
+        for c in [r, r / 2] where !caps.contains(where: { abs($0 - c) < 0.5 }) { caps.append(c) }
+        return caps
+    }
+
+    /// A memory second, by rule 1.
+    static func isMemory(_ s: Second, _ t: Thresholds) -> Bool {
+        if let p = s.memPressure, t.memoryPressureLevels.contains(p) { return true }
+        if let po = s.pageoutsPerSecond, po > t.pageoutsPerSecond { return true }
+        return false
+    }
+
+    /// A second the rules can judge: it has GPU busy, or it is a memory second. Shared by the run analysis and Live.
+    public static func isJudged(_ s: Second, thresholds t: Thresholds = thresholds) -> Bool {
+        s.gpuBusyPct != nil || isMemory(s, t)
     }
 
     /// The cap `fps` sits at, if any.
@@ -169,27 +234,33 @@ public struct LimiterAnalysis: Sendable {
         return mhz / top
     }
 
-    /// Busy ≥ 95 % at a clock under 85 % of the top clock: the GPU is not being pushed.
+    /// The clock is under `gpuBoundMHz` (half a MHz of slack: `gpu_mhz` is written rounded). Never when the clock is
+    /// power-managed or unknown.
+    static func lowClock(_ s: Second, _ c: Clocks, _ t: Thresholds) -> Bool {
+        guard !c.powerManaged, let mhz = s.gpuMHz,
+              let bound = gpuBoundMHz(top: c.topMHz, table: c.tableMHz, fraction: t.gpuClockFraction) else { return false }
+        return mhz + 0.5 < bound
+    }
+
+    /// Busy ≥ 95 % at a low clock: the GPU may not be working flat out.
     static func busyAtLowClock(_ s: Second, _ c: Clocks, _ t: Thresholds) -> Bool {
-        guard let busy = s.gpuBusyPct, busy >= t.gpuBusyPct, let f = clockFraction(s, c) else { return false }
-        return f < t.gpuClockFraction
+        guard let busy = s.gpuBusyPct, busy >= t.gpuBusyPct else { return false }
+        return lowClock(s, c, t)
     }
 
     /// Classifies one second (first match wins).
     public static func classify(_ s: Second, clocks c: Clocks, thresholds t: Thresholds = thresholds) -> Limiter {
-        if let p = s.memPressure, t.memoryPressureLevels.contains(p) { return .memory }
-        if let po = s.pageoutsPerSecond, po > t.pageoutsPerSecond { return .memory }
+        if isMemory(s, t) { return .memory }
         guard let busy = s.gpuBusyPct else { return .unclear }
-        let fraction = clockFraction(s, c)
         if cap(s.fps, t) != nil {
             if busy < t.frameCapMaxGPUBusyPct { return .frameCap }
-            if let f = fraction, f < t.gpuClockFraction { return .frameCap }
+            if lowClock(s, c, t) { return .frameCap }
         }
         if busy >= t.gpuBusyPct {
             if s.thermalLevel >= 2 { return .gpuThermal }
             if s.thermalLevel >= 1, let mhz = s.gpuMHz, let ref = c.referenceMHz, ref > 0,
                mhz < ref * t.gpuClockFraction { return .gpuThermal }
-            if let f = fraction, f < t.gpuClockFraction { return .unclear }
+            if lowClock(s, c, t) { return .unclear }
             return .gpu
         }
         if busy < t.cpuMaxGPUBusyPct {
@@ -200,23 +271,30 @@ public struct LimiterAnalysis: Sendable {
     }
 
     public init(_ bundle: RunBundle, summary: RunSummary) {
-        let t = Self.thresholds
-        let rows = bundle.rows
-        let seconds = summary.steadySeconds.map { Second(row: rows[$0]) }
-        let clocks = Clocks(topMHz: bundle.info.machine.gpuMaxMHz.map(Double.init), steady: seconds)
+        var t = Self.thresholds
+        t.frameCaps = Self.frameCaps(t.frameCaps, refreshHz: bundle.info.settings.refreshHz)
+        let rows = summary.steadySeconds.map { bundle.rows[$0] }
+        let all = rows.map(Second.init(row:))
+        let seconds = all.filter { Self.isJudged($0, thresholds: t) }
+        let onAC = rows.map { r -> Bool? in r["on_ac"] == "1" ? true : r["on_ac"] == "0" ? false : nil }
+        let powerManaged = Self.powerManaged(powerMode: bundle.info.settings.powerMode, onAC: onAC)
+        let clocks = Clocks(topMHz: bundle.info.machine.gpuMaxMHz.map(Double.init), steady: seconds,
+                            tableMHz: bundle.info.machine.gpuClockTableMHz?.map(Double.init),
+                            powerManaged: powerManaged)
 
         var missing: [String] = []
-        if !seconds.contains(where: { $0.fps != nil }) { missing.append("no FPS recorded") }
-        if !seconds.contains(where: { $0.gpuBusyPct != nil }) { missing.append("no GPU busy recorded") }
-        if !seconds.contains(where: { $0.gpuMHz != nil }) {
+        if !all.contains(where: { $0.fps != nil }) { missing.append("no FPS recorded") }
+        if !all.contains(where: { $0.gpuBusyPct != nil }) { missing.append("no GPU busy recorded") }
+        if !all.contains(where: { $0.gpuMHz != nil }) {
             missing.append("no GPU clock recorded")
         } else if clocks.topMHz == nil {
             missing.append("no GPU top clock recorded")
         }
-        if !seconds.contains(where: { $0.memPressure != nil || $0.pageoutsPerSecond != nil }) {
+        if !all.contains(where: { $0.memPressure != nil || $0.pageoutsPerSecond != nil }) {
             missing.append("no memory pressure recorded")
         }
         self.missing = missing
+        notes = powerManaged ? [Self.powerManagedNote] : []
 
         let classes = seconds.map { Self.classify($0, clocks: clocks, thresholds: t) }
         perSecond = classes
@@ -230,7 +308,7 @@ public struct LimiterAnalysis: Sendable {
 
         guard let top = shares.first else {
             verdict = "Not enough steady seconds to tell what held it back"
-            primary = nil; evidence = []; suggestion = nil
+            primary = nil; partly = nil; evidence = []; suggestion = nil
             return
         }
         func members(_ l: Limiter) -> [Second] { zip(seconds, classes).filter { $0.1 == l }.map(\.0) }
@@ -240,11 +318,19 @@ public struct LimiterAnalysis: Sendable {
         if top.1 >= t.mostlyShare {
             verdict = top.0 == .unclear ? "No single limit stood out" : "Mostly \(top.0.displayName)"
             primary = top.0
+            partly = nil
             evidence = ev(top.0)
             suggestion = Self.suggestion(for: top.0, seconds: members(top.0), clocks: clocks, thresholds: t)
         } else {
             let second = shares[1]
-            verdict = "Mixed: \(top.0.displayName) and \(second.0.displayName)"
+            if top.0 == .unclear || second.0 == .unclear {
+                let l = top.0 == .unclear ? second.0 : top.0
+                verdict = "Partly \(l.displayName) (otherwise no single limit)"
+                partly = l
+            } else {
+                verdict = "Mixed: \(top.0.displayName) and \(second.0.displayName)"
+                partly = nil
+            }
             primary = nil
             evidence = ev(top.0) + ev(second.0)
             suggestion = nil
@@ -307,7 +393,8 @@ public struct LimiterAnalysis: Sendable {
         case .unclear:
             let low = s.filter { busyAtLowClock($0, c, t) }
             if let f = med(low.compactMap { clockFraction($0, c) }) {
-                out.append("GPU busy but running at \(rounded(f * 100)) % of its top clock — the game isn't pushing it")
+                out.append("GPU busy at \(rounded(f * 100)) % of its top clock — it may not be working flat out "
+                           + "(clock reading unverified on this Mac)")
             }
             if low.count < s.count {
                 var parts: [String] = []

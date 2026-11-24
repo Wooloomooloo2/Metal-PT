@@ -239,6 +239,7 @@ public enum SummaryReport {
         }
         if let s = a.suggestion { out += "<p class=\"callout\">\(e(s))</p>\n" }
         if let m = missingNote(a.missing) { out += "<p class=\"note\">\(e(m))</p>\n" }
+        out += a.notes.map { "<p class=\"note\">\(e($0))</p>\n" }.joined()
         out += "<div class=\"rules\"><h3>How this is decided</h3><ul>"
         out += LimiterAnalysis.describeThresholds().map { "<li>\(e($0))</li>" }.joined()
         return out + "</ul></div></section>\n"

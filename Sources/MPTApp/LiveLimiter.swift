@@ -12,7 +12,7 @@ public enum LiveLimiter {
 
     /// Seconds of history looked at.
     public static let window = 30.0
-    /// Fewer seconds with GPU busy than this → no reading (the chip hides).
+    /// Fewer judged seconds than this (`LimiterAnalysis.isJudged`: GPU busy, or memory) → no reading (chip hides).
     public static let minSeconds = 10
 
     /// The signals of one snapshot, as a run row would give them.
@@ -23,19 +23,23 @@ public enum LiveLimiter {
                                       coreMaxPct: x.cpuCoreMaxPct, pCoresPct: x.cpuPUtilPct)
     }
 
-    /// The reading over the snapshots of the last `window` seconds (by the newest snapshot's time) that have GPU
-    /// busy; nil with fewer than `minSeconds` of them. `topMHz` is this Mac's top GPU clock, if known; the
-    /// heat reference clock comes from the same seconds, as the run analysis takes it from the steady seconds.
-    public static func current(_ history: [HubSnapshot], topMHz: Double?) -> Reading? {
+    /// The reading over the snapshots of the last `window` seconds (by the newest snapshot's time), judged exactly as
+    /// a run's steady seconds are: the same second filter, clock bound (`topMHz`, `tableMHz`: this Mac's GPU clock
+    /// table P1…Pn), power-managed fallback (`powerMode` "low", or most of the window on battery) and frame caps
+    /// (plus `refreshHz` and half of it). nil with fewer than `minSeconds` judged seconds. The heat reference clock
+    /// comes from the same seconds, as the run analysis takes it from the steady seconds.
+    public static func current(_ history: [HubSnapshot], topMHz: Double?, tableMHz: [Double]? = nil,
+                               powerMode: String? = nil, refreshHz: Double? = nil) -> Reading? {
         guard let newest = history.last?.time else { return nil }
-        let seconds = history.reversed()
-            .prefix { newest - $0.time < window }
-            .map(second)
-            .filter { $0.gpuBusyPct != nil }
+        var t = LimiterAnalysis.thresholds
+        t.frameCaps = LimiterAnalysis.frameCaps(t.frameCaps, refreshHz: refreshHz)
+        let recent = history.reversed().prefix { newest - $0.time < window }
+        let seconds = recent.map(second).filter { LimiterAnalysis.isJudged($0, thresholds: t) }
         guard seconds.count >= minSeconds else { return nil }
-        let clocks = LimiterAnalysis.Clocks(topMHz: topMHz, steady: seconds)
+        let managed = LimiterAnalysis.powerManaged(powerMode: powerMode, onAC: recent.map(\.sample.onAC))
+        let clocks = LimiterAnalysis.Clocks(topMHz: topMHz, steady: seconds, tableMHz: tableMHz, powerManaged: managed)
         var counts: [Limiter: Int] = [:]
-        for s in seconds { counts[LimiterAnalysis.classify(s, clocks: clocks), default: 0] += 1 }
+        for s in seconds { counts[LimiterAnalysis.classify(s, clocks: clocks, thresholds: t), default: 0] += 1 }
         let order = Limiter.allCases
         guard let top = counts.max(by: { a, b in
             a.value != b.value ? a.value < b.value : order.firstIndex(of: a.key)! > order.firstIndex(of: b.key)!
