@@ -61,4 +61,18 @@ import Testing
         #expect(c.followedPID == 7)
         #expect(c.fps(pid: 8, at: 1) == nil)
     }
+
+    // The unified log can carry each HUD line twice (empty subsystem, then com.apple.metal.hud), ~0.1 ms apart.
+    @Test func duplicateLogEntryIsIgnored() throws {
+        var c = FrameCounter()
+        c.add(event(7, 0.0, 60))
+        c.add(event(7, 0.0001, 60))
+        c.add(event(7, 1.016, 121))
+        c.add(event(7, 1.0161, 121))
+        let fps = try #require(c.fps(pid: 7, at: 1.5))
+        #expect(abs(fps - 61 / 1.016) < 0.001)
+        // A paused game repeats its count a second later: that is a real 0 fps.
+        c.add(event(7, 2.03, 121))
+        #expect(c.fps(pid: 7, at: 2.1) == 0)
+    }
 }

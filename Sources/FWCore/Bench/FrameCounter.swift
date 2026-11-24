@@ -28,6 +28,8 @@ public struct FrameCounter: Sendable {
 
     /// FPS older than this (seconds) is considered stale.
     private static let staleAfter = 2.5
+    /// Same count within this many seconds of the previous line = duplicate log entry.
+    private static let duplicateWindow = 0.25
 
     private var states: [Int32: State] = [:]
     public private(set) var followedPID: Int32?
@@ -44,6 +46,9 @@ public struct FrameCounter: Sendable {
             return
         }
         guard event.time > s.lastTime else { return }
+        // The unified log can deliver each HUD line twice (empty subsystem, then `com.apple.metal.hud`), well under
+        // a millisecond apart; HUD lines are ~1 s apart, so an unchanged count this soon is that duplicate.
+        if frames == s.lastFrames && event.time - s.lastTime < Self.duplicateWindow { return }
         if frames >= s.lastFrames {
             let delta = frames - s.lastFrames
             let fps = Double(delta) / (event.time - s.lastTime)
