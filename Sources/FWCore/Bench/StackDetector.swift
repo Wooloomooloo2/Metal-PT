@@ -58,16 +58,17 @@ public enum StackDetector {
         if mappedPaths.contains(where: { $0.contains("libarm64ecfex") }) {
             stack.translator = "FEX"
             stack.wineArch = "arm64ec"
-        } else if mappedPaths.contains(where: { $0.contains("/usr/libexec/rosetta") }) {
+        } else if mappedPaths.contains(where: { $0.contains("/usr/libexec/rosetta") || $0.contains("/oah/") || $0.contains("oahd") }) {
             stack.translator = "Rosetta"
         }
         stack.graphics = graphicsTable.filter { name, match in mappedPaths.contains(where: match) }.map(\.0)
         return stack
     }
 
-    /// Fingerprints a live process from `lsof -Fn`; unreadable processes come back as "native".
+    /// Fingerprints a live process from `lsof -Fn`. A failed or empty read gives `Stack(runtime: nil)` (unknown);
+    /// "native" only means paths were read and none matched.
     public static func detect(pid: Int32) -> Stack {
-        let paths = mappedPaths(pid: pid)
+        guard let paths = mappedPaths(pid: pid) else { return Stack(runtime: nil) }
         var stack = fingerprint(mappedPaths: paths)
         if let app = appBundlePath(in: paths),
            let plist = NSDictionary(contentsOfFile: app + "/Contents/Info.plist") {
@@ -76,17 +77,23 @@ public enum StackDetector {
         return stack
     }
 
-    private static func mappedPaths(pid: Int32) -> [String] {
+    /// nil when lsof can't run, times out (5 s), exits non-zero with no output, or prints no paths.
+    private static func mappedPaths(pid: Int32, timeout: TimeInterval = 5) -> [String]? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        p.arguments = ["-Fn", "-p", String(pid)]
+        p.arguments = ["-b", "-Fn", "-p", String(pid)]   // -b: don't block in kernel calls
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { return [] }
+        do { try p.run() } catch { return nil }
+        let timer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).split(separator: "\n")
+        timer.cancel()
+        if p.terminationReason == .uncaughtSignal { return nil }   // killed by the timeout
+        let paths = String(decoding: data, as: UTF8.self).split(separator: "\n")
             .filter { $0.hasPrefix("n") }.map { String($0.dropFirst()) }
+        return paths.isEmpty ? nil : paths
     }
 }

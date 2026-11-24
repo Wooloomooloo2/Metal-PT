@@ -77,6 +77,30 @@ import Foundation
         #expect(s.runtime == "native")
     }
 
+    @Test func detectOnBogusPidIsUnknown() {
+        #expect(StackDetector.detect(pid: 999_999).runtime == nil)
+    }
+
+    @Test func oahRuntimeMeansRosetta() {
+        let s = StackDetector.fingerprint(mappedPaths: ["/System/Library/Frameworks/oah/liboah.dylib"])
+        #expect(s.translator == "Rosetta")
+    }
+
+    @Test func dxmtMetalCacheAloneMeansDXMT() {
+        let s = StackDetector.fingerprint(mappedPaths: [
+            "/private/var/folders/xx/C/dxmt/Game.exe/com.apple.metal/a"])
+        #expect(s.graphics.contains("DXMT"))
+    }
+
+    @Test func procArgsParsing() {
+        #expect(ProcessNames.argv0(fromProcArgs: []) == nil)
+        #expect(ProcessNames.argv0(fromProcArgs: [2, 0, 0, 0, 0x2f, 0x61]) == nil)   // exec path never ends
+        var b: [UInt8] = [2, 0, 0, 0]
+        b += Array("/usr/bin/yes".utf8) + [0, 0, 0]
+        b += Array("Z:\\g\\a.exe".utf8) + [0] + Array("-x".utf8) + [0]
+        #expect(ProcessNames.argv0(fromProcArgs: b) == "Z:\\g\\a.exe")
+    }
+
     @Test func displayNameOfOwnProcess() {
         #expect(ProcessNames.displayName(pid: getpid()) != nil)
     }
