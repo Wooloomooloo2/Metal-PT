@@ -35,7 +35,8 @@ public final class RunRecorder: @unchecked Sendable {
     public static let mixedFramesWarning = "frame times may include more than one process"
     /// Stderr frames per second above the followed process's log FPS by more than this fraction …
     static let mixedExcess = 0.15
-    /// … for this many consecutive ticks flags mixed frame times.
+    /// … for this many consecutive steady ticks flags mixed frame times (as does more than one launched-group
+    /// process gaining frames for this many).
     static let mixedSeconds = 3
     private let writer: RunBundleWriter
     private let telemetry: TelemetrySource
@@ -43,6 +44,7 @@ public final class RunRecorder: @unchecked Sendable {
     private let follow: FollowRule
     private let warmup: Double
     private let argv0: @Sendable (Int32) -> String?
+    private let inLaunchedGroup: @Sendable (Int32) -> Bool
     private let lock = NSLock()
     /// Serialises `tick` so `telemetry` is used from one thread at a time.
     private let tickLock = NSLock()
@@ -61,18 +63,23 @@ public final class RunRecorder: @unchecked Sendable {
     private var lastTickTime: Double?
     private var lastTickTotals: [Int32: Int] = [:]
     private var excessTicks = 0
+    private var multiTicks = 0
     private var framesMixed = false
 
     /// `argv0` looks up a live process's argv[0] (injectable for tests); the exe name is taken from it.
+    /// `inLaunchedGroup` says whether a PID belongs to the process group `fwbench run` launched; only those count
+    /// for the mixed-frames check (`record` has no launched group: every PID counts, and there are no stderr frames).
     public init(writer: RunBundleWriter, telemetry: TelemetrySource, startTime: Double, follow: FollowRule,
                 warmup: Double = 0,
-                argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) }) {
+                argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) },
+                inLaunchedGroup: @escaping @Sendable (Int32) -> Bool = { _ in true }) {
         self.writer = writer
         self.telemetry = telemetry
         self.startTime = startTime
         self.follow = follow
         self.warmup = max(0, warmup)
         self.argv0 = argv0
+        self.inLaunchedGroup = inLaunchedGroup
     }
 
     /// Exe name of the process followed at `finish`, or nil if it was never identified.
@@ -202,27 +209,28 @@ public final class RunRecorder: @unchecked Sendable {
     }
 
     /// Stderr frames carry no PID, so several Metal processes under a launched command can interleave in
-    /// frames.csv. Compares this tick's stderr frame rate with the followed process's log FPS, and flags when the
-    /// log shows more than one process gaining frames while stderr frames arrive.
+    /// frames.csv. Only ticks in the steady window count (the lows use only those frames); either rule must hold for
+    /// `mixedSeconds` consecutive ticks: stderr frame rate more than `mixedExcess` above the followed process's log
+    /// FPS, or more than one process of the launched group gaining frames in the log while stderr frames arrive.
     private func checkMixedFrames(stderrCount: Int, logFPS: Double?, at time: Double) {
         let previous = lastTickTime ?? startTime
         lastTickTime = time
         var gaining = 0
         for pid in imagePaths.keys {
             let total = counter.totalFrames(pid: pid)
-            if total > (lastTickTotals[pid] ?? 0) { gaining += 1 }
+            if total > (lastTickTotals[pid] ?? 0), inLaunchedGroup(pid) { gaining += 1 }
             lastTickTotals[pid] = total
         }
-        guard !framesMixed, stderrCount > 0 else { excessTicks = 0; return }
-        if gaining > 1 { framesMixed = true; return }
+        guard !framesMixed else { return }
+        guard time - startTime > warmup, stderrCount > 0 else { excessTicks = 0; multiTicks = 0; return }
+        multiTicks = gaining > 1 ? multiTicks + 1 : 0
         let dt = time - previous
-        guard dt > 0, let logFPS, logFPS > 0 else { excessTicks = 0; return }
-        if Double(stderrCount) / dt > logFPS * (1 + Self.mixedExcess) {
+        if dt > 0, let logFPS, logFPS > 0, Double(stderrCount) / dt > logFPS * (1 + Self.mixedExcess) {
             excessTicks += 1
-            if excessTicks >= Self.mixedSeconds { framesMixed = true }
         } else {
             excessTicks = 0
         }
+        if excessTicks >= Self.mixedSeconds || multiTicks >= Self.mixedSeconds { framesMixed = true }
     }
 
     private func resolveFollowed() -> Int32? {

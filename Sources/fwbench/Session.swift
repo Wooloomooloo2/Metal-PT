@@ -38,6 +38,9 @@ final class Session: @unchecked Sendable {
 
     // Launched child (`run`).
     private var childPID: pid_t?
+    /// The launched child's process group, read by the recorder's mixed-frames check (its own lock, so the recorder
+    /// never takes `lock`).
+    private let launchedGroup = LaunchedGroup()
     private var childExited = false
     private var childName = ""
     /// Kept alive for the whole run: a deallocated handle closes the pipe.
@@ -81,13 +84,23 @@ final class Session: @unchecked Sendable {
                 info.user.notes = options["--notes"] ?? ""
                 let dir = RunBundle.availableDirectory(in: root, start: startDate, game: game ?? "run")
                 let writer = try RunBundleWriter(directory: dir, info: info)
+                let launched = launchedGroup
                 let recorder = RunRecorder(writer: writer, telemetry: sampler,
-                                           startTime: startDate.timeIntervalSince1970, follow: follow, warmup: warmup)
+                                           startTime: startDate.timeIntervalSince1970, follow: follow, warmup: warmup,
+                                           inLaunchedGroup: { pid in
+                                               // `record` launches nothing: every process counts.
+                                               guard launched.isLaunching else { return true }
+                                               // The child is spawned with POSIX_SPAWN_SETPGROUP 0: its group id is
+                                               // its PID, and the processes it starts stay in that group even after
+                                               // a launcher exits (reparenting does not change the group).
+                                               guard let group = launched.value else { return false }
+                                               return getpgid(pid) == group
+                                           })
                 directory = dir
                 self.recorder = recorder
                 stream = MetalHUDLogStream { recorder.hud($0) }
             }
-            if let command { try spawn(command) }
+            if let command { launchedGroup.expectLaunch(); try spawn(command) }
             try stream?.start()
         } catch {
             printError("error: \(error)")
@@ -208,6 +221,7 @@ final class Session: @unchecked Sendable {
         let name = ProcessNames.exeName(fromArgv0: command[0])
         let pid = spawned
         lock.withLock { childPID = pid; childName = name }
+        launchedGroup.set(pid)
         print("launched \(name) (pid \(pid))")
 
         readStderr(readFD, pid: pid)
@@ -261,4 +275,16 @@ final class LineBuffer: @unchecked Sendable {
         defer { buffer = Data() }
         return buffer.isEmpty ? [] : [buffer]
     }
+}
+
+/// The process group of `fwbench run`'s child, once spawned.
+final class LaunchedGroup: @unchecked Sendable {
+    private let lock = NSLock()
+    private var launching = false
+    private var group: pid_t?
+    /// True for `run` (from just before the spawn).
+    var isLaunching: Bool { lock.withLock { launching } }
+    var value: pid_t? { lock.withLock { group } }
+    func expectLaunch() { lock.withLock { launching = true } }
+    func set(_ pgid: pid_t) { lock.withLock { group = pgid } }
 }

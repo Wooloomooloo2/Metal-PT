@@ -195,17 +195,25 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         [FrameTime](repeating: FrameTime(intervalMs: 1000 / Double(max(n, 1)), presentDelayMs: 1), count: n)
     }
 
-    /// Log: pid 9 at 60 fps. Stderr: `stderrPerSecond[k]` frames in second k+1. Returns the run's warnings.
-    private func mixedRun(stderrPerSecond: [Int], extraLogPID: Bool = false) throws -> [String] {
+    /// Log: pid 9 at 60 fps. Stderr: `stderrPerSecond[k]` frames in second k+1. Pid 10 (a launcher) gains 5 frames
+    /// in second k+1 when `extraGains[k]`; it is in the launched process group when `extraInGroup`. Returns the
+    /// run's warnings.
+    private func mixedRun(stderrPerSecond: [Int], extraGains: [Bool] = [], extraInGroup: Bool = true,
+                          warmup: Double = 0) throws -> [String] {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
-        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in "g" })
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, warmup: warmup,
+                            argv0: { _ in "g" }, inLaunchedGroup: { $0 == 9 || ($0 == 10 && extraInGroup) })
         r.hud(event(pid: 9, frames: 0, at: 0))
-        if extraLogPID { r.hud(event(pid: 10, frames: 0, at: 0, path: "/x/Launcher")) }
+        var extra = 0
+        if !extraGains.isEmpty { r.hud(event(pid: 10, frames: 0, at: 0, path: "/x/Launcher")) }
         for (k, n) in stderrPerSecond.enumerated() {
             let t = Double(k + 1)
             r.hud(event(pid: 9, frames: 60 * (k + 1), at: t - 0.1))
-            if extraLogPID { r.hud(event(pid: 10, frames: 5 * (k + 1), at: t - 0.1, path: "/x/Launcher")) }
+            if k < extraGains.count {
+                if extraGains[k] { extra += 5 }
+                r.hud(event(pid: 10, frames: extra, at: t - 0.1, path: "/x/Launcher"))
+            }
             r.frames(frameBatch(n), pid: 77, at: t - 0.05)
             try r.tick(at: t)
         }
@@ -224,13 +232,35 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         #expect(try mixedRun(stderrPerSecond: [66, 66, 66, 66, 66]).isEmpty)
     }
 
-    @Test func secondLogProcessGainingFramesWhileStderrArrivesIsFlagged() throws {
-        let w = try mixedRun(stderrPerSecond: [60, 60], extraLogPID: true)
+    @Test func excessRuleIgnoresWarmup() throws {
+        // Excess only in the warm-up seconds (elapsed 1…4 with warm-up 4), steady after.
+        #expect(try mixedRun(stderrPerSecond: [120, 120, 120, 120, 60, 60, 60], warmup: 4).isEmpty)
+        // Straddling: two excess ticks in warm-up, two in the steady window: never 3 steady in a row.
+        #expect(try mixedRun(stderrPerSecond: [120, 120, 120, 120, 60], warmup: 2).isEmpty)
+    }
+
+    @Test func threeTicksOfTwoInGroupProcessesAreFlagged() throws {
+        let w = try mixedRun(stderrPerSecond: [60, 60, 60, 60, 60], extraGains: [false, true, true, true, false])
         #expect(w == [RunRecorder.mixedFramesWarning])
     }
 
+    @Test func twoTickInGroupOverlapInSteadyWindowIsNotFlagged() throws {
+        #expect(try mixedRun(stderrPerSecond: [60, 60, 60, 60, 60, 60],
+                             extraGains: [false, false, true, true, false, false], warmup: 1).isEmpty)
+    }
+
+    @Test func oneTickInGroupOverlapDuringWarmupIsNotFlagged() throws {
+        #expect(try mixedRun(stderrPerSecond: [60, 60, 60, 60, 60],
+                             extraGains: [false, true, false, false, false], warmup: 3).isEmpty)
+    }
+
+    @Test func unrelatedProcessGainingFramesIsIgnored() throws {
+        #expect(try mixedRun(stderrPerSecond: [60, 60, 60, 60, 60], extraGains: Array(repeating: true, count: 5),
+                             extraInGroup: false).isEmpty)
+    }
+
     @Test func secondLogProcessWithoutStderrFramesIsNotFlagged() throws {
-        #expect(try mixedRun(stderrPerSecond: [0, 0, 0], extraLogPID: true).isEmpty)
+        #expect(try mixedRun(stderrPerSecond: [0, 0, 0, 0], extraGains: [true, true, true, true]).isEmpty)
     }
 
     @Test func stackIsWrittenForFollowedPID() throws {
