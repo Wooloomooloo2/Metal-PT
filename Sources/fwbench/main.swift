@@ -25,6 +25,8 @@ do {
         try RecordCommands.run(Array(args.dropFirst()))
     case "ls":
         try RecordCommands.ls(Array(args.dropFirst()))
+    case "summary":
+        try RecordCommands.summary(Array(args.dropFirst()))
     case "stack":
         try RecordCommands.stack(Array(args.dropFirst()))
     case "hud":

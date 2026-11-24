@@ -12,7 +12,9 @@ enum RecordCommands {
                                        it inherits SIGPIPE ignored so it survives fwbench exiting)
         stack PID                      print the detected runtime / translator / graphics stack as JSON
         ls                             list recorded runs
-        (record/run/ls also take --out DIR to use DIR instead of ~/Documents/FW Benchmark/runs)
+        summary RUN [--open]           write RUN/summary.html (RUN: a .fwrun folder, or its name under the runs
+                                       folder) and print its path; --open opens it
+        (record/run/ls/summary also take --out DIR to use DIR instead of ~/Documents/FW Benchmark/runs)
         """
 
     static let appVersion = "0.1.0-dev"
@@ -63,24 +65,53 @@ enum RecordCommands {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
             .filter { $0.hasSuffix(".fwrun") }.sorted()
         guard !names.isEmpty else { print("no runs in \(root.path)"); return }
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        var rows: [[String]] = [["RUN", "GAME", "STACK", "DURATION"]]
+        var rows: [[String]] = [["RUN", "GAME", "STACK", "FPS", "DURATION"]]
         for name in names {
-            let url = root.appendingPathComponent(name).appendingPathComponent("run.json")
-            guard let data = try? Data(contentsOf: url), let info = try? dec.decode(RunInfo.self, from: data) else {
-                rows.append([name, "?", "?", "unreadable run.json"])
+            guard let bundle = try? RunBundle.load(root.appendingPathComponent(name)) else {
+                rows.append([name, "?", "?", "?", "unreadable run.json"])
                 continue
             }
+            let info = bundle.info
             let duration = info.end.map { formatDuration($0.timeIntervalSince(info.start)) } ?? "unfinished"
-            rows.append([name, info.game.exe.isEmpty ? "-" : info.game.exe, describe(info.stack), duration])
+            let fps = HTML.number(RunSummary(bundle).medianFPS, digits: 1)
+            rows.append([name, info.game.exe.isEmpty ? "-" : info.game.exe, describe(info.stack), fps, duration])
         }
-        let widths = (0..<4).map { c in rows.map { $0[c].count }.max() ?? 0 }
+        let last = rows[0].count - 1
+        let widths = (0...last).map { c in rows.map { $0[c].count }.max() ?? 0 }
         for r in rows {
-            print(r.enumerated().map { c, cell in c == 3 ? cell : cell.padding(toLength: widths[c], withPad: " ",
-                                                                               startingAt: 0) }
-                .joined(separator: "  "))
+            print(r.enumerated().map { c, cell in
+                if c == last { return cell }
+                // FPS is right-aligned.
+                let pad = String(repeating: " ", count: max(0, widths[c] - cell.count))
+                return c == 3 ? pad + cell : cell + pad
+            }.joined(separator: "  "))
         }
+    }
+
+    // MARK: - summary
+
+    static func summary(_ args: [String]) throws {
+        let open = args.contains("--open")
+        let rest = args.filter { $0 != "--open" }
+        guard let run = rest.first, !run.hasPrefix("--") else { throw UsageError("summary needs a run") }
+        let o = try parseOptions(Array(rest.dropFirst()), allowed: ["--out"])
+        let url = try SummaryReport.write(bundleAt: try locateRun(run, out: o["--out"]))
+        print(url.path)
+        if open { try runTool("/usr/bin/open", [url.path]) }
+    }
+
+    /// A bundle folder path, or a folder name (with or without `.fwrun`) under the runs root.
+    static func locateRun(_ run: String, out: String?) throws -> URL {
+        func isBundle(_ u: URL) -> Bool { FileManager.default.fileExists(atPath: u.appendingPathComponent("run.json").path) }
+        let direct = URL(fileURLWithPath: (run as NSString).expandingTildeInPath, isDirectory: true)
+        if isBundle(direct) { return direct }
+        if !run.contains("/") {
+            let root = try runsRoot(out, create: false)
+            for name in [run, run + ".fwrun"] where isBundle(root.appendingPathComponent(name)) {
+                return root.appendingPathComponent(name, isDirectory: true)
+            }
+        }
+        throw BenchError("no run found at '\(run)' (no run.json there or under the runs folder)")
     }
 
     static func describe(_ s: Stack) -> String {
@@ -222,6 +253,9 @@ private final class Session: @unchecked Sendable {
             }
         }
         print("saved \(dir.path)")
+        do { print("summary \(try SummaryReport.write(bundleAt: dir).path)") } catch {
+            printError("could not write the summary: \(error)")
+        }
         let (pid, exited, name) = lock.withLock { (childPID, childExited, childName) }
         if let pid, !exited { print("\(name) is still running (pid \(pid))") }
     }

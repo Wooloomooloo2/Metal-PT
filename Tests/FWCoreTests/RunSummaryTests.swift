@@ -50,6 +50,13 @@ import Foundation
         #expect(RunSummary(bundle(rows: r)).low1 == nil)
     }
 
+    @Test func fpsShorterThanWarmupTrimDoesNotCrash() {
+        let r = rows(10) { _ in ["fps": "60", "fps_app": "game"] }
+        let s = RunSummary(bundle(rows: r))
+        #expect(s.steadySeconds.isEmpty)
+        #expect(s.medianFPS == nil)
+    }
+
     @Test func summaryWithoutFPS() {
         let r = rows(70) { _ in ["gpu_w": "4.0"] }
         let s = RunSummary(bundle(rows: r))

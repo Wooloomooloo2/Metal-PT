@@ -59,8 +59,13 @@ public struct RunSummary: Sendable {
                 let candidates = withFPS.filter { followed == nil || rows[$0]["fps_app"] == followed }
                 if let t0 = candidates.compactMap(elapsed).first {
                     let trimmed = candidates.filter { (elapsed($0) ?? 0) >= t0 + 10 }
-                    let med = Self.median(trimmed.compactMap(fps).sorted())
-                    steady = trimmed.isEmpty ? [] : trimmed.filter { (fps($0) ?? 0) <= 2 * med }
+                    let sorted = trimmed.compactMap(fps).sorted()
+                    if sorted.isEmpty {
+                        steady = []
+                    } else {
+                        let med = Self.median(sorted)
+                        steady = trimmed.filter { (fps($0) ?? 0) <= 2 * med }
+                    }
                 } else {
                     steady = candidates
                 }
