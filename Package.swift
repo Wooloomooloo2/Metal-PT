@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "FWCore", targets: ["FWCore"]),
         .executable(name: "fwprobe", targets: ["fwprobe"]),
+        .executable(name: "fwbench", targets: ["fwbench"]),
     ],
     targets: [
         .target(
@@ -19,6 +20,7 @@ let package = Package(
         ),
         .target(name: "FWCore", dependencies: ["CMacPrivate"]),
         .executableTarget(name: "fwprobe", dependencies: ["FWCore"]),
+        .executableTarget(name: "fwbench", dependencies: ["FWCore"]),
         .testTarget(name: "FWCoreTests", dependencies: ["FWCore"]),
     ]
 )

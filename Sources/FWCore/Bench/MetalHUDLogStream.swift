@@ -65,14 +65,27 @@ public final class MetalHUDLogStream: @unchecked Sendable {
         p.waitUntilExit()
     }
 
-    private func consume(_ chunk: Data) {
-        var lines: [Data] = []
-        lock.lock()
+    /// True while the `log` child is alive. False before `start`, after `stop`, or if `log` exited on its own.
+    public var isRunning: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return process?.isRunning ?? false
+    }
+
+    /// Appends `chunk` to `buffer` and returns the complete lines (without `\n`); a trailing partial line stays
+    /// in `buffer`.
+    public static func splitLines(_ buffer: inout Data, appending chunk: Data) -> [Data] {
         buffer.append(chunk)
+        var lines: [Data] = []
         while let nl = buffer.firstIndex(of: 0x0A) {
             lines.append(buffer.subdata(in: buffer.startIndex..<nl))
             buffer.removeSubrange(buffer.startIndex...nl)
         }
+        return lines
+    }
+
+    private func consume(_ chunk: Data) {
+        lock.lock()
+        let lines = Self.splitLines(&buffer, appending: chunk)
         lock.unlock()
         for d in lines {
             if let s = String(data: d, encoding: .utf8), let e = Self.decode(ndjsonLine: s) {

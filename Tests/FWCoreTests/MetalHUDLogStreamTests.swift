@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import FWCore
 
 @Suite struct MetalHUDLogStreamTests {
@@ -10,6 +11,18 @@ import Testing
         #expect(e.imagePath == "/x/spin")
         #expect(e.line.frames == 63)
         #expect(abs(e.time - 1795523100.502) < 0.001)
+    }
+
+    @Test func splitsChunksIntoLines() {
+        var buffer = Data()
+        // A line split across chunks, then several lines in one chunk, then a trailing partial line.
+        #expect(MetalHUDLogStream.splitLines(&buffer, appending: Data("ab".utf8)).isEmpty)
+        let first = MetalHUDLogStream.splitLines(&buffer, appending: Data("c\nd\n\ne\nf".utf8))
+        #expect(first.map { String(decoding: $0, as: UTF8.self) } == ["abc", "d", "", "e"])
+        #expect(buffer == Data("f".utf8))
+        let second = MetalHUDLogStream.splitLines(&buffer, appending: Data("g\n".utf8))
+        #expect(second.map { String(decoding: $0, as: UTF8.self) } == ["fg"])
+        #expect(buffer.isEmpty)
     }
 
     @Test func skipsHeaderAndJunk() {
