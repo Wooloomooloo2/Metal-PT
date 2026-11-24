@@ -46,13 +46,15 @@ public struct RunSummary: Sendable {
         }
 
         var steady: [Int]
+        let end = bundle.info.steadyEndS ?? .infinity
         if let start = bundle.info.steadyStartS, start > 0 {
-            let end = bundle.info.steadyEndS ?? .infinity
             steady = rows.indices.filter { i in elapsed(i).map { $0 >= start && $0 <= end } ?? false }
         } else {
-            let withFPS = rows.indices.filter { fps($0) != nil }
+            // No warm-up: trimmed automatically, but never past the recorded end (a sleep ends it early).
+            let inWindow = rows.indices.filter { i in elapsed(i).map { $0 <= end } ?? true }
+            let withFPS = inWindow.filter { fps($0) != nil }
             if withFPS.isEmpty {
-                steady = Array(rows.indices)
+                steady = inWindow
             } else {
                 var counts: [String: Int] = [:]
                 for i in withFPS { let a = rows[i]["fps_app"] ?? ""; if !a.isEmpty { counts[a, default: 0] += 1 } }

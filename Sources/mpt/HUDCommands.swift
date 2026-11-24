@@ -10,8 +10,6 @@ enum HUDCommands {
         """
 
     static let variables = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
-    /// Environment added to a process we launch ourselves (`mpt run`).
-    static let environment = ["MTL_HUD_ENABLED": "1", "MTL_HUD_LOG_ENABLED": "1"]
 
     static func run(_ args: [String]) throws {
         switch args.first {

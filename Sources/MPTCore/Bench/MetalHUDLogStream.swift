@@ -1,9 +1,23 @@
 import Foundation
 
+/// Where a `RecordingSession` gets Metal HUD events (the real `MetalHUDLogStream`, or a fake in tests).
+public protocol HUDEventSource: AnyObject {
+    /// Starts delivering events to `onEvent`, on any queue.
+    func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws
+    func stop()
+    /// False when the source died on its own (checked once per tick). Defaults to true.
+    var isRunning: Bool { get }
+}
+
+extension HUDEventSource {
+    public var isRunning: Bool { true }
+}
+
 /// Streams Metal HUD log lines from the unified log (`/usr/bin/log stream`)
 /// and delivers them as `HUDEvent`s on a background queue.
-public final class MetalHUDLogStream: @unchecked Sendable {
-    private let onEvent: @Sendable (HUDEvent) -> Void
+public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
+    /// Under `lock`; set at init or by `start(onEvent:)`.
+    private var onEvent: @Sendable (HUDEvent) -> Void
     private let lock = NSLock()
     private var process: Process?
     private var buffer = Data()
@@ -12,6 +26,11 @@ public final class MetalHUDLogStream: @unchecked Sendable {
 
     public init(onEvent: @escaping @Sendable (HUDEvent) -> Void) {
         self.onEvent = onEvent
+    }
+
+    /// For `start(onEvent:)`.
+    public convenience init() {
+        self.init(onEvent: { _ in })
     }
 
     deinit { stop() }
@@ -34,6 +53,12 @@ public final class MetalHUDLogStream: @unchecked Sendable {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSZ"
         return f.date(from: s)?.timeIntervalSince1970
+    }
+
+    /// Sets the event handler, then `start()`. The handler is replaced even if the stream is already running.
+    public func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws {
+        lock.withLock { self.onEvent = onEvent }
+        try start()
     }
 
     /// Launches `log stream`. Does nothing if already started or after `stop`.
@@ -90,6 +115,7 @@ public final class MetalHUDLogStream: @unchecked Sendable {
     private func consume(_ chunk: Data) {
         lock.lock()
         let lines = Self.splitLines(&buffer, appending: chunk)
+        let onEvent = self.onEvent
         lock.unlock()
         for d in lines {
             if let s = String(data: d, encoding: .utf8), let e = Self.decode(ndjsonLine: s) {

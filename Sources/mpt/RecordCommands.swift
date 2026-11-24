@@ -16,7 +16,8 @@ enum RecordCommands {
         ls                             list recorded runs
         summary RUN [--open]           write RUN/summary.html (RUN: a .mptrun folder, or its name under the runs
                                        folder) and print its path; --open opens it
-        (record/run/ls/summary also take --out DIR to use DIR instead of ~/Documents/Metal-PT/runs)
+        (record/run/ls/summary also take --out DIR to use DIR instead of ~/Documents/Metal-PT/runs;
+         MPT_DATA_ROOT=DIR in the environment replaces ~/Documents/Metal-PT for runs and projects)
         """
 
     static let appVersion = "0.2.0-dev"
@@ -29,17 +30,13 @@ enum RecordCommands {
                                                      "--notes", "--out"])
         if o["--pid"] != nil && o["--name"] != nil { throw UsageError("use --pid or --name, not both") }
         var follow = FollowRule.busiest
-        var game: String?
         if let text = o["--pid"] {
             guard let pid = Int32(text), pid > 0 else { throw UsageError("--pid needs a process id") }
             follow = .pid(pid)
-            game = ProcessNames.displayName(pid: pid).map(ProcessNames.exeName(fromArgv0:))
         } else if let name = o["--name"] {
             follow = .nameContains(name)
-            game = name
         }
-        let session = try Session(options: o, follow: follow, game: game)
-        session.start(child: nil)
+        try record(o, follow: follow, launch: nil)
     }
 
     static func run(_ args: [String]) throws {
@@ -48,10 +45,68 @@ enum RecordCommands {
         }
         let o = try parseOptions(Array(args[..<dash]), allowed: ["--seconds", "--warmup", "--label", "--settings",
                                                                           "--notes", "--out"])
-        let command = Array(args[(dash + 1)...])
-        let session = try Session(options: o, follow: .busiest,
-                                  game: ProcessNames.exeName(fromArgv0: command[0]), seedIsGuess: true)
-        session.start(child: command)
+        try record(o, follow: .busiest, launch: Array(args[(dash + 1)...]))
+    }
+
+    /// Runs a `RecordingSession` until `--seconds`, the child's exit, or a signal (which exits from the lease's
+    /// handler). Never returns.
+    private static func record(_ o: [String: String], follow: FollowRule, launch: [String]?) throws -> Never {
+        let seconds = try number(o, "--seconds")
+        if let seconds, seconds <= 0 { throw UsageError("--seconds needs a number > 0") }
+        let warmup = try number(o, "--warmup") ?? 0
+        if let seconds, warmup >= seconds {
+            throw UsageError("--warmup (\(CSV.number(warmup, digits: 1)) s) must be shorter than --seconds "
+                             + "(\(CSV.number(seconds, digits: 1)) s)")
+        }
+        let options = RecordingSession.Options(
+            seconds: seconds, warmup: warmup, label: o["--label"] ?? "", settings: o["--settings"] ?? "",
+            notes: o["--notes"] ?? "", runsRoot: try runsRoot(o["--out"], create: true), follow: follow,
+            launch: launch, appVersion: appVersion)
+        let session = try RecordingSession(options: options, telemetry: TelemetrySampler(), hud: MetalHUDLogStream())
+
+        session.onMessage = { m in
+            if m.level == .info { print(m.text) } else { printError(m.text) }
+        }
+        let progress = Progress()
+        session.onTick = { status in
+            let ticks = progress.next()
+            if ticks % 5 == 0 {
+                let fps = status.fps.map { CSV.number($0, digits: 1) } ?? "--"
+                let gpu = status.sample.gpuW.map { CSV.number($0, digits: 1) } ?? "--"
+                print("\(Int(status.elapsed.rounded())) s  \(fps) fps  \(status.followedApp ?? "-")  GPU \(gpu) W")
+            }
+            if ticks >= 5 && !status.sawFPSSource && progress.hintOnce() { printError(noHUDHint) }
+        }
+        let done = DispatchSemaphore(value: 0)
+        session.onEnd = { _ in done.signal() }
+
+        let lease = Lease { finish(session) }
+        lease.releaseOnSignals()   // before anything is created; also ignores SIGPIPE (inherited by a child)
+        do { try session.start() } catch {
+            printError("error: \(error)")
+            lease.release()
+            exit(1)
+        }
+        print("recording to \(session.directory?.path ?? "?") — Ctrl-C to stop")
+        done.wait()
+        lease.release()
+        exit(0)
+    }
+
+    /// Lease restore: runs once, on normal end or on a signal.
+    private static func finish(_ session: RecordingSession) {
+        guard let result = session.stop() else { return }
+        print("saved \(result.directory.path)")
+        if let summary = result.summary { print("summary \(summary.path)") }
+        if let child = result.runningChild { print("\(child.name) is still running (pid \(child.pid))") }
+    }
+
+    /// Status-line state; `onTick` runs serially on the session's tick queue.
+    private final class Progress: @unchecked Sendable {
+        private var ticks = 0
+        private var hinted = false
+        func next() -> Int { ticks += 1; return ticks }
+        func hintOnce() -> Bool { defer { hinted = true }; return !hinted }
     }
 
     // MARK: - stack / ls

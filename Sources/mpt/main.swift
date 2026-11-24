@@ -82,14 +82,7 @@ func number(_ options: [String: String], _ name: String) throws -> Double? {
 
 /// `override` (tilde-expanded) if given, else `$MPT_DATA_ROOT/<name>`, else `~/Documents/Metal-PT/<name>`.
 func benchFolder(_ name: String, override: String?) -> URL {
-    if let override { return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true) }
-    if let root = ProcessInfo.processInfo.environment["MPT_DATA_ROOT"], !root.isEmpty {
-        return URL(fileURLWithPath: (root as NSString).expandingTildeInPath, isDirectory: true)
-            .appendingPathComponent(name, isDirectory: true)
-    }
-    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
-    return docs.appendingPathComponent("Metal-PT/\(name)", isDirectory: true)
+    DataRoot.resolve(override: override, env: ProcessInfo.processInfo.environment, name: name)
 }
 
 func printError(_ text: String) {

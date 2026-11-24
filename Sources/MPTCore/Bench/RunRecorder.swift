@@ -24,6 +24,11 @@ public struct RecorderStatus: Sendable {
     public let gpuW: Double?
     /// Any HUD line or stderr frame received so far (from any process).
     public let sawFPSSource: Bool
+    /// The followed PID (nil until one is known) and its stack, once detected.
+    public let pid: Int32?
+    public let stack: Stack?
+    /// The telemetry this row was written from.
+    public let sample: TelemetrySample
 }
 
 /// Turns HUD events, stderr frame times and telemetry into a `.mptrun` bundle.
@@ -38,6 +43,10 @@ public final class RunRecorder: @unchecked Sendable {
     /// … for this many consecutive steady ticks flags mixed frame times (as does more than one launched-group
     /// process gaining frames for this many).
     static let mixedSeconds = 3
+    /// Added to run.json when two ticks are more than `sleepGapS` apart (the Mac slept): the steady window ends at
+    /// the tick before the gap.
+    public static let sleepWarning = "recording spanned a sleep"
+    static let sleepGapS = 5.0
     private let writer: RunBundleWriter
     private let telemetry: TelemetrySource
     private let startTime: Double
@@ -65,6 +74,8 @@ public final class RunRecorder: @unchecked Sendable {
     private var excessTicks = 0
     private var multiTicks = 0
     private var framesMixed = false
+    /// Time of the last tick before the first sleep gap.
+    private var sleepStart: Double?
 
     /// `argv0` looks up a live process's argv[0] (injectable for tests); the exe name is taken from it.
     /// `inLaunchedGroup` says whether a PID belongs to the process group `mpt run` launched; only those count
@@ -137,6 +148,9 @@ public final class RunRecorder: @unchecked Sendable {
         let frameTimes = pendingFrameTimes
         pendingFrameTimes.removeAll(keepingCapacity: true)
         let saw = sawHUD || sawFrames
+        let stack = pid.flatMap { stacks[$0] }
+        let previousTick = lastTickTime ?? startTime
+        if sleepStart == nil, time - previousTick > Self.sleepGapS { sleepStart = previousTick }
         checkMixedFrames(stderrCount: frameTimes.count, logFPS: fps, followed: pid, at: time)
         lock.unlock()
 
@@ -168,10 +182,11 @@ public final class RunRecorder: @unchecked Sendable {
             lock.withLock { noteWriteFailure("samples.csv write failed: \(error)") }
             throw error
         }
-        return RecorderStatus(elapsedS: time - startTime, fps: fps, app: app, gpuW: s.gpuW, sawFPSSource: saw)
+        return RecorderStatus(elapsedS: time - startTime, fps: fps, app: app, gpuW: s.gpuW, sawFPSSource: saw,
+                              pid: pid, stack: stack, sample: s)
     }
 
-    /// Writes end time, steady window (warm-up … end), FPS source, game exe and stack into run.json and closes the
+    /// Writes end time, steady window (warm-up … end, or … the last tick before a sleep), FPS source, game exe and stack into run.json and closes the
     /// files. Idempotent.
     public func finish(at time: Double = Date().timeIntervalSince1970) throws {
         lock.lock()
@@ -185,14 +200,17 @@ public final class RunRecorder: @unchecked Sendable {
         var warnings = writeWarnings
         if exe == nil { warnings.append("game process never identified") }
         if framesMixed { warnings.append(Self.mixedFramesWarning) }
+        if sleepStart != nil { warnings.append(Self.sleepWarning) }
+        let sleepStart = sleepStart
         lock.unlock()
 
         let duration = max(0, time - startTime)
-        let steadyStart = min(warmup, duration)
+        let steadyEnd = sleepStart.map { min(duration, max(0, $0 - startTime)) } ?? duration
+        let steadyStart = min(warmup, steadyEnd)
         try writer.finish { info in
             info.end = Date(timeIntervalSince1970: time)
             info.steadyStartS = steadyStart
-            info.steadyEndS = duration
+            info.steadyEndS = steadyEnd
             info.fpsSource = source
             info.game.exe = exe ?? ""
             if let stack { info.stack = stack }
