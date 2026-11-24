@@ -240,6 +240,37 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(f.model.selectedRun == run.directory)
     }
 
+    /// Session messages reach the app: warnings and errors are shown, and a run with an error is announced as
+    /// "saved with problems" (still opening the run). The next clean run is a plain "Run saved".
+    @Test func sessionProblemsAreShownAndMarkTheSavedRun() async throws {
+        let f = Fixture()
+        f.model.launch()
+        f.model.toggleRecording()
+        try await waitUntil("recording") { f.model.recordState == .recording }
+        let send = try #require(f.hub.onRecordingMessage, "the app must listen to session messages")
+        send(SessionMessage(level: .info, text: "launched x"))
+        #expect(f.model.recordingProblem == nil)
+        send(SessionMessage(level: .warning, text: "log stream stopped unexpectedly; still recording telemetry"))
+        #expect(f.model.recordingProblem?.contains("log stream stopped unexpectedly") == true)
+        send(SessionMessage(level: .error, text: "error writing sample: disk full"))
+        #expect(f.model.recordingProblem?.contains("error writing sample: disk full") == true)
+        f.model.toggleRecording()
+        try await waitUntil("idle") { f.model.recordState == .idle }
+        let run = try #require(f.hub.lastRun)
+        let saved = try #require(f.notifier.posted.last)
+        #expect(saved.title == "Run saved with problems — see the run")
+        #expect(saved.run == run.directory)
+        // The problem stays visible after the save.
+        #expect(f.model.recordingProblem?.contains("disk full") == true)
+
+        f.model.toggleRecording()
+        try await waitUntil("recording again") { f.model.recordState == .recording }
+        #expect(f.model.recordingProblem == nil)
+        f.model.toggleRecording()
+        try await waitUntil("idle again") { f.model.recordState == .idle && f.notifier.posted.count == 4 }
+        #expect(f.notifier.posted.last?.title == "Run saved — add settings")
+    }
+
     @Test func startNoticeNamesGameAndStack() {
         let n = RecordingNotice.started(app: "Cyberpunk2077.exe",
                                         stack: Stack(runtime: "CrossOver", translator: "Rosetta",

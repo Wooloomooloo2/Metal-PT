@@ -93,7 +93,8 @@ final class AppModel: ObservableObject {
     /// `FPSLogging.lastError` (or an unexpected error), copied after each lease operation.
     @Published private(set) var fpsLoggingError: String?
     @Published private(set) var fpsLoggingOn = false
-    /// The last refused or failed recording start; "still being saved" is cleared once the save completes.
+    /// The last refused or failed recording start, or the last warning/error of the recording (cleared at the next
+    /// start); "still being saved" is cleared once the save completes.
     @Published private(set) var recordingProblem: String?
     /// Display names of runs finished in this session, newest first (the menu bar's recent runs).
     @Published private(set) var recentRuns: [String] = []
@@ -113,6 +114,8 @@ final class AppModel: ObservableObject {
     /// From a stop press until the run is saved: the state stays `.saving`.
     private var stopping = false
     private var lastSeenRun: RunResult?
+    /// An error message arrived during the current (or last) recording: its "Run saved" says "with problems".
+    private var runHadErrors = false
     private var lastIndexedRun: RunResult?
 
     init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, usesAppKit: Bool? = nil,
@@ -243,6 +246,7 @@ final class AppModel: ObservableObject {
     func launch() {
         guard live else { return }
         hub.onSamplingChange = { on in Self.log("sampler \(on ? "on" : "off")") }
+        hub.onRecordingMessage = { [weak self] m in self?.recordingMessage(m) }
         fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
@@ -403,8 +407,19 @@ final class AppModel: ObservableObject {
 
     // MARK: - Private
 
+    /// A session message (main thread): every one is logged; warnings and errors are shown, and an error marks the
+    /// run's "Run saved" notification.
+    func recordingMessage(_ m: SessionMessage) {
+        let level = switch m.level { case .info: "info"; case .warning: "warning"; case .error: "error" }
+        Self.log("recording \(level): \(m.text)")
+        guard m.level != .info else { return }
+        recordingProblem = "Recording: \(m.text)"
+        if m.level == .error { runHadErrors = true }
+    }
+
     private func startRecording() {
         recordingProblem = nil
+        runHadErrors = false
         recordState = .starting
         notifier?.requestAuthorizationIfNeeded()
         let options = RecordingSession.Options(runsRoot: folder("runs"), appVersion: Self.appVersion)
@@ -532,7 +547,7 @@ final class AppModel: ObservableObject {
         if let run = hub.lastRun, run != lastSeenRun {
             lastSeenRun = run
             noteRun(run)
-            if !quitDone { notifier?.post(.saved(run)) }
+            if !quitDone { notifier?.post(.saved(run, withProblems: runHadErrors)) }
         }
         // The recording's folder is locked in Runs while it is written; rescan when it appears or is finished.
         let recordingDir = hub.recordingDirectory

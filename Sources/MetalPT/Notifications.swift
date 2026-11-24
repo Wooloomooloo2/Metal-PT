@@ -19,9 +19,11 @@ struct RecordingNotice: Equatable {
                                body: "Press the record hotkey again to stop.", run: nil)
     }
 
-    /// "Run saved — add settings", with the run's game; clicking it opens the run.
-    static func saved(_ run: RunResult) -> RecordingNotice {
-        RecordingNotice(title: "Run saved — add settings", body: gameName(of: run.directory), run: run.directory)
+    /// "Run saved — add settings" ("Run saved with problems — see the run" when an error occurred during the run),
+    /// with the run's game; clicking it opens the run.
+    static func saved(_ run: RunResult, withProblems: Bool = false) -> RecordingNotice {
+        RecordingNotice(title: withProblems ? "Run saved with problems — see the run" : "Run saved — add settings",
+                        body: gameName(of: run.directory), run: run.directory)
     }
 
     /// The run's game from its run.json (title, else exe), else the folder name.
