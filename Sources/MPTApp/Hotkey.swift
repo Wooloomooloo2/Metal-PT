@@ -11,8 +11,11 @@ public struct HotkeyCombo: Codable, Equatable, Sendable {
 
     public init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
-        self.modifiers = modifiers
+        self.modifiers = modifiers & Self.modifierMask
     }
+
+    /// Only the four modifiers we model; caps lock, fn etc. are dropped.
+    private static let modifierMask = UInt32(controlKey | optionKey | shiftKey | cmdKey)
 
     public static let record = HotkeyCombo(keyCode: UInt32(kVK_F6), modifiers: UInt32(controlKey | shiftKey))
     public static let overlay = HotkeyCombo(keyCode: UInt32(kVK_F7), modifiers: UInt32(controlKey | shiftKey))

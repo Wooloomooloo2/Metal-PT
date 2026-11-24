@@ -8,8 +8,14 @@ private final class FakeLaunchctl: LaunchctlRunning, @unchecked Sendable {
     var calls: [String] = []
     /// When true, unsetenv "succeeds" but the value stays (to test read-back).
     var stickyUnset = false
+    /// Variable names whose setenv throws.
+    var failSet: Set<String> = []
     func getenv(_ name: String) -> String? { env[name] }
-    func setenv(_ name: String, _ value: String) throws { calls.append("set \(name)"); env[name] = value }
+    func setenv(_ name: String, _ value: String) throws {
+        calls.append("set \(name)")
+        if failSet.contains(name) { throw FPSLoggingError.commandFailed(operation: "setenv", name: name, status: 1) }
+        env[name] = value
+    }
     func unsetenv(_ name: String) throws { calls.append("unset \(name)"); if !stickyUnset { env[name] = nil } }
 }
 
@@ -34,7 +40,7 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         for n in both { #expect(fake.env[n] == "1") }
     }
 
-    @Test func unsetEnabledSetsBoth() {
+    @Test func enabledWithNothingSetSetsBoth() {
         let fake = FakeLaunchctl()
         let fps = FPSLogging(launchctl: fake)
         fps.reconcileAtLaunch(enabled: true)
@@ -84,7 +90,41 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         let fps = FPSLogging(launchctl: fake)
         try? fps.setEnabled(true)
         fake.stickyUnset = true
-        #expect(throws: FPSLoggingError.self) { try fps.setEnabled(false) }
+        #expect(throws: FPSLoggingError.stillSet(both)) { try fps.setEnabled(false) }
+        #expect(fps.isOn)   // reflects reality: the variables are still set
+    }
+
+    @Test func releaseAtQuitFailureSetsLastError() {
+        let fake = FakeLaunchctl()
+        let fps = FPSLogging(launchctl: fake)
+        try? fps.setEnabled(true)
+        fake.stickyUnset = true
+        fps.releaseAtQuit()
+        #expect(fps.lastError == .stillSet(both))
+        #expect(fps.isOn)
+        fake.stickyUnset = false
+        fps.releaseAtQuit()
+        #expect(fps.lastError == nil)
+    }
+
+    @Test func reconcileFailureSetsLastError() {
+        let fake = FakeLaunchctl()
+        for n in both { fake.env[n] = "1" }
+        fake.stickyUnset = true
+        let fps = FPSLogging(launchctl: fake)
+        fps.reconcileAtLaunch(enabled: false)
+        #expect(fps.lastError != nil)
+        #expect(fps.isOn)
+    }
+
+    @Test func enableIsAtomic() {
+        let fake = FakeLaunchctl()
+        fake.failSet = ["MTL_HUD_LOG_ENABLED"]
+        let fps = FPSLogging(launchctl: fake)
+        #expect(throws: FPSLoggingError.self) { try fps.setEnabled(true) }
+        #expect(!fps.isOn)
+        for n in both { #expect(fake.env[n] == nil) }
+        #expect(fps.lastError != nil)
     }
 
     @Test func releaseAtQuitUnsets() {
@@ -124,6 +164,12 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         #expect(HotkeyCombo(display: "⌃⇧F6") == .record)
         #expect(HotkeyCombo(display: "nonsense") == nil)
         #expect(HotkeyCombo(display: "⌘") == nil)
+    }
+
+    @Test func modifiersAreMasked() {
+        let capsLock = UInt32(alphaLock)
+        let c = HotkeyCombo(keyCode: UInt32(kVK_F6), modifiers: UInt32(controlKey) | capsLock)
+        #expect(c.modifiers == UInt32(controlKey))
     }
 
     @Test func codableRoundTrip() throws {
