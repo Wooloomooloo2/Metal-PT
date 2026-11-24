@@ -22,28 +22,48 @@ public enum FollowRule: Sendable {
 }
 
 /// Per-PID stack cache whose detection (lsof, up to 5 s) runs on a background queue: `stack(for:)` never blocks and
-/// returns nil (unknown) until the detection finishes. Each PID is detected once.
+/// returns nil (unknown) until the detection finishes. Each PID is detected once, except that a result of nil or
+/// "native" is re-detected once more after `retryAfter` seconds (Wine libraries may not have been loaded yet).
 public final class AsyncStackCache: @unchecked Sendable {
+    public static let retryAfter = 5.0
     private let detect: @Sendable (Int32) -> Stack
+    private let now: @Sendable () -> Double
     private let lock = NSLock()
-    private var known: [Int32: Stack] = [:]
+    private var known: [Int32: (stack: Stack, at: Double)] = [:]
     private var pending: Set<Int32> = []
+    private var retried: Set<Int32> = []
     private let queue = DispatchQueue(label: "metalpt.stackcache", qos: .utility, attributes: .concurrent)
 
-    public init(detect: @escaping @Sendable (Int32) -> Stack = { StackDetector.detect(pid: $0) }) {
+    public init(now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
+                detect: @escaping @Sendable (Int32) -> Stack = { StackDetector.detect(pid: $0) }) {
         self.detect = detect
+        self.now = now
     }
+
+    var pendingCount: Int { lock.withLock { pending.count } }
 
     public func stack(for pid: Int32) -> Stack? {
         lock.lock(); defer { lock.unlock() }
-        if let s = known[pid] { return s }
-        if pending.insert(pid).inserted {
+        let entry = known[pid]
+        var start = false
+        if let entry {
+            let runtime = entry.stack.runtime
+            if (runtime == nil || runtime == "native"), !retried.contains(pid), !pending.contains(pid),
+               now() - entry.at >= Self.retryAfter {
+                retried.insert(pid)
+                start = true
+            }
+        } else {
+            start = pending.insert(pid).inserted
+        }
+        if start {
+            pending.insert(pid)
             queue.async { [self] in
                 let s = detect(pid)
-                lock.withLock { known[pid] = s; pending.remove(pid) }
+                lock.withLock { known[pid] = (s, now()); pending.remove(pid) }
             }
         }
-        return nil
+        return entry?.stack
     }
 }
 
@@ -305,7 +325,7 @@ public final class RunRecorder: @unchecked Sendable {
             return counter.followedPID
         case .preferTranslated(let exclude, let pinned):
             guard let now = counter.latestTime else { return nil }
-            if let pinned, counter.isLive(pid: pinned, at: now) { return pinned }
+            if let pinned, !exclude.contains(pinned), counter.isLive(pid: pinned, at: now) { return pinned }
             let candidates = imagePaths.keys.filter { !exclude.contains($0) }
             let live = candidates.filter { counter.isLive(pid: $0, at: now) }
             let translated = live.filter { pid in
