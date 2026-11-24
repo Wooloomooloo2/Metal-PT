@@ -13,6 +13,16 @@ public struct HubSnapshot: Sendable {
     public let followedPID: Int32?
     public let followedApp: String?
     public let stack: Stack?
+
+    public init(time: Double, sample: TelemetrySample, fps: Double?, followedPID: Int32?, followedApp: String?,
+                stack: Stack?) {
+        self.time = time
+        self.sample = sample
+        self.fps = fps
+        self.followedPID = followedPID
+        self.followedApp = followedApp
+        self.stack = stack
+    }
 }
 
 /// A cancellable timer from a `HubScheduler`.
@@ -371,6 +381,17 @@ public final class TelemetryHub: ObservableObject {
         let result = s.stop()
         didFinish(id, result)
         return result
+    }
+
+    /// Snapshots and previews only (`MetalPT --render-snapshots`): shows fixed data on a hub built with inert
+    /// dependencies. `history` (oldest first, trimmed to `historyLimit`) and `latest` (default: the last of
+    /// `history`) replace the published values; `recording` is shown as the running recording's tick.
+    public func showFixture(history: [HubSnapshot], latest: HubSnapshot? = nil, recording: SessionStatus? = nil,
+                            lastRun: RunResult? = nil) {
+        self.history = Array(history.suffix(Self.historyLimit))
+        self.latest = latest ?? history.last
+        self.recording = recording
+        if let lastRun { self.lastRun = lastRun }
     }
 
     // MARK: - Internal (tests)

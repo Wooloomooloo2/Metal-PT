@@ -12,6 +12,17 @@ public struct SessionStatus: Sendable {
     public let sample: TelemetrySample
     /// Any HUD line or stderr frame received so far (from any process).
     public let sawFPSSource: Bool
+
+    public init(elapsed: Double, fps: Double?, followedPID: Int32?, followedApp: String?, stack: Stack?,
+                sample: TelemetrySample, sawFPSSource: Bool) {
+        self.elapsed = elapsed
+        self.fps = fps
+        self.followedPID = followedPID
+        self.followedApp = followedApp
+        self.stack = stack
+        self.sample = sample
+        self.sawFPSSource = sawFPSSource
+    }
 }
 
 /// A process the session launched (`Options.launch`).

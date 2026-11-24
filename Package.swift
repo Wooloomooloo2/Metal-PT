@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "MPTApp", targets: ["MPTApp"]),
         .executable(name: "mptprobe", targets: ["mptprobe"]),
         .executable(name: "mpt", targets: ["mpt"]),
+        .executable(name: "MetalPT", targets: ["MetalPT"]),
     ],
     targets: [
         .target(
@@ -23,6 +24,15 @@ let package = Package(
         .target(name: "MPTApp", dependencies: ["MPTCore"]),
         .executableTarget(name: "mptprobe", dependencies: ["MPTCore"]),
         .executableTarget(name: "mpt", dependencies: ["MPTCore"]),
+        .executableTarget(
+            name: "MetalPT",
+            dependencies: ["MPTApp", "MPTCore"],
+            linkerSettings: [
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("Carbon"),
+            ]
+        ),
         .testTarget(name: "MPTCoreTests", dependencies: ["MPTCore"]),
         .testTarget(name: "MPTAppTests", dependencies: ["MPTApp", "MPTCore"]),
     ]

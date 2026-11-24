@@ -78,3 +78,21 @@ public struct HotkeyCombo: Codable, Equatable, Sendable {
         }
     }
 }
+
+extension HotkeyCombo {
+    /// True for F1–F20 (allowed without modifiers: they type nothing).
+    public var isFunctionKey: Bool {
+        let f = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+                 kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
+        return f.contains { UInt32($0) == keyCode }
+    }
+
+    /// Why this combo must not be registered as a global hotkey, or nil if it may be. A bare key (no modifier)
+    /// would swallow ordinary typing system-wide, so only function keys may go without one. The modifiers are
+    /// re-masked to the four modelled bits (a decoded combo may carry others).
+    public var registrationProblem: String? {
+        let mods = modifiers & UInt32(controlKey | optionKey | shiftKey | cmdKey)
+        if mods == 0 && !isFunctionKey { return "\(display) needs a modifier (⌃, ⌥, ⇧ or ⌘)" }
+        return nil
+    }
+}
