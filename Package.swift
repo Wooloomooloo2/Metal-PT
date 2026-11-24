@@ -35,5 +35,6 @@ let package = Package(
         ),
         .testTarget(name: "MPTCoreTests", dependencies: ["MPTCore"]),
         .testTarget(name: "MPTAppTests", dependencies: ["MPTApp", "MPTCore"]),
+        .testTarget(name: "MetalPTTests", dependencies: ["MetalPT", "MPTApp", "MPTCore"]),
     ]
 )

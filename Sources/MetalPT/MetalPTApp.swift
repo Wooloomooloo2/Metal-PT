@@ -69,8 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.launch()
-        // SIGINT (Ctrl-C under `swift run`) and SIGTERM quit through `terminate`, so the quit path runs.
-        for sig in [SIGINT, SIGTERM] {
+        // SIGINT (Ctrl-C under `swift run`), SIGTERM and SIGHUP (terminal closed) quit through `terminate`, so the
+        // quit path runs (variables handed back, recording finished).
+        for sig in [SIGINT, SIGTERM, SIGHUP] {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             src.setEventHandler { NSApp.terminate(nil) }

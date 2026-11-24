@@ -30,20 +30,25 @@ enum Page: String, CaseIterable, Identifiable {
 struct MainWindow: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
-    @State private var page: Page? = .live
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
-            List(Page.allCases, selection: $page) { p in
+            List(Page.allCases, selection: $model.page) { p in
                 Label(p.title, systemImage: p.symbol).tag(p)
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 240)
         } detail: {
-            PageView(page: page ?? .live, model: model, hub: hub)
-                .navigationTitle((page ?? .live).title)
+            PageView(page: model.page ?? .live, model: model, hub: hub)
+                .navigationTitle((model.page ?? .live).title)
         }
         .frame(minWidth: 760, minHeight: 520)
         .background(WindowObserver(state: model.windowState))
+        .onAppear {
+            // Kept after the window closes, so a notification click can reopen it.
+            let open = openWindow
+            model.openMainWindow = { open(id: MetalPTApp.mainWindowID) }
+        }
     }
 }
 

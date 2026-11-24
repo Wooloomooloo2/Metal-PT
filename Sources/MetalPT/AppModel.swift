@@ -16,14 +16,18 @@ enum SettingsKey {
 }
 
 /// The app's state and its wiring to `MPTApp`: the telemetry hub, the FPS-logging lease, hotkeys, recording control.
-/// `live == false` (snapshots) never touches launchctl, hotkeys or `NSApp`.
+/// `live == false` (snapshots) never touches launchctl, hotkeys or `NSApp`. `usesAppKit == false` (unit tests) keeps
+/// the live recording and lease logic but never touches hotkeys, `NSApp` or windows.
 @MainActor
 final class AppModel: ObservableObject {
     static let appVersion = "0.2.0-dev"
+    /// Dev/test only, honoured when `MPT_DEBUG=1`: a distributed notification with this name toggles recording
+    /// (the Carbon hotkey cannot be pressed from a script).
+    static let debugToggleRecording = "io.github.wooloomooloo2.metal-pt.debug.toggleRecording"
 
     enum RecordState: Equatable {
         case idle
-        /// Started, no tick yet.
+        /// Pressed or started, no tick yet.
         case starting
         case recording
         /// Stopped; the run is being finished (summary, rename).
@@ -35,34 +39,53 @@ final class AppModel: ObservableObject {
     /// The main window's open/visible state, from its own notifications (`WindowObserver`).
     let windowState = MainWindowState()
     let live: Bool
+    let usesAppKit: Bool
     private let defaults: UserDefaults
     private let env: [String: String]
+    private let notifier: RecordingNotifying?
 
     /// Placeholder until the overlay arrives (T10).
     @Published var overlayOn = false
+    /// The sidebar selection (a "Run saved" notification switches it to Runs).
+    @Published var page: Page? = .live
+    /// The run to show in Runs (set by a "Run saved" notification; the Runs page arrives in T11).
+    @Published var selectedRun: URL?
     @Published private(set) var recordState: RecordState = .idle
     /// Hotkeys that could not be registered (shown as warnings).
     @Published private(set) var hotkeyProblems: [String] = []
-    /// `FPSLogging.lastError`, copied after each lease operation.
+    /// `FPSLogging.lastError` (or an unexpected error), copied after each lease operation.
     @Published private(set) var fpsLoggingError: String?
     @Published private(set) var fpsLoggingOn = false
-    /// The last refused or failed recording start.
+    /// The last refused or failed recording start; "still being saved" is cleared once the save completes.
     @Published private(set) var recordingProblem: String?
     /// Placeholder until the Runs index (T11): display names of runs finished in this session, newest first.
     @Published private(set) var recentRuns: [String] = []
+    /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`).
+    var openMainWindow: (() -> Void)?
 
     private var hudToken: TelemetryHub.Token?
     private var hotkeys: GlobalHotkeys?
     private var cancellables: Set<AnyCancellable> = []
+    private var debugObserver: NSObjectProtocol?
     private var quitDone = false
+    /// The press-to-start task, from the press until the hub has started (or refused) the recording. While it is
+    /// set the state is `.starting` even though the hub does not know about the recording yet.
+    private var startTask: Task<Void, Never>?
+    /// From a stop press until the run is saved: the state stays `.saving`.
+    private var stopping = false
+    private var lastSeenRun: RunResult?
 
-    init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, defaults: UserDefaults = .standard,
-         env: [String: String] = ProcessInfo.processInfo.environment) {
+    init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, usesAppKit: Bool? = nil,
+         defaults: UserDefaults = .standard, env: [String: String] = ProcessInfo.processInfo.environment,
+         notifier: RecordingNotifying? = nil) {
         self.hub = hub
         self.fpsLogging = fpsLogging
         self.live = live
+        self.usesAppKit = usesAppKit ?? live
         self.defaults = defaults
         self.env = env
+        self.notifier = notifier ?? (live && (usesAppKit ?? live) ? Notifications() : nil)
+        self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
         hub.objectWillChange
             .sink { [weak self] _ in
                 // After the change lands (objectWillChange fires before it).
@@ -80,8 +103,8 @@ final class AppModel: ObservableObject {
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] visible in
-                guard self?.live == true else { return }
-                FileHandle.standardError.write(Data("Metal-PT: main window \(visible ? "visible" : "hidden")\n".utf8))
+                guard self?.usesAppKit == true else { return }
+                Self.log("main window \(visible ? "visible" : "hidden")")
             }
             .store(in: &cancellables)
     }
@@ -107,40 +130,68 @@ final class AppModel: ObservableObject {
     /// register hotkeys, and let the menu bar sample while a game is followed.
     func launch() {
         guard live else { return }
-        hub.onSamplingChange = { on in
-            FileHandle.standardError.write(Data("Metal-PT: sampler \(on ? "on" : "off")\n".utf8))
-        }
+        hub.onSamplingChange = { on in Self.log("sampler \(on ? "on" : "off")") }
         fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
         registerHotkeys()
+        if usesAppKit, env["MPT_DEBUG"] == "1" {
+            debugObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(Self.debugToggleRecording), object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        Self.log("debug: toggle recording")
+                        self?.toggleRecording()
+                    }
+                }
+            Self.log("debug: listening for \(Self.debugToggleRecording)")
+        }
     }
 
-    /// At quit: finish a running recording, stop the log stream, hand the HUD variables back. Once only.
+    /// At quit, once: hand the HUD variables back first (quick, and must happen even if the stop below hangs),
+    /// then finish a running recording (blocking), and only then release the log stream the recording reads.
     func quit() {
         guard !quitDone else { return }
         quitDone = true
+        hotkeys = nil
+        if let debugObserver { DistributedNotificationCenter.default().removeObserver(debugObserver) }
+        debugObserver = nil
+        if live { fpsLogging.releaseAtQuit() }
+        let wasRecording = hub.isRecording || hub.isFinishingRecording || startTask != nil
         let run = hub.stopRecordingNow()
         hudToken?.release()
         hudToken = nil
         hub.menuBarWantsSamplesWhenFollowing = false
-        hotkeys = nil
-        if live { fpsLogging.releaseAtQuit() }
-        let saved = run.map { " (saved \($0.directory.lastPathComponent))" } ?? ""
-        FileHandle.standardError.write(Data(
-            "Metal-PT: quit: recording stopped\(saved), FPS logging released (on: \(fpsLogging.isOn))\n".utf8))
+        var line = "quit: "
+        if wasRecording {
+            line += "recording stopped" + (run.map { " (saved \($0.directory.lastPathComponent))" } ?? " (no run saved)")
+                + ", "
+        }
+        line += "FPS logging released (on: \(fpsLogging.isOn))"
+        if live { Self.log(line) }
     }
 
-    /// Turns FPS logging on or off and saves the setting (Settings, T14, calls this).
+    /// Turns FPS logging on or off. The preference is saved first, whatever happens next: it is the user's choice,
+    /// and the next launch reconciles to it (adopt or retry). Failures are shown via `fpsLoggingError`.
     func setFPSLogging(_ on: Bool) {
         defaults.set(on, forKey: SettingsKey.fpsLogging)
         guard live else { return }
-        try? fpsLogging.setEnabled(on)   // the error is kept in `lastError`
+        var unexpected: Error?
+        do {
+            try fpsLogging.setEnabled(on)
+        } catch is FPSLoggingError {
+            // Kept in `fpsLogging.lastError`, copied by `syncFPSLogging`.
+        } catch {
+            unexpected = error
+        }
         syncFPSLogging()
+        if let unexpected {
+            fpsLoggingError = "Could not turn FPS logging \(on ? "on" : "off"): \(unexpected.localizedDescription)"
+            Self.log(fpsLoggingError ?? "")
+        }
     }
 
     func registerHotkeys() {
-        guard live else { return }
+        guard live, usesAppKit else { return }
         let keys = hotkeys ?? GlobalHotkeys()
         hotkeys = keys
         var problems: [String] = []
@@ -151,55 +202,98 @@ final class AppModel: ObservableObject {
             problems.append("Overlay hotkey: \(p)")
         }
         hotkeyProblems = problems
-        for p in problems { FileHandle.standardError.write(Data("Metal-PT: \(p)\n".utf8)) }
+        for p in problems { Self.log(p) }
     }
 
     // MARK: - Window and Dock icon
 
     /// Dock icon only while the main window is open (driven by `windowState.isOpen`).
     func mainWindowOpened() {
-        guard live else { return }
+        guard usesAppKit else { return }
         NSApp.setActivationPolicy(.regular)
     }
 
     func mainWindowClosed() {
-        guard live else { return }
+        guard usesAppKit else { return }
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// A "Run saved" notification was clicked: bring the window forward on Runs with that run selected.
+    func openRun(_ url: URL) {
+        selectedRun = url
+        page = .runs
+        guard usesAppKit else { return }
+        openMainWindow?()
+        NSApp.activate()
     }
 
     // MARK: - Actions
 
     func toggleOverlay() { overlayOn.toggle() }
 
+    /// Hotkey / menu / Live button. Starting (pressed, not yet started) counts as recording: a quick second press
+    /// stops the run once it has started, instead of being refused as "already running".
     func toggleRecording() {
-        if hub.isRecording {
-            recordState = .saving
-            Task {
-                await hub.stopRecording()   // sets `hub.lastRun`, picked up by `hubChanged`
-                hubChanged()
-            }
+        guard !quitDone else { return }
+        if stopping || hub.isFinishingRecording {
+            recordingProblem = "\(TelemetryHub.RecordingError.stillFinishing)"
+        } else if startTask != nil || hub.isRecording {
+            stopRecording()
         } else {
-            guard !hub.isFinishingRecording else {
-                recordingProblem = "\(TelemetryHub.RecordingError.stillFinishing)"
-                return
-            }
-            recordingProblem = nil
-            recordState = .starting
-            let options = RecordingSession.Options(runsRoot: folder("runs"), appVersion: Self.appVersion)
-            Task {
-                do {
-                    try await hub.startRecording(options: options)
-                } catch TelemetryHub.RecordingError.stoppedWhileStarting {
-                    // Quit (or a stop) won the race: nothing to report.
-                } catch {
-                    recordingProblem = "Could not start recording: \(error)"
-                }
-                hubChanged()
-            }
+            startRecording()
         }
     }
 
     // MARK: - Private
+
+    private func startRecording() {
+        recordingProblem = nil
+        recordState = .starting
+        notifier?.requestAuthorizationIfNeeded()
+        let options = RecordingSession.Options(runsRoot: folder("runs"), appVersion: Self.appVersion)
+        let hub = hub
+        startTask = Task { [weak self] in
+            // Quit ran before this task did: the hub never saw the start, so there is nothing to stop.
+            guard self?.quitDone == false else { return }
+            var started = false
+            do {
+                try await hub.startRecording(options: options)
+                started = true
+            } catch TelemetryHub.RecordingError.stoppedWhileStarting {
+                // Quit won the race: nothing to report.
+            } catch {
+                self?.recordingProblem = "Could not start recording: \(error)"
+            }
+            guard let self else { return }
+            self.startTask = nil
+            if started, !self.stopping, !self.quitDone { self.postStarted() }
+            self.hubChanged()
+        }
+    }
+
+    private func stopRecording() {
+        stopping = true
+        recordState = .saving
+        let pending = startTask
+        let hub = hub
+        Task { [weak self] in
+            // A press during `.starting`: let the start reach the hub first, then stop it.
+            await pending?.value
+            await hub.stopRecording()   // sets `hub.lastRun`, picked up by `hubChanged`
+            guard let self else { return }
+            self.stopping = false
+            self.hubChanged()
+        }
+    }
+
+    private func postStarted() {
+        let status = hub.recording
+        let snap = hub.latest
+        let app = status?.followedPID != nil ? status?.followedApp
+            : (snap?.followedPID != nil ? snap?.followedApp : nil)
+        let stack = status?.followedPID != nil ? status?.stack : snap?.stack
+        notifier?.post(.started(app: app, stack: stack))
+    }
 
     private func syncFPSLogging() {
         fpsLoggingOn = fpsLogging.isOn
@@ -219,23 +313,35 @@ final class AppModel: ObservableObject {
         if recentRuns.count > 5 { recentRuns.removeLast(recentRuns.count - 5) }
     }
 
-    private var lastSeenRun: RunResult?
-
     private func hubChanged() {
         guard live else { return }   // snapshots set their state directly
         if let run = hub.lastRun, run != lastSeenRun {
             lastSeenRun = run
             noteRun(run)
+            if !quitDone { notifier?.post(.saved(run)) }
         }
         let state: RecordState
-        if hub.isFinishingRecording {
+        if stopping || hub.isFinishingRecording {
             state = .saving
         } else if hub.isRecording {
             state = hub.recording == nil ? .starting : .recording
+        } else if startTask != nil {
+            state = .starting   // pressed; the hub has not seen the start yet
         } else {
             state = .idle
         }
-        if state != recordState { recordState = state }
+        if state != recordState {
+            // The save completed: a "still being saved" refusal no longer applies (a failed start's reason stays).
+            if recordState == .saving, state == .idle,
+               recordingProblem == "\(TelemetryHub.RecordingError.stillFinishing)" {
+                recordingProblem = nil
+            }
+            recordState = state
+        }
+    }
+
+    private static func log(_ text: String) {
+        FileHandle.standardError.write(Data("Metal-PT: \(text)\n".utf8))
     }
 
     /// Snapshots only: fixed values for the published state.

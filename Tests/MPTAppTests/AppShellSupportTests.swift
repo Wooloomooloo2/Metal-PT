@@ -29,6 +29,13 @@ import MPTCore
             .hasSuffix("/Documents/Metal-PT/exports"))
     }
 
+    /// The Settings value is trimmed and tilde-expanded.
+    @Test func dataFolderSettingExpandsTilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        #expect(AppFolders.url("runs", setting: "~/MPT", env: [:]).path == "\(home)/MPT/runs")
+        #expect(AppFolders.url("runs", setting: " ~/MPT \n", env: [:]).path == "\(home)/MPT/runs")
+    }
+
     @MainActor @Test func fixtureFeedsHub() {
         let hub = TelemetryHub(dependencies: .inert)
         let snaps = (0..<400).map {
