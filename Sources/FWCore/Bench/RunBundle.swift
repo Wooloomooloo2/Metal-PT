@@ -1,0 +1,143 @@
+import Foundation
+
+/// A frame with its time in ms since run start.
+public struct TimedFrame: Equatable, Sendable {
+    public let tMs: Double
+    public let intervalMs: Double
+    public let presentDelayMs: Double
+    public init(tMs: Double, intervalMs: Double, presentDelayMs: Double) {
+        self.tMs = tMs; self.intervalMs = intervalMs; self.presentDelayMs = presentDelayMs
+    }
+}
+
+public enum RunBundleError: Error { case missingFile(String) }
+
+private let framesHeader = ["t_ms", "interval_ms", "present_delay_ms"]
+
+public final class RunBundleWriter: @unchecked Sendable {
+    private let directory: URL
+    private var info: RunInfo
+    private var samples: FileHandle?
+    private var frames: FileHandle?
+    private var finished = false
+    private let lock = NSLock()
+
+    public init(directory: URL, info: RunInfo) throws {
+        self.directory = directory
+        self.info = info
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let samplesURL = directory.appendingPathComponent("samples.csv")
+        try Data((CSV.line(SampleColumns.all) + "\n").utf8).write(to: samplesURL)
+        samples = try FileHandle(forWritingTo: samplesURL)
+        try samples?.seekToEnd()
+        try writeInfo()
+    }
+
+    private func writeInfo() throws {
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try enc.encode(Privacy.scrub(info)).write(
+            to: directory.appendingPathComponent("run.json"), options: .atomic)
+    }
+
+    /// Writes one row; missing columns become empty cells. Written through immediately.
+    public func append(sample row: [String: String]) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished, let h = samples else { return }
+        try h.write(contentsOf: Data((CSV.line(SampleColumns.all.map { row[$0] ?? "" }) + "\n").utf8))
+    }
+
+    /// `endingAtMs` is the arrival time (ms since run start) of the last frame; earlier frames are
+    /// placed backwards by the cumulative intervals of the frames after them.
+    public func append(frames batch: [FrameTime], endingAtMs: Double) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished, !batch.isEmpty else { return }
+        if frames == nil {
+            let url = directory.appendingPathComponent("frames.csv")
+            try Data((CSV.line(framesHeader) + "\n").utf8).write(to: url)
+            frames = try FileHandle(forWritingTo: url)
+            try frames?.seekToEnd()
+        }
+        var times = [Double](repeating: 0, count: batch.count)
+        var t = endingAtMs
+        for i in stride(from: batch.count - 1, through: 0, by: -1) {
+            times[i] = t
+            t -= batch[i].intervalMs
+        }
+        var out = ""
+        for (i, f) in batch.enumerated() {
+            out += CSV.line([CSV.number(times[i], digits: 2), CSV.number(f.intervalMs, digits: 2),
+                             CSV.number(f.presentDelayMs, digits: 2)]) + "\n"
+        }
+        try frames?.write(contentsOf: Data(out.utf8))
+    }
+
+    /// Idempotent: the second call does nothing.
+    public func finish(updating: (inout RunInfo) -> Void) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        updating(&info)
+        try samples?.close(); samples = nil
+        try frames?.close(); frames = nil
+        try writeInfo()
+    }
+}
+
+public struct RunBundle {
+    public let url: URL
+    public let info: RunInfo
+    public let rows: [[String: String]]
+    public let frames: [TimedFrame]?
+    public let warnings: [String]
+
+    public static func load(_ url: URL) throws -> RunBundle {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let info = try dec.decode(RunInfo.self, from: Data(contentsOf: url.appendingPathComponent("run.json")))
+        var warnings = info.warnings
+        if info.schema > RunInfo.currentSchema { warnings.append("newer bundle format (schema \(info.schema))") }
+
+        let rows: [[String: String]]
+        if let text = try? String(contentsOf: url.appendingPathComponent("samples.csv"), encoding: .utf8) {
+            rows = CSV.parse(text)
+        } else {
+            rows = []
+            warnings.append("samples.csv missing")
+        }
+        var frames: [TimedFrame]?
+        if let text = try? String(contentsOf: url.appendingPathComponent("frames.csv"), encoding: .utf8) {
+            frames = CSV.parse(text).compactMap { r in
+                guard let t = r["t_ms"].flatMap(Double.init), let i = r["interval_ms"].flatMap(Double.init),
+                      let d = r["present_delay_ms"].flatMap(Double.init) else { return nil }
+                return TimedFrame(tMs: t, intervalMs: i, presentDelayMs: d)
+            }
+        }
+        return RunBundle(url: url, info: info, rows: rows, frames: frames, warnings: warnings)
+    }
+
+    /// `yyyyMMdd-HHmmss-<slug>.fwrun`, UTC so the name does not depend on the machine.
+    public static func directoryName(start: Date, game: String) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        return "\(f.string(from: start))-\(slug(game)).fwrun"
+    }
+
+    static func slug(_ text: String) -> String {
+        var out = ""
+        var pendingDash = false
+        for s in text.lowercased().unicodeScalars {
+            if (s >= "a" && s <= "z") || (s >= "0" && s <= "9") {
+                if pendingDash && !out.isEmpty { out += "-" }
+                pendingDash = false
+                out.unicodeScalars.append(s)
+            } else { pendingDash = true }
+        }
+        var cut = String(out.prefix(40))
+        while cut.hasSuffix("-") { cut.removeLast() }
+        return cut
+    }
+}
