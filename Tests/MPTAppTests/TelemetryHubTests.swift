@@ -89,6 +89,15 @@ private final class ManualScheduler: HubScheduler, @unchecked Sendable {
     }
 }
 
+/// Open by default; `close()` makes stack detections wait until `open()` (or the session's 2 s detection wait).
+private final class Gate: @unchecked Sendable {
+    private let cond = NSCondition()
+    private var isOpen = true
+    func close() { cond.withLock { isOpen = false } }
+    func open() { cond.withLock { isOpen = true; cond.broadcast() } }
+    func pass() { cond.withLock { while !isOpen { _ = cond.wait(until: Date() + 5) ; if !isOpen { return } } } }
+}
+
 private let t0 = 1_700_000_000.0
 private let selfPID: Int32 = 777
 
@@ -98,18 +107,19 @@ private final class Fixture {
     let streams = Streams()
     let clock = FakeClock(t0)
     let scheduler = ManualScheduler()
+    let detection = Gate()
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("mpthub-\(UUID().uuidString)")
     let hub: TelemetryHub
 
     init() {
-        let samplers = samplers, streams = streams, clock = clock
+        let samplers = samplers, streams = streams, clock = clock, detection = detection
         let deps = TelemetryHub.Dependencies(
             makeSampler: { samplers.make() },
             makeStream: { streams.make() },
             clock: { clock.now },
             scheduler: scheduler,
             argv0: { "/Games/Game\($0).exe" },
-            detectStack: { _ in Stack(runtime: "native") },
+            detectStack: { _ in detection.pass(); return Stack(runtime: "native") },
             selfPID: selfPID,
             makeSession: { options, parts in
                 try RecordingSession(
@@ -179,6 +189,7 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
     @Test func samplesTokenStartsSampler() async {
         let f = Fixture()
         let t = f.hub.acquire(.samples)
+        f.hub.waitForSamplerWork()
         #expect(f.samplers.live == 1)
         #expect(f.scheduler.activeRepeating == 1)
         #expect(f.scheduler.repeatingIntervals == [1])
@@ -198,6 +209,7 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         let h = f.hub.acquire(.hud)
         b.release()
         b.release()   // idempotent: must not drop `a`'s hold
+        f.hub.waitForSamplerWork()
         #expect(f.scheduler.activeRepeating == 1 && f.samplers.live == 1)
         #expect(a != nil)
         a = nil       // deinit releases
@@ -224,6 +236,7 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         f.play(4242, frames: 60, at: t0 + 2)
         await settle()
         #expect(f.hub.latest?.followedPID == 4242)
+        f.hub.waitForSamplerWork()
         #expect(f.samplers.live == 1 && f.scheduler.activeRepeating == 1)
         f.scheduler.tick()
         await settle()
@@ -294,7 +307,8 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
 
     @Test func recordingKeepsSamplerUntilStopped() async throws {
         let f = Fixture()
-        try f.hub.startRecording(options: f.options())
+        try await f.hub.startRecording(options: f.options())
+        f.hub.waitForSamplerWork()
         #expect(f.samplers.live == 1)
         #expect(f.scheduler.activeRepeating == 0)   // the session's ticks drive sampling
         #expect(f.streams.count == 0)               // a recording does not turn FPS logging on
@@ -303,18 +317,20 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         t.release()
         #expect(f.samplers.live == 1)
         #expect(f.hub.history.count > 0)
-        let result = try #require(f.hub.stopRecording())
+        let result = try #require(await f.hub.stopRecording())
         #expect(f.samplers.live == 0)
         #expect(f.hub.recording == nil)
         #expect(f.hub.lastRun == result)
-        #expect(f.hub.stopRecording() == nil)
+        #expect(await f.hub.stopRecording() == nil)
         #expect(FileManager.default.fileExists(atPath: result.directory.path))
     }
 
     @Test func startWithoutGameRecordsTelemetry() async throws {
         let f = Fixture()
-        try f.hub.startRecording(options: f.options(seconds: 2))
-        #expect(throws: RecordingSession.StateError.self) { try f.hub.startRecording(options: f.options()) }
+        try await f.hub.startRecording(options: f.options(seconds: 2))
+        await #expect(throws: TelemetryHub.RecordingError.alreadyRecording) {
+            try await f.hub.startRecording(options: f.options())
+        }
         // The session ends itself after 2 ticks; the hub finishes it.
         try await waitUntil("the run to finish") { f.hub.lastRun != nil && f.hub.recording == nil }
         let run = try #require(f.hub.lastRun)
@@ -330,15 +346,90 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
     @Test func recordingSharesHubStream() async throws {
         let f = Fixture()
         let h = f.hub.acquire(.hud)
-        try f.hub.startRecording(options: f.options())
+        try await f.hub.startRecording(options: f.options())
         f.clock.set(t0 + 1)
         f.play(4242, frames: 60, at: t0 + 1)
         try await waitUntil("the recording to follow the game") { f.hub.recording?.followedPID == 4242 }
         #expect(f.hub.latest?.followedPID == 4242)
-        let result = try #require(f.hub.stopRecording())
+        let result = try #require(await f.hub.stopRecording())
         #expect(f.streams.count == 1)
         #expect(f.streams.last?.stopped == false)
         #expect(try RunBundle.load(result.directory).info.game.exe == "Game4242.exe")
         withExtendedLifetime(h) {}
+    }
+
+    @Test func stopFinishesBundle() async throws {
+        let f = Fixture()
+        try await f.hub.startRecording(options: f.options())
+        try await waitUntil("a recording tick") { f.hub.recording != nil }
+        let result = try #require(await f.hub.stopRecording())
+        let summary = try #require(result.summary)
+        #expect(FileManager.default.fileExists(atPath: summary.path))
+        #expect(try RunBundle.load(result.directory).info.end != nil)
+        #expect(f.hub.lastRun == result)
+        #expect(!f.hub.isRecording)
+    }
+
+    /// The finish runs off the main actor; while it runs a second start (double hotkey press) is refused.
+    @Test func stopRunsOffMainAndRefusesStartWhileFinishing() async throws {
+        let f = Fixture()
+        let h = f.hub.acquire(.hud)
+        try await f.hub.startRecording(options: f.options())
+        f.detection.close()   // the session's stack detection of the game now hangs, so `stop` waits for it
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        try await waitUntil("the recording to follow the game") { f.hub.recording?.followedPID == 4242 }
+        let stopping = Task { await f.hub.stopRecording() }
+        try await waitUntil("the stop to begin") { f.hub.isFinishingRecording }
+        // The main actor is free while the session finishes.
+        #expect(!f.hub.isRecording)
+        await #expect(throws: TelemetryHub.RecordingError.stillFinishing) {
+            try await f.hub.startRecording(options: f.options())
+        }
+        f.detection.open()
+        let result = try #require(await stopping.value)
+        #expect(!f.hub.isFinishingRecording)
+        #expect(f.hub.lastRun == result)
+        try await f.hub.startRecording(options: f.options())   // allowed again
+        #expect(f.hub.stopRecordingNow() != nil)
+        withExtendedLifetime(h) {}
+    }
+
+    /// Quit path: finishes synchronously.
+    @Test func stopRecordingNowFinishesSynchronously() async throws {
+        let f = Fixture()
+        try await f.hub.startRecording(options: f.options())
+        let result = try #require(f.hub.stopRecordingNow())
+        #expect(try RunBundle.load(result.directory).info.end != nil)
+        #expect(!f.hub.isRecording && f.hub.recording == nil)
+        f.hub.waitForSamplerWork()
+        #expect(f.samplers.live == 0)
+        #expect(await f.hub.stopRecording() == nil)
+    }
+
+    /// An update produced before the stream stopped but delivered after it must not bring the game back.
+    @Test func staleUpdateCannotResurrectFollow() async {
+        let f = Fixture()
+        let h = f.hub.acquire(.hud)
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        await settle()
+        let stale = f.hub.latestUpdateForTesting
+        #expect(stale?.snapshot.followedPID == 4242)
+        h.release()
+        await settle()
+        #expect(f.hub.latest?.followedPID == nil)
+        if let stale { f.hub.applyForTesting(stale) }
+        #expect(f.hub.latest?.followedPID == nil)
+    }
+
+    @Test func tokenReleasedOffMainReleasesOnMain() async throws {
+        let f = Fixture()
+        let t = f.hub.acquire(.samples)
+        #expect(f.scheduler.activeRepeating == 1)
+        DispatchQueue.global().async { t.release() }
+        try await waitUntil("the hold to drop") { f.scheduler.activeRepeating == 0 }
+        f.hub.waitForSamplerWork()
+        #expect(f.samplers.live == 0)
     }
 }

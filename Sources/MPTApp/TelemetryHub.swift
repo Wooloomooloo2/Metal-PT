@@ -108,7 +108,8 @@ public final class TelemetryHub: ObservableObject {
     }
 
     /// What the session is built from (all of them the hub's).
-    public struct SessionParts {
+    /// Unchecked: the hub's own adapters, which are thread-safe.
+    public struct SessionParts: @unchecked Sendable {
         public let telemetry: TelemetrySource
         public let hud: HUDEventSource
         public let clock: @Sendable () -> Double
@@ -190,7 +191,25 @@ public final class TelemetryHub: ObservableObject {
     /// Session messages (progress, problems), on the main thread.
     public var onRecordingMessage: ((SessionMessage) -> Void)?
 
-    public var isRecording: Bool { session != nil }
+    /// Why `startRecording` refused.
+    public enum RecordingError: Error, Equatable, CustomStringConvertible {
+        /// A recording is starting or running.
+        case alreadyRecording
+        /// The previous recording is still being finished (summary, rename); try again in a moment.
+        case stillFinishing
+
+        public var description: String {
+            switch self {
+            case .alreadyRecording: "a recording is already running"
+            case .stillFinishing: "the previous recording is still being saved"
+            }
+        }
+    }
+
+    /// True from `startRecording` until `stopRecording` begins finishing the run.
+    public var isRecording: Bool { session != nil || starting != nil }
+    /// True while a stopped recording is being finished off the main actor.
+    public var isFinishingRecording: Bool { finishing != nil }
 
     /// Live HUD processes except Metal-PT, busiest first, with exe name and stack (nil while detecting).
     public var followCandidates: [(pid: Int32, app: String, stack: Stack?)] { engine.candidates() }
@@ -199,8 +218,17 @@ public final class TelemetryHub: ObservableObject {
     private let engine: HubEngine
     private var holds: [UUID: Need] = [:]
     private var menuBarToken: Token?
-    private var session: RecordingSession?
+    /// Set from `startRecording` until the run is finished (keeps the sampler for a tick in flight).
     private var recordingID: UUID?
+    /// The session being created and started off main; completes after `session` is installed.
+    private var starting: Task<RecordingSession, Error>?
+    private var session: RecordingSession?
+    /// The stopped session while it finishes off main, and that finish.
+    private var finishing: RecordingSession?
+    private var finishTask: Task<RunResult?, Never>?
+    /// Sequence number of the newest update applied (older ones arriving late are dropped).
+    private var appliedSeq: UInt64 = 0
+    private(set) var latestUpdateForTesting: HubEngine.Update?
 
     public init(dependencies: Dependencies = .live) {
         deps = dependencies
@@ -211,7 +239,7 @@ public final class TelemetryHub: ObservableObject {
     }
 
     isolated deinit {
-        session?.stop()
+        stopRecordingNow()
         engine.shutdown()
     }
 
@@ -231,8 +259,13 @@ public final class TelemetryHub: ObservableObject {
     /// Starts a recording on the hub's sources. `options.follow` is replaced by the app's rule
     /// (`.preferTranslated` excluding Metal-PT, with the current pin; the pin is fixed for the run).
     /// Starts telemetry-only when no game is followed (or FPS logging is off); FPS fills in once one logs.
-    public func startRecording(options: RecordingSession.Options) throws {
-        guard session == nil else { throw RecordingSession.StateError.alreadyStarted }
+    ///
+    /// The slow part (machine/power-mode/battery reads, priming, creating the bundle) runs off the main actor.
+    /// Refused (`RecordingError`) while a recording is starting or running, and while the previous one is still
+    /// finishing: a second hotkey press during the finish does not start a run over it.
+    public func startRecording(options: RecordingSession.Options) async throws {
+        if finishing != nil { throw RecordingError.stillFinishing }
+        guard session == nil, starting == nil else { throw RecordingError.alreadyRecording }
         var options = options
         options.follow = .preferTranslated(exclude: [deps.selfPID], pinned: pinned)
         let id = UUID()
@@ -245,47 +278,105 @@ public final class TelemetryHub: ObservableObject {
                                  stackDetector: { cache.detectNow(pid: $0) },
                                  stackOf: { cache.stack(for: $0) },
                                  argv0: deps.argv0)
-        // The sampler must exist before the session primes it (and the hub's own timer pauses).
+        // The sampler is wanted before the session primes it (and the hub's own timer pauses).
         reconcile()
-        let s: RecordingSession
-        do {
-            s = try deps.makeSession(options, parts)
-        } catch {
-            recordingID = nil
-            reconcile()
-            throw error
+        let makeSession = deps.makeSession
+        let task = Task.detached { [weak self] () throws -> RecordingSession in
+            let s: RecordingSession
+            do {
+                s = try makeSession(options, parts)
+            } catch {
+                await self?.startFailed(id, result: nil)
+                throw error
+            }
+            s.onTick = { status in engine.recordingTick(status, id: id) }
+            s.onEnd = { [weak self] _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.sessionEnded(id) } }
+            }
+            s.onMessage = { [weak self] m in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.onRecordingMessage?(m) } }
+            }
+            do {
+                try s.start()
+            } catch {
+                // `stop` still finishes a bundle created before the failure.
+                let result = s.stop()
+                await self?.startFailed(id, result: result)
+                throw error
+            }
+            guard let self else {
+                s.stop()
+                return s
+            }
+            await self.installSession(s, id: id)
+            return s
         }
-        s.onTick = { status in engine.recordingTick(status, id: id) }
-        s.onEnd = { [weak self] _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.sessionEnded(id) } }
-        }
-        s.onMessage = { [weak self] m in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onRecordingMessage?(m) } }
-        }
-        session = s
-        do {
-            try s.start()
-        } catch {
-            // `stop` still finishes a bundle created before the failure.
-            _ = stopRecording()
-            throw error
-        }
+        starting = task
+        _ = try await task.value
     }
 
-    /// Finishes the recording (blocks briefly: summary, rename). nil when not recording.
+    /// Stops the recording and finishes it (end time, rename, summary) off the main actor. Returns the run, or nil
+    /// when not recording. A stop pressed while the recording is still starting waits for the start, then stops.
+    /// Concurrent calls share one finish.
     @discardableResult
-    public func stopRecording() -> RunResult? {
-        guard let s = session else { return nil }
+    public func stopRecording() async -> RunResult? {
+        if let t = starting { _ = try? await t.value }
+        if let t = finishTask { return await t.value }
+        guard let s = session, let id = recordingID else { return nil }
         session = nil
-        recordingID = nil
-        let result = s.stop()
-        recording = nil
-        if let result { lastRun = result }
-        reconcile()
+        finishing = s
+        let task = Task.detached { s.stop() }
+        finishTask = task
+        let result = await task.value
+        didFinish(id, result)
         return result
     }
 
+    /// Synchronous stop for quit and deinit only: blocks the main thread until the run is finished (up to ~2 s for a
+    /// stack detection, plus the summary). Also completes a finish already under way (`stop` is idempotent).
+    /// A recording still starting is not stopped here.
+    @discardableResult
+    public func stopRecordingNow() -> RunResult? {
+        guard let s = session ?? finishing, let id = recordingID else { return nil }
+        session = nil
+        let result = s.stop()
+        didFinish(id, result)
+        return result
+    }
+
+    // MARK: - Internal (tests)
+
+    /// Waits for sampler creation/priming queued off main.
+    func waitForSamplerWork() { engine.waitForSamplerWork() }
+
+    func applyForTesting(_ u: HubEngine.Update) { apply(u) }
+
     // MARK: - Private
+
+    private func installSession(_ s: RecordingSession, id: UUID) {
+        starting = nil
+        guard recordingID == id else { s.stop(); return }
+        session = s
+    }
+
+    private func startFailed(_ id: UUID, result: RunResult?) {
+        starting = nil
+        guard recordingID == id else { return }
+        recordingID = nil
+        recording = nil
+        if let result { lastRun = result }
+        reconcile()
+    }
+
+    private func didFinish(_ id: UUID, _ result: RunResult?) {
+        guard recordingID == id else { return }   // already finished (`stopRecordingNow`)
+        finishing = nil
+        finishTask = nil
+        recordingID = nil
+        recording = nil
+        if let result { lastRun = result }
+        reconcile()
+    }
 
     private func release(_ id: UUID) {
         guard holds.removeValue(forKey: id) != nil else { return }
@@ -316,11 +407,17 @@ public final class TelemetryHub: ObservableObject {
     }
 
     private func sessionEnded(_ id: UUID) {
-        guard id == recordingID else { return }
-        stopRecording()
+        guard id == recordingID, finishing == nil else { return }
+        Task { await stopRecording() }
     }
 
+    /// Updates are numbered when made (under the engine lock) but posted to main from several threads, so one can
+    /// arrive after a newer one: it is dropped (e.g. a tick made before the stream stopped must not bring the
+    /// followed game back).
     private func apply(_ u: HubEngine.Update) {
+        guard u.seq > appliedSeq else { return }
+        appliedSeq = u.seq
+        latestUpdateForTesting = u
         latest = u.snapshot
         if u.addToHistory {
             history.append(u.snapshot)
@@ -343,6 +440,8 @@ final class HubEngine: @unchecked Sendable {
         var expiredPin: Int32?
         var recording: SessionStatus?
         var recordingID: UUID?
+        /// Assigned under the engine lock, increasing: the hub drops an update older than one it applied.
+        var seq: UInt64 = 0
     }
 
     private struct Follow: Equatable {
@@ -357,11 +456,16 @@ final class HubEngine: @unchecked Sendable {
     let stackCache: AsyncStackCache
     private let deps: TelemetryHub.Dependencies
     private let lock = NSLock()
+    /// Serialises sampler creation and use (a `TelemetrySampler` is used from one thread at a time).
     private let samplerLock = NSLock()
+    /// Creates and primes the sampler off the main thread.
+    private let samplerQueue = DispatchQueue(label: "mpt.hub.sampler", qos: .utility)
 
     // Under `lock`.
     private var sink: (@Sendable (Update) -> Void)?
     private var sampler: TelemetrySource?
+    private var samplerWanted = false
+    private var seq: UInt64 = 0
     private var stream: HUDEventSource?
     private var generation = 0
     private var tickTimer: HubTimer?
@@ -384,7 +488,8 @@ final class HubEngine: @unchecked Sendable {
     func setPinned(_ pid: Int32?) { lock.withLock { pinned = pid } }
 
     /// Starts (a fresh source each time: a stopped `MetalHUDLogStream` cannot restart) or stops the log stream.
-    /// Stopping forgets the follow state and publishes a follow-only snapshot when a game was followed.
+    /// Stopping forgets the follow state and publishes a follow-only snapshot (no followed game), which also
+    /// supersedes any update made before the stop that is still on its way to the main thread.
     func setStream(_ on: Bool) throws {
         if on {
             let started: (HUDEventSource, Int)? = lock.withLock {
@@ -410,27 +515,20 @@ final class HubEngine: @unchecked Sendable {
                 imagePaths = [:]
                 quietTimer?.cancel()
                 quietTimer = nil
-                let wasFollowing = lastFollow.pid != nil
                 lastFollow = Follow()
-                guard wasFollowing else { return (old, nil) }
-                return (old, Update(snapshot: snapshot(lastSample ?? TelemetrySample(), Follow(), fps: nil),
-                                    addToHistory: false))
+                return (old, stamped(Update(snapshot: snapshot(lastSample ?? TelemetrySample(), Follow(), fps: nil),
+                                            addToHistory: false)))
             }
             old?.stop()
             if let update { deliver(update) }
         }
     }
 
-    /// `active`: the sampler exists (created and primed if missing; dropped otherwise). `ticking`: the hub's own
-    /// 1 Hz timer runs it.
+    /// `active`: the sampler is wanted (created and primed off main, on `samplerQueue` or by the first
+    /// `sampleNow`, whichever comes first; dropped at once otherwise). `ticking`: the hub's own 1 Hz timer runs it.
     func setSampling(active: Bool, ticking: Bool) {
-        let needsSampler = lock.withLock { active && sampler == nil }
-        if needsSampler {
-            let s = deps.makeSampler()
-            samplerLock.withLock { _ = s.sample() }   // primes power and utilisation
-            lock.withLock { if sampler == nil { sampler = s } }
-        }
-        lock.withLock {
+        let create: Bool = lock.withLock {
+            samplerWanted = active
             if !active { sampler = nil }
             if ticking && active {
                 if tickTimer == nil {
@@ -444,6 +542,30 @@ final class HubEngine: @unchecked Sendable {
                 tickTimer?.cancel()
                 tickTimer = nil
             }
+            return active && sampler == nil
+        }
+        if create {
+            samplerQueue.async { [weak self] in
+                guard let self else { return }
+                samplerLock.withLock { _ = ensureSampler() }
+            }
+        }
+    }
+
+    /// Waits for sampler work queued so far (tests).
+    func waitForSamplerWork() { samplerQueue.sync {} }
+
+    /// Under `samplerLock`: the sampler, created and primed (its first sample has no power or utilisation) if
+    /// wanted and missing.
+    private func ensureSampler() -> TelemetrySource? {
+        if let s = lock.withLock({ sampler }) { return s }
+        guard lock.withLock({ samplerWanted }) else { return nil }
+        let s = deps.makeSampler()
+        _ = s.sample()
+        return lock.withLock {
+            guard samplerWanted else { return nil }
+            if sampler == nil { sampler = s }
+            return sampler
         }
     }
 
@@ -454,6 +576,7 @@ final class HubEngine: @unchecked Sendable {
             tickTimer = nil
             quietTimer = nil
             sampler = nil
+            samplerWanted = false
             generation += 1
             defer { stream = nil }
             return stream
@@ -464,7 +587,7 @@ final class HubEngine: @unchecked Sendable {
     /// One sample from the hub's sampler (also the recording's `TelemetrySource`); nil when there is no sampler.
     func sampleNow() -> TelemetrySample? {
         samplerLock.withLock {
-            guard let sampler = lock.withLock({ self.sampler }) else { return nil }
+            guard let sampler = ensureSampler() else { return nil }
             let s = sampler.sample()
             lock.withLock { lastSample = s }
             return s
@@ -506,8 +629,8 @@ final class HubEngine: @unchecked Sendable {
         let update: Update = lock.withLock {
             let (follow, fps, expired) = resolve()
             lastFollow = follow
-            return Update(snapshot: snapshot(sample, follow, fps: fps), addToHistory: true, expiredPin: expired,
-                          recording: recording, recordingID: id)
+            return stamped(Update(snapshot: snapshot(sample, follow, fps: fps), addToHistory: true,
+                                  expiredPin: expired, recording: recording, recordingID: id))
         }
         deliver(update)
     }
@@ -547,8 +670,8 @@ final class HubEngine: @unchecked Sendable {
         }
         guard follow != lastFollow || expired != nil else { return nil }
         lastFollow = follow
-        return Update(snapshot: snapshot(lastSample ?? TelemetrySample(), follow, fps: fps), addToHistory: false,
-                      expiredPin: expired)
+        return stamped(Update(snapshot: snapshot(lastSample ?? TelemetrySample(), follow, fps: fps),
+                              addToHistory: false, expiredPin: expired))
     }
 
     /// Under `lock`: the live followed process now, and a pin that is no longer live (cleared here).
@@ -566,6 +689,14 @@ final class HubEngine: @unchecked Sendable {
               counter.isLive(pid: pid, at: now) else { return (Follow(), nil, expired) }
         return (Follow(pid: pid, app: name(of: pid), stack: cache.stack(for: pid)), counter.fps(pid: pid, at: now),
                 expired)
+    }
+
+    /// Under `lock`.
+    private func stamped(_ u: Update) -> Update {
+        seq += 1
+        var u = u
+        u.seq = seq
+        return u
     }
 
     private func snapshot(_ sample: TelemetrySample, _ follow: Follow, fps: Double?) -> HubSnapshot {

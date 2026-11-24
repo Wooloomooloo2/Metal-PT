@@ -186,6 +186,31 @@ private final class NoTelemetry: TelemetrySource, @unchecked Sendable {
     }
 }
 
+@Suite struct AsyncStackCacheRetryWaitTests {
+    /// A known "native" result being re-detected: `detectNow` waits for the retry instead of returning the old one.
+    @Test func detectNowWaitsForRetry() async throws {
+        let clock = Atomic()
+        let calls = Atomic()
+        let gate = DispatchSemaphore(value: 0)
+        let cache = AsyncStackCache(now: { Double(clock.value) }, detect: { _ in
+            calls.bump()
+            if calls.value == 1 { return Stack(runtime: "native") }
+            gate.wait()
+            return Stack(runtime: "Wine (unknown)")
+        })
+        #expect(cache.detectNow(pid: 1).runtime == "native")
+        for _ in 0..<5 { clock.bump() }
+        #expect(cache.stack(for: 1)?.runtime == "native")   // starts the retry
+        let box = StackBox()
+        DispatchQueue.global().async { box.value = cache.detectNow(pid: 1) }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(box.value == nil)
+        gate.signal()
+        for _ in 0..<200 where box.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(box.value?.runtime == "Wine (unknown)")
+    }
+}
+
 private final class StackBox: @unchecked Sendable {
     private let l = NSLock(); private var s: Stack?
     var value: Stack? { get { l.withLock { s } } set { l.withLock { s = newValue } } }

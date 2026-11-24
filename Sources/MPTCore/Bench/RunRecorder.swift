@@ -66,10 +66,11 @@ public final class AsyncStackCache: @unchecked Sendable {
         return entry?.stack
     }
 
-    /// Blocking: the known stack; else waits for the detection under way; else detects now (and caches the result).
+    /// Blocking: waits for a detection (or re-detection) under way; else the known stack; else detects now (and
+    /// caches the result).
     public func detectNow(pid: Int32) -> Stack {
         condition.lock()
-        while known[pid] == nil && pending.contains(pid) { condition.wait() }
+        while pending.contains(pid) { condition.wait() }
         if let entry = known[pid] {
             condition.unlock()
             return entry.stack
