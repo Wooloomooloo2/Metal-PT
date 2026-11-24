@@ -402,12 +402,16 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
 
     @Test func startWithoutGameRecordsTelemetry() async throws {
         let f = Fixture()
-        try await f.hub.startRecording(options: f.options(seconds: 2))
+        // A second start while one runs is refused. (Checked on a run without a duration: a 2-tick run can end
+        // before this test gets the main actor back when other tests keep it busy.)
+        try await f.hub.startRecording(options: f.options())
         await #expect(throws: TelemetryHub.RecordingError.alreadyRecording) {
             try await f.hub.startRecording(options: f.options())
         }
+        let first = await f.hub.stopRecording()
+        try await f.hub.startRecording(options: f.options(seconds: 2))
         // The session ends itself after 2 ticks; the hub finishes it.
-        try await waitUntil("the run to finish") { f.hub.lastRun != nil && f.hub.recording == nil }
+        try await waitUntil("the run to finish") { f.hub.lastRun != first && f.hub.recording == nil }
         let run = try #require(f.hub.lastRun)
         let b = try RunBundle.load(run.directory)
         #expect(b.rows.count == 2)

@@ -246,7 +246,9 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         let f = Fixture()
         f.model.launch()
         f.model.toggleRecording()
-        try await waitUntil("recording") { f.model.recordState == .recording }
+        // The start notice is posted when the start task resumes, which can be after the first tick shows
+        // `.recording` (the main actor is shared with other tests).
+        try await waitUntil("recording") { f.model.recordState == .recording && f.notifier.posted.count == 1 }
         #expect(f.notifier.authorizationRequests == 1)
         #expect(f.notifier.posted.first?.title == "Recording — no game detected yet")
         f.model.toggleRecording()
@@ -268,7 +270,7 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         let f = Fixture()
         f.model.launch()
         f.model.toggleRecording()
-        try await waitUntil("recording") { f.model.recordState == .recording }
+        try await waitUntil("recording") { f.model.recordState == .recording && f.notifier.posted.count == 1 }
         let send = try #require(f.hub.onRecordingMessage, "the app must listen to session messages")
         send(SessionMessage(level: .info, text: "launched x"))
         #expect(f.model.recordingProblem == nil)
@@ -286,7 +288,7 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(f.model.recordingProblem?.contains("disk full") == true)
 
         f.model.toggleRecording()
-        try await waitUntil("recording again") { f.model.recordState == .recording }
+        try await waitUntil("recording again") { f.model.recordState == .recording && f.notifier.posted.count == 3 }
         #expect(f.model.recordingProblem == nil)
         f.model.toggleRecording()
         try await waitUntil("idle again") { f.model.recordState == .idle && f.notifier.posted.count == 4 }
