@@ -34,7 +34,7 @@ public enum SummaryReport {
 
     static let columnNames: [String: String] = [
         "fps": "Frame rate", "ft_p99_ms": "Frame time p99", "ft_max_ms": "Frame time max",
-        "gpu_w": "GPU power", "cpu_p_util_pct": "CPU P-cores busy", "cpu_e_util_pct": "CPU E-cores busy",
+        "gpu_w": "GPU power (IOReport, under-reads)", "cpu_p_util_pct": "CPU P-cores busy", "cpu_e_util_pct": "CPU E-cores busy",
         "cpu_core_max_pct": "Busiest CPU core", "gpu_busy_pct": "GPU busy",
         // Only PSTR (system total) and PDTR (DC-in) have measured meanings (hardware-baseline.md); the other
         // SMC power keys are shown by key alone.
@@ -73,7 +73,9 @@ public enum SummaryReport {
 
         // Warnings, in order, without repeats.
         var seen = Set<String>()
-        let warnings = (summary.notes + bundle.warnings + info.warnings).filter { seen.insert($0).inserted }
+        var extra: [String] = []
+        if summary.powerColumn == "gpu_w" { extra.append(gpuOnlyWarning) }
+        let warnings = (summary.notes + bundle.warnings + info.warnings + extra).filter { seen.insert($0).inserted }
         if !warnings.isEmpty {
             body += "<aside class=\"warn\"><h3>Read with care</h3><ul>"
             body += warnings.map { "<li>\(e($0))</li>" }.joined()
@@ -101,6 +103,11 @@ public enum SummaryReport {
         return HTML.page(title: "\(game) · fwbench", meta: [("fwhelper-run", bundle.url.lastPathComponent)],
                          body: body)
     }
+
+    static let gpuOnlyWarning = "power is GPU-only (IOReport), FPS/W not comparable across runs"
+    /// docs/hardware-baseline.md E6: IOReport GPU Energy read about 1.2 W where the SoC SMC keys rose about 12 W.
+    static let gpuCaption = "IOReport GPU energy under-reads on this machine (≈1.2 W where the SoC keys rose ≈12 W); "
+        + "use the system line to compare runs."
 
     private static func startText(_ date: Date) -> String {
         let f = DateFormatter()
@@ -154,10 +161,12 @@ public enum SummaryReport {
                     hint: s.low1 == nil ? lowHint : "")
         out += tile("0.1 % low", HTML.number(s.low01, digits: 1), s.low01 == nil ? "" : lowDetail,
                     hint: s.low01 == nil ? lowHint : "")
-        let powerName = s.powerColumn == "smc_PSTR_w" ? "System power" : "GPU power"
         if let col = s.powerColumn, let mean = s.stats[col]?.mean {
             let perW = s.fpsPerWatt.map { "\(HTML.number($0, digits: 2)) FPS/W" } ?? "mean over steady seconds"
-            out += tile(powerName, "\(HTML.number(mean, digits: 1))<small> W</small>", perW)
+            let gpuOnly = col == "gpu_w"
+            out += tile(gpuOnly ? "GPU power (under-reads)" : "System power",
+                        "\(HTML.number(mean, digits: 1))<small> W</small>", perW,
+                        hint: gpuOnly ? "no system power key — FPS/W not comparable" : "")
         } else {
             out += tile("Power", "—", "no power readings")
         }
@@ -175,18 +184,21 @@ public enum SummaryReport {
         func has(_ values: [Double?]) -> Bool { values.contains { $0 != nil } }
         func chart(_ title: String, _ series: [(name: String, values: [Double?])], unit: String,
                    yMin: Double? = nil, yMax: Double? = nil, reference: (label: String, value: Double)? = nil,
-                   digits: Int = 1, minSpan: Double = 0, height: Double = 190) -> String {
+                   digits: Int = 1, minSpan: Double = 0, height: Double = 190, caption: String = "") -> String {
             let present = series.filter { has($0.values) }
             guard !present.isEmpty else { return "" }
             return "<div class=\"chart\"><h3>\(HTML.escape(title))</h3>"
                 + HTML.lineChart(series: present, steady: s.steadySeconds, unit: unit, x: x, yMin: yMin, yMax: yMax,
                                  reference: reference, digits: digits, minSpan: minSpan, height: height)
+                + (caption.isEmpty ? "" : "<p class=\"note\">\(HTML.escape(caption))</p>")
                 + "</div>\n"
         }
 
         var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">Over time</div>"
         out += "<p class=\"note\">Shaded seconds are outside the steady window (warm-up, loading, menus) and are left "
-        out += "out of every number on this page. Hover a chart for the values at that second.</p></div>\n"
+        let bucket = HTML.hoverBucket(count: rows.count)
+        out += "out of every number on this page. Hover a chart for the values at that second"
+        out += bucket > 1 ? " (averaged over \(bucket) s on long runs).</p></div>\n" : ".</p></div>\n"
 
         let fps = column(rows, "fps")
         if has(fps) {
@@ -199,7 +211,9 @@ public enum SummaryReport {
             out += "<span class=\"mono\">fwbench hud on</span> and relaunch the game, or launch it with "
             out += "<span class=\"mono\">fwbench run</span>.</p></div>\n"
         }
-        out += chart("Power", [("System", column(rows, "smc_PSTR_w")), ("GPU", column(rows, "gpu_w"))], unit: "W", yMin: 0)
+        let gpu = column(rows, "gpu_w")
+        out += chart("Power", [("System", column(rows, "smc_PSTR_w")), ("GPU (IOReport, under-reads)", gpu)],
+                     unit: "W", yMin: 0, caption: has(gpu) ? gpuCaption : "")
         out += chart("Utilisation", [("CPU P-cores", column(rows, "cpu_p_util_pct")),
                                      ("CPU E-cores", column(rows, "cpu_e_util_pct")),
                                      ("GPU busy", column(rows, "gpu_busy_pct"))], unit: "%", yMin: 0, yMax: 100)

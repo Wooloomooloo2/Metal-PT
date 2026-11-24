@@ -74,3 +74,60 @@ import Foundation
         #expect(out.contains("—"))
     }
 }
+
+@Suite struct SummaryReportEdgeTests {
+    private func clean(_ s: String) -> Bool {
+        let l = s.lowercased()
+        return !l.contains("nan") && !l.contains("inf")
+    }
+
+    @Test func escapesCombiningMarksAfterSpecials() {
+        let out = HTML.escape("\"\u{301}<\u{301}")
+        #expect(out == "&quot;\u{301}&lt;\u{301}")
+        #expect(!out.unicodeScalars.contains("\""))
+        #expect(!out.unicodeScalars.contains("<"))
+    }
+
+    @Test func chartEdgeCasesStayFinite() {
+        let cases: [[(name: String, values: [Double?])]] = [
+            [],
+            [(name: "a", values: [])],
+            [(name: "a", values: [nil, nil, nil])],
+            [(name: "a", values: [5])],
+            [(name: "a", values: [nil, 7, nil])],
+            [(name: "a", values: [3, 3, 3, 3])],
+            [(name: "a", values: [0, 0, 0])],
+            [(name: "a", values: [-2, -2])],
+        ]
+        for series in cases {
+            let svg = HTML.lineChart(series: series, steady: [], unit: "W")
+            #expect(clean(svg), "\(series)")
+            #expect(svg.contains("</svg>"))
+        }
+        let pinned = HTML.lineChart(series: [(name: "a", values: [1, 1])], steady: [0, 1], unit: "%", yMin: 0, yMax: 100,
+                                    minSpan: 20)
+        #expect(clean(pinned))
+        #expect(clean(HTML.bars([], unit: "fps")))
+        #expect(clean(HTML.bars([(label: "z", value: 0, note: "")], unit: "fps")))
+    }
+
+    @Test func singlePointIsDrawnAsDot() {
+        let svg = HTML.lineChart(series: [(name: "a", values: [nil, 7, nil])], steady: [1], unit: "W")
+        #expect(svg.contains("h0"))
+    }
+
+    @Test func gpuOnlyPowerIsFlagged() {
+        let info = RunInfo(appVersion: "0.1", machine: .init(modelID: "M", chip: "C", memoryGB: 8, osVersion: "15",
+                                                             osBuild: "1"),
+                           game: .init(exe: "g"), start: Date(timeIntervalSince1970: 0), fpsSource: "log")
+        let rows: [[String: String]] = (0..<30).map { ["elapsed_s": "\($0)", "fps": "60", "fps_app": "g", "gpu_w": "2.00"] }
+        let b = RunBundle(url: URL(fileURLWithPath: "/r.fwrun"), info: info, rows: rows, frames: nil, warnings: [])
+        let out = SummaryReport.html(b, RunSummary(b))
+        #expect(out.contains("GPU power (under-reads)"))
+        #expect(out.contains("no system power key — FPS/W not comparable"))
+        #expect(out.contains("power is GPU-only (IOReport), FPS/W not comparable across runs"))
+        #expect(out.contains("GPU (IOReport, under-reads)"))
+        #expect(out.contains("IOReport GPU energy under-reads"))
+        #expect(!out.contains("averaged over"))
+    }
+}

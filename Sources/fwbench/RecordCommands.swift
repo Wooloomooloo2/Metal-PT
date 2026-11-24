@@ -91,11 +91,25 @@ enum RecordCommands {
     // MARK: - summary
 
     static func summary(_ args: [String]) throws {
-        let open = args.contains("--open")
-        let rest = args.filter { $0 != "--open" }
-        guard let run = rest.first, !run.hasPrefix("--") else { throw UsageError("summary needs a run") }
-        let o = try parseOptions(Array(rest.dropFirst()), allowed: ["--out"])
-        let url = try SummaryReport.write(bundleAt: try locateRun(run, out: o["--out"]))
+        // Options may come before or after RUN: `--open` is a flag, `--out` takes a value, one positional is RUN.
+        var open = false, out: String?, run: String?
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            switch a {
+            case "--open": open = true
+            case "--out":
+                guard i + 1 < args.count else { throw UsageError("--out needs a value") }
+                out = args[i + 1]; i += 1
+            default:
+                guard !a.hasPrefix("--") else { throw UsageError("unexpected argument '\(a)'") }
+                guard run == nil else { throw UsageError("summary takes one run, got '\(a)' too") }
+                run = a
+            }
+            i += 1
+        }
+        guard let run else { throw UsageError("summary needs a run") }
+        let url = try SummaryReport.write(bundleAt: try locateRun(run, out: out))
         print(url.path)
         if open { try runTool("/usr/bin/open", [url.path]) }
     }

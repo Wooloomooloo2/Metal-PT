@@ -5,20 +5,21 @@ import Foundation
 public enum HTML {
     // MARK: - Text
 
+    /// Escapes per Unicode scalar: a quote followed by a combining mark is one Character, so a Character-level
+    /// switch would let it through raw.
     public static func escape(_ text: String) -> String {
-        var out = ""
-        out.reserveCapacity(text.count)
-        for c in text {
+        var out = String.UnicodeScalarView()
+        for c in text.unicodeScalars {
             switch c {
-            case "&": out += "&amp;"
-            case "<": out += "&lt;"
-            case ">": out += "&gt;"
-            case "\"": out += "&quot;"
-            case "'": out += "&#39;"
+            case "&": out.append(contentsOf: "&amp;".unicodeScalars)
+            case "<": out.append(contentsOf: "&lt;".unicodeScalars)
+            case ">": out.append(contentsOf: "&gt;".unicodeScalars)
+            case "\"": out.append(contentsOf: "&quot;".unicodeScalars)
+            case "'": out.append(contentsOf: "&#39;".unicodeScalars)
             default: out.append(c)
             }
         }
-        return out
+        return String(out)
     }
 
     /// Fixed-point, `.` decimal point; nil or non-finite → "—".
@@ -110,6 +111,7 @@ public enum HTML {
         .chart { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 6px;
           display: flex; flex-direction: column; gap: 4px; break-inside: avoid; }
         .chart h3 { font-size: 0.85rem; font-weight: 600; color: var(--ink-2); padding: 0 4px; }
+        .chart .note { padding: 0 4px 4px; }
         .chart svg { display: block; width: 100%; height: auto; font-family: var(--f-mono); }
         .chart svg text { font-size: 10.5px; fill: var(--ink-3); }
         .chart svg .shade { fill: var(--shade); }
@@ -153,17 +155,18 @@ public enum HTML {
     /// Series colour slot `i` (0-based).
     public static func seriesColor(_ i: Int) -> String { "var(--s\(min(i, 5) + 1))" }
 
-    /// A legend row: a line swatch per series (shown for two or more series), plus extra raw HTML items.
-    public static func legend(_ names: [String], extra: String = "") -> String {
-        guard names.count >= 2 || !extra.isEmpty else { return "" }
+    /// A legend row with a line swatch per series; empty for a single series (the chart title names it).
+    public static func legend(_ names: [String]) -> String {
+        guard names.count >= 2 else { return "" }
         var out = "<div class=\"legend\">"
-        if names.count >= 2 {
-            for (i, n) in names.enumerated() {
-                out += "<span><i class=\"sw\" style=\"background:\(seriesColor(i))\"></i>\(escape(n))</span>"
-            }
+        for (i, n) in names.enumerated() {
+            out += "<span><i class=\"sw\" style=\"background:\(seriesColor(i))\"></i>\(escape(n))</span>"
         }
-        return out + extra + "</div>"
+        return out + "</div>"
     }
+
+    /// Seconds per hover band in `lineChart` for `count` samples (1 up to 240 samples; wider bands show means).
+    public static func hoverBucket(count: Int) -> Int { max(1, Int((Double(count) / 240).rounded(.up))) }
 
     /// A 1-2-5 step that splits `span` into about `count` intervals.
     static func niceStep(_ span: Double, count: Double) -> Double {
@@ -301,7 +304,7 @@ public enum HTML {
         }
 
         // Hover bands, at most ~240 per chart; wider bands show their mean.
-        let bucket = max(1, Int((Double(n) / 240).rounded(.up)))
+        let bucket = hoverBucket(count: n)
         var b = 0
         while b < n {
             let e = min(n, b + bucket) - 1
