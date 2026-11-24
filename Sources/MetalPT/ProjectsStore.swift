@@ -33,7 +33,7 @@ final class ProjectsStore: ObservableObject {
             let list = await Task.detached { library.projects() }.value
             self.refreshing = false
             if library === self.library {
-                self.projects = list
+                self.setProjects(list)
                 self.loaded = true
             }
             if self.refreshAgain, let current = self.library {
@@ -48,8 +48,9 @@ final class ProjectsStore: ObservableObject {
         return projects.first { $0.id == id }
     }
 
-    /// `id`, or what it was renamed to.
+    /// `id` when a listed project has it (an exact match always wins), else what it was renamed to.
     func currentID(_ id: String) -> String {
+        if projects.contains(where: { $0.id == id }) { return id }
         var id = id
         var seen: Set<String> = []
         while let next = renamed[id], seen.insert(id).inserted { id = next }
@@ -116,7 +117,8 @@ final class ProjectsStore: ObservableObject {
             try library.delete(id)
             return library.projects()
         }.value
-        projects = list
+        renamed = renamed.filter { $0.key != id && $0.value != id }
+        setProjects(list)
         details[id] = nil
         reportVersions[id] = nil
     }
@@ -124,7 +126,7 @@ final class ProjectsStore: ObservableObject {
     /// Snapshots: list and open every project synchronously.
     func showFixture(projectsRoot: URL, runsRoot: URL) {
         let library = library(projectsRoot: projectsRoot, runsRoot: runsRoot)
-        projects = library.projects()
+        setProjects(library.projects())
         for p in projects where p.problem == nil {
             details[p.id] = try? library.detail(p.id)
         }
@@ -148,15 +150,24 @@ final class ProjectsStore: ObservableObject {
     private func finishEdit(_ id: String) async {
         guard let library else { return }
         let (list, detail) = await Task.detached { (library.projects(), try? library.detail(id)) }.value
-        projects = list
+        setProjects(list)
         details[id] = detail
         reportVersions[id, default: 0] += 1
+    }
+
+    /// A new list; aliases are dropped once their old id is a real project again (a new project took the name) or
+    /// their target is gone.
+    private func setProjects(_ list: [ProjectSummary]) {
+        projects = list
+        let ids = Set(list.map(\.id))
+        renamed = renamed.filter { !ids.contains($0.key) && ids.contains($0.value) }
     }
 
     private func library(projectsRoot: URL, runsRoot: URL) -> CompareLibrary {
         if let library, library.projectsRoot == projectsRoot, library.runsRoot == runsRoot { return library }
         let library = CompareLibrary(projectsRoot: projectsRoot, runsRoot: runsRoot)
         self.library = library
+        renamed = [:]
         projects = []
         details = [:]
         loaded = false

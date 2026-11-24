@@ -207,18 +207,24 @@ final class AppModel: ObservableObject {
     var dataFolderIsDefault: Bool { defaults.string(forKey: SettingsKey.dataFolder) == nil }
 
     /// Settings: a new data folder (nil: back to `~/Documents/Metal-PT`). Existing files are not moved. Runs and
-    /// Compare switch to the new folders at once. Ignored while `$MPT_DATA_ROOT` is set.
-    func setDataFolder(_ url: URL?) {
-        guard dataFolderEnvRoot == nil else { return }
+    /// Compare switch to the new folders at once. Refused (returns why) while `$MPT_DATA_ROOT` is set, and while a
+    /// recording is starting, running or being saved (its run folder is under the current root).
+    @discardableResult
+    func setDataFolder(_ url: URL?) -> String? {
+        if dataFolderEnvRoot != nil { return "The data folder is set by MPT_DATA_ROOT." }
+        if recordState != .idle || startTask != nil || stopping {
+            return "The data folder can be changed once the recording has been saved."
+        }
         objectWillChange.send()
         if let url {
             defaults.set(url.standardizedFileURL.path, forKey: SettingsKey.dataFolder)
         } else {
             defaults.removeObject(forKey: SettingsKey.dataFolder)
         }
-        guard live else { return }
+        guard live else { return nil }
         runs.refresh(root: folder("runs"))
         projects.refresh(projectsRoot: folder("projects"), runsRoot: folder("runs"))
+        return nil
     }
 
     // MARK: - Lifecycle

@@ -347,29 +347,30 @@ enum Fixture {
         return 57.5 + 2 * sin(x / 5) + 0.8 * sin(x * 1.7) - dip
     }
 
-    /// Suites created for this render, removed (with their plist) afterwards.
-    private static var suites: [String] = []
-
-    /// A fresh defaults suite for one fixture (cleared first, in case an earlier render was killed).
+    /// In-memory defaults for one fixture: nothing reaches cfprefsd, so no plist is left behind.
     static func defaults(_ name: String) -> UserDefaults {
-        let suite = "metal-pt.snapshots.\(name)"
-        if !suites.contains(suite) {
-            UserDefaults().removePersistentDomain(forName: suite)
-            suites.append(suite)
-        }
-        return UserDefaults(suiteName: suite) ?? .standard
+        if let d = memory[name] { return d }
+        let d = MemoryDefaults()
+        memory[name] = d
+        return d
     }
 
+    private static var memory: [String: MemoryDefaults] = [:]
+
+    /// Removes the suites earlier versions persisted (`metal-pt.snapshots*`).
     static func removeDefaults() {
+        memory.removeAll()
         // Plus the single suite earlier versions left behind.
         let prefs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences")
-        for suite in suites + ["metal-pt.snapshots"] {
+        let legacy = ["", ".overlay-compact", ".overlay-compact-recording", ".overlay-detailed-recording",
+                      ".overlay-detailed-bottomright", ".settings", ".settings-hotkey", ".settings-envlocked",
+                      ".fixture"].map { "metal-pt.snapshots\($0)" }
+        for suite in legacy {
             UserDefaults().removePersistentDomain(forName: suite)
             CFPreferencesAppSynchronize(suite as CFString)
             // cfprefsd empties the domain but leaves its (empty) plist behind.
             try? FileManager.default.removeItem(at: prefs.appendingPathComponent("\(suite).plist"))
         }
-        suites.removeAll()
     }
 
     static func model(_ state: State, suite: String = "fixture", env: [String: String] = [:]) -> AppModel {
@@ -515,4 +516,27 @@ private struct NoLaunchctl: LaunchctlRunning {
     func getenv(_ name: String) -> String? { nil }
     func setenv(_ name: String, _ value: String) throws {}
     func unsetenv(_ name: String) throws {}
+}
+
+/// `UserDefaults` that keeps values in memory only (snapshot fixtures). Reads and writes that `@AppStorage` and
+/// `AppModel` use are overridden; the instance is never synchronised to a domain.
+final class MemoryDefaults: UserDefaults, @unchecked Sendable {
+    private var values: [String: Any] = [:]
+
+    init() { super.init(suiteName: "metal-pt.snapshots.memory")! }
+
+    override func object(forKey defaultName: String) -> Any? { values[defaultName] }
+    override func set(_ value: Any?, forKey defaultName: String) {
+        willChangeValue(forKey: defaultName)
+        values[defaultName] = value
+        didChangeValue(forKey: defaultName)
+    }
+    override func removeObject(forKey defaultName: String) { set(nil, forKey: defaultName) }
+    override func string(forKey defaultName: String) -> String? { values[defaultName] as? String }
+    override func bool(forKey defaultName: String) -> Bool { (values[defaultName] as? Bool) ?? false }
+    override func double(forKey defaultName: String) -> Double { (values[defaultName] as? Double) ?? 0 }
+    override func integer(forKey defaultName: String) -> Int { (values[defaultName] as? Int) ?? 0 }
+    override func set(_ value: Double, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
+    override func set(_ value: Bool, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
+    override func set(_ value: Int, forKey defaultName: String) { set(value as Any?, forKey: defaultName) }
 }

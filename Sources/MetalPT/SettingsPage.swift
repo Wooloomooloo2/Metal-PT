@@ -24,6 +24,7 @@ private struct SettingsContent: View {
     @StateObject private var recorder: HotkeyRecorder
     @StateObject private var loginItem = LoginItem()
     @State private var hotkeyMessages: [GlobalHotkeys.Action: String]
+    @State private var dataFolderProblem: String?
     @AppStorage(SettingsKey.overlayStyle) private var styleSetting = OverlayStyle.defaultValue.rawValue
     @AppStorage(SettingsKey.overlayCorner) private var cornerSetting = OverlayCorner.defaultValue.rawValue
     @AppStorage(SettingsKey.overlayOpacity) private var opacity = OverlayDefaults.opacity
@@ -91,7 +92,12 @@ private struct SettingsContent: View {
                 Text(action == .record ? "Start / stop recording" : "Show / hide overlay")
                 Spacer(minLength: 8)
                 HotkeyField(display: model.combo(for: action).display, recording: recorder.recording == action) {
-                    if recorder.recording == action { stopRecording() } else { startRecording(action) }
+                    // A click on a recording field has already stopped it (the recorder's mouse-down monitor).
+                    if recorder.recording == action || recorder.consumeClickStop(action) {
+                        recorder.stop()
+                    } else {
+                        startRecording(action)
+                    }
                 }
             }
             if let message { Warning(text: message) }
@@ -100,25 +106,19 @@ private struct SettingsContent: View {
 
     private func startRecording(_ action: GlobalHotkeys.Action) {
         hotkeyMessages[action] = nil
-        if recorder.recording == nil { model.suspendHotkeys() }
-        recorder.start(action) { outcome in
+        // The recorder hands the hotkeys back before the outcome is applied; `setHotkey` then re-registers.
+        recorder.start(action, hotkeys: model) { outcome in
             switch outcome {
-            case .cancel:
-                break
-            case .reset:
-                hotkeyMessages[action] = model.setHotkey(nil, for: action)
-            case .combo(let combo):
-                hotkeyMessages[action] = model.setHotkey(combo, for: action)
+            case .cancel: break
+            case .reset: hotkeyMessages[action] = model.setHotkey(nil, for: action)
+            case .combo(let combo): hotkeyMessages[action] = model.setHotkey(combo, for: action)
             }
-            // `setHotkey` re-registered both on success; after a refusal or cancel they are still suspended.
-            model.resumeHotkeys()
         }
     }
 
     private func stopRecording() {
-        guard recorder.recording != nil, !snapshot else { return }
+        guard !snapshot else { return }
         recorder.stop()
-        model.resumeHotkeys()
     }
 
     // MARK: - Overlay
@@ -171,9 +171,10 @@ private struct SettingsContent: View {
                     .disabled(envRoot != nil || busy)
                 Button("Reveal in Finder") { reveal() }
                 Spacer(minLength: 8)
-                Button("Reset to Default") { model.setDataFolder(nil) }
+                Button("Reset to Default") { dataFolderProblem = model.setDataFolder(nil) }
                     .disabled(envRoot != nil || busy || model.dataFolderIsDefault)
             }
+            if let dataFolderProblem { Warning(text: dataFolderProblem) }
             SettingsNote(busy && envRoot == nil
                          ? "The folder can be changed once the recording has been saved."
                          : "Runs, comparisons and exports are kept in runs, projects and exports inside it. Changing "
@@ -191,7 +192,7 @@ private struct SettingsContent: View {
         panel.message = "Choose the folder for runs, comparisons and exports."
         panel.directoryURL = model.dataRoot.deletingLastPathComponent()
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.setDataFolder(url)
+        dataFolderProblem = model.setDataFolder(url)
     }
 
     private func reveal() {
@@ -241,44 +242,6 @@ private struct SettingsContent: View {
 }
 
 // MARK: - Hotkey recording
-
-/// The hotkey field being recorded and its key monitor: a local `keyDown` monitor (the app is frontmost while the
-/// user clicks the field), swallowing the keys it reads. One field at a time.
-@MainActor
-final class HotkeyRecorder: ObservableObject {
-    @Published private(set) var recording: GlobalHotkeys.Action?
-    private var monitor: Any?
-
-    init(recording: GlobalHotkeys.Action? = nil) {
-        self.recording = recording
-    }
-
-    func start(_ action: GlobalHotkeys.Action, onOutcome: @escaping (HotkeyCapture.Outcome) -> Void) {
-        removeMonitor()
-        recording = action
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let outcome = HotkeyCapture.outcome(keyCode: event.keyCode, cocoaFlags: event.modifierFlags.rawValue)
-            MainActor.assumeIsolated {
-                self?.removeMonitor()
-                self?.recording = nil
-                onOutcome(outcome)
-            }
-            return nil
-        }
-    }
-
-    func stop() {
-        removeMonitor()
-        recording = nil
-    }
-
-    private func removeMonitor() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-    }
-
-    isolated deinit { removeMonitor() }
-}
 
 /// A shortcut "key cap": the combo, or "Type shortcut…" with an accent ring while recording.
 private struct HotkeyField: View {
