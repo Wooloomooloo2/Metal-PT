@@ -26,7 +26,7 @@ enum SettingsKey {
 /// the live recording and lease logic but never touches hotkeys, `NSApp` or windows.
 @MainActor
 final class AppModel: ObservableObject {
-    static let appVersion = "0.2.0-dev"
+    static let appVersion = MetalPTVersion.current
     /// Dev/test only, honoured when `MPT_DEBUG=1`: a distributed notification with this name toggles recording
     /// (the Carbon hotkey cannot be pressed from a script).
     static let debugToggleRecording = "io.github.wooloomooloo2.metal-pt.debug.toggleRecording"

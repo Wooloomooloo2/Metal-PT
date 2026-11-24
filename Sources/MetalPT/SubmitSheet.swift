@@ -94,6 +94,7 @@ struct SubmitSheet: View {
             row("Game", p.game)
             row("Stack", p.stackLine ?? "not detected", dim: p.stackLine == nil)
             row("Mac", p.mac)
+            row("Conditions", p.conditions)
             row("Settings you typed", p.settings.isEmpty ? "none" : "“\(p.settings)”", dim: p.settings.isEmpty)
             if !p.label.isEmpty { row("Label", "“\(p.label)”") }
             if let notes = p.notes {
@@ -101,6 +102,7 @@ struct SubmitSheet: View {
             } else {
                 row("Notes", p.hasNotes ? "not sent" : "none", dim: true)
             }
+            if !p.warnings.isEmpty { row("Warnings", p.warnings.joined(separator: "\n")) }
             row("Data", dataText(p))
             Label(p.privacyLine, systemImage: "checkmark")
                 .foregroundStyle(scheme == .dark ? Color(nsColor: .systemGreen)

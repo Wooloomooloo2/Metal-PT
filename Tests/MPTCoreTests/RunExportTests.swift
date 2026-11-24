@@ -5,17 +5,21 @@ import Testing
 
 @Suite struct RunExportTests {
     private let root = FileManager.default.temporaryDirectory.appendingPathComponent("mptexport-\(UUID().uuidString)")
+    private static let start = Date(timeIntervalSince1970: 1_800_000_000)
+    /// The canonical folder name without `.mptrun`: `20270115-080000-hzd-exe`.
+    private let base = String(RunBundle.directoryName(start: start, game: "hzd.exe").dropLast(".mptrun".count))
 
     /// A finished bundle with samples, frames, a summary.html and a stray dot-file (neither may be exported).
-    private func makeBundle(notes: String = "Mountain path loop", frames: Bool = true) throws -> RunBundle {
-        let dir = root.appendingPathComponent("runs/20261124-120000-hzd.mptrun")
-        let info = RunInfo(appVersion: "0.2.0-dev",
+    private func makeBundle(notes: String = "Mountain path loop", frames: Bool = true,
+                            folder: String? = nil) throws -> RunBundle {
+        let dir = root.appendingPathComponent("runs/" + (folder ?? "\(base).mptrun"))
+        let info = RunInfo(appVersion: "0.1-old",
                            machine: .init(modelID: "Mac16,5", chip: "Apple M4 Max", gpuCores: 40, memoryGB: 48,
                                           osVersion: "26.1", osBuild: "25B78"),
                            game: .init(exe: "hzd.exe"), stack: Stack(runtime: "Protium", translator: "FEX",
                                                                      graphics: ["DXMT"]),
                            user: .init(label: "Mountain path", gameSettings: "High, 1440p", notes: notes),
-                           start: Date(timeIntervalSince1970: 1_800_000_000), fpsSource: "log")
+                           start: Self.start, fpsSource: "log", warnings: ["thermal: serious"])
         let w = try RunBundleWriter(directory: dir, info: info)
         for i in 1...5 { try w.append(sample: ["elapsed_s": "\(i)", "fps": "60.0"]) }
         if frames {
@@ -70,7 +74,7 @@ import Testing
         let bundle = try makeBundle()
         let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"),
                                       appVersion: "9.9")
-        let folder = try unzip(zip).appendingPathComponent("20261124-120000-hzd.mptrun")
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
         #expect(names == ["frames.csv", "manifest.json", "run.json", "samples.csv"])
         let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
@@ -94,7 +98,7 @@ import Testing
         let zip = try RunExport.write(try makeBundle(), includeNotes: false, to: root.appendingPathComponent("exports"))
         let entries = try listZip(zip)
         #expect(!entries.isEmpty)
-        #expect(entries.allSatisfy { $0.hasPrefix("20261124-120000-hzd.mptrun/") })
+        #expect(entries.allSatisfy { $0.hasPrefix("\(base).mptrun/") })
         #expect(!entries.contains { $0.contains("__MACOSX") || $0.split(separator: "/").contains { $0.hasPrefix(".") } })
     }
 
@@ -102,7 +106,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let bundle = try makeBundle(frames: false)
         let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"))
-        let folder = try unzip(zip).appendingPathComponent("20261124-120000-hzd.mptrun")
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
         #expect(names == ["manifest.json", "run.json", "samples.csv"])
         #expect(RunExport.preview(bundle, includeNotes: false).frameCount == nil)
@@ -112,7 +116,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let bundle = try makeBundle()
         let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"))
-        let folder = try unzip(zip).appendingPathComponent("20261124-120000-hzd.mptrun")
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         let info = try runInfo(in: folder)
         #expect(info.user.notes == "")
         #expect(info.user.label == "Mountain path")
@@ -127,7 +131,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let bundle = try makeBundle()
         let zip = try RunExport.write(bundle, includeNotes: true, to: root.appendingPathComponent("exports"))
-        let folder = try unzip(zip).appendingPathComponent("20261124-120000-hzd.mptrun")
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         #expect(try runInfo(in: folder).user.notes == "Mountain path loop")
         let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
         #expect(m.includesNotes)
@@ -147,7 +151,7 @@ import Testing
         try enc.encode(info).write(to: bundle.url.appendingPathComponent("run.json"))
         let zip = try RunExport.write(try RunBundle.load(bundle.url), includeNotes: true,
                                       to: root.appendingPathComponent("exports"))
-        let folder = try unzip(zip).appendingPathComponent("20261124-120000-hzd.mptrun")
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         #expect(try runInfo(in: folder).user.notes == "saved in ~/Games")
     }
 
@@ -174,9 +178,9 @@ import Testing
         let a = try RunExport.write(bundle, includeNotes: false, to: exports)
         let b = try RunExport.write(bundle, includeNotes: false, to: exports)
         let c = try RunExport.write(bundle, includeNotes: false, to: exports)
-        #expect(a.lastPathComponent == "20261124-120000-hzd.mptrun.zip")
-        #expect(b.lastPathComponent == "20261124-120000-hzd-2.mptrun.zip")
-        #expect(c.lastPathComponent == "20261124-120000-hzd-3.mptrun.zip")
+        #expect(a.lastPathComponent == "\(base).mptrun.zip")
+        #expect(b.lastPathComponent == "\(base)-2.mptrun.zip")
+        #expect(c.lastPathComponent == "\(base)-3.mptrun.zip")
     }
 
     @Test func previewDescribesTheRun() throws {
@@ -184,12 +188,90 @@ import Testing
         let p = RunExport.preview(try makeBundle(), includeNotes: false)
         #expect(p.game == "hzd.exe")
         #expect(p.stackLine == "Protium · FEX · DXMT")
-        #expect(p.mac == "Mac16,5 · Apple M4 Max 40-core GPU · 48 GB · macOS 26.1")
+        #expect(p.mac == "Mac16,5 · Apple M4 Max 40-core GPU · 48 GB · macOS 26.1 (25B78)")
+        #expect(p.warnings == ["thermal: serious"])
         #expect(p.settings == "High, 1440p")
         #expect(p.label == "Mountain path")
         #expect(p.sampleCount == 5)
         #expect(p.frameCount == 7)
         #expect(p.hasNotes)
         #expect(p.privacyLine == "No user name, home folder, computer name or serial number")
+    }
+
+    // MARK: - Fix round 1
+
+    private func replace(_ name: String, in bundle: RunBundle, with text: String) throws {
+        try Data(text.utf8).write(to: bundle.url.appendingPathComponent(name))
+    }
+
+    @Test func samplesTextCellsAreScrubbedAgain() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle()
+        // A samples.csv not written by Metal-PT's writer (not scrubbed at write time), with an unknown text column.
+        try replace("samples.csv", in: bundle, with: "elapsed_s,fps,fps_app,extra\n"
+                    + "1,60.0,/Users/somebody/x.exe,on Johns-Studio\n"
+                    + "2,61.0,\"Johns-Studio, /Users/somebody/y\",\n")
+        let zip = try RunExport.write(try RunBundle.load(bundle.url), includeNotes: false,
+                                      to: root.appendingPathComponent("exports"), hosts: ["Johns-Studio"])
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
+        let text = try String(contentsOf: folder.appendingPathComponent("samples.csv"), encoding: .utf8)
+        #expect(!text.contains("somebody"))
+        #expect(!text.contains("Johns-Studio"))
+        #expect(text == "elapsed_s,fps,fps_app,extra\n1,60.0,~/x.exe,on <host>\n2,61.0,\"<host>, ~/y\",\n")
+        let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
+        #expect(m.files.first { $0.path == "samples.csv" }?.bytes == Data(text.utf8).count)
+    }
+
+    @Test func framesAreReEmittedNumbersOnly() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle()
+        try replace("frames.csv", in: bundle, with: "t_ms,interval_ms,present_delay_ms,who\n"
+                    + "16.70,16.70,2.00,somebody\n/Users/somebody,1,2\n33.40,16.70,2.00")
+        let zip = try RunExport.write(try RunBundle.load(bundle.url), includeNotes: false,
+                                      to: root.appendingPathComponent("exports"))
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
+        let text = try String(contentsOf: folder.appendingPathComponent("frames.csv"), encoding: .utf8)
+        #expect(text == "t_ms,interval_ms,present_delay_ms\n16.70,16.70,2.00\n33.40,16.70,2.00\n")
+    }
+
+    @Test func zipNameIsRebuiltFromTheRunNotTheFolder() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle(folder: "John Smith's run.mptrun")
+        let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"))
+        #expect(zip.lastPathComponent == "\(base).mptrun.zip")
+        let entries = try listZip(zip)
+        #expect(entries.allSatisfy { $0.hasPrefix("\(base).mptrun/") })
+        #expect(!entries.contains { $0.contains("John") })
+    }
+
+    @Test func frameCountWithoutTrailingNewline() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle()
+        try replace("frames.csv", in: bundle, with: "t_ms,interval_ms,present_delay_ms\n1,1,1\n2,1,1\n3,1,1")
+        let lean = try RunBundle.load(bundle.url, frames: false)
+        #expect(RunExport.previews(lean).withoutNotes.frameCount == 3)
+        try replace("frames.csv", in: bundle, with: "t_ms,interval_ms,present_delay_ms\n1,1,1\n2,1,1\n")
+        #expect(RunExport.previews(lean).withoutNotes.frameCount == 2)
+    }
+
+    @Test func previewsShareTheCountAndDifferOnlyInNotes() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let p = RunExport.previews(try makeBundle())
+        #expect(p.withoutNotes.notes == nil)
+        #expect(p.withNotes.notes == "Mountain path loop")
+        #expect(p.withNotes.frameCount == p.withoutNotes.frameCount)
+    }
+
+    @Test func manifestAppDefaultsToThisVersion() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let zip = try RunExport.write(try makeBundle(), includeNotes: false, to: root.appendingPathComponent("exports"))
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
+        let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
+        #expect(m.app == MetalPTVersion.current)
+    }
+
+    @Test func zipFailedCarriesDittoMessage() {
+        let e = RunExport.Error.zipFailed(status: 1, message: "ditto: No space left on device")
+        #expect(e.localizedDescription.contains("No space left on device"))
     }
 }

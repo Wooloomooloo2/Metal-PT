@@ -1,7 +1,12 @@
 import Foundation
 
 public enum Privacy {
-    private static let homeRegex = try! NSRegularExpression(pattern: "/Users/[^/]+")
+    /// `/Users/<name>` (any case) — not the `users/<name>` folder inside a Wine prefix, which `winePrefixRegex` keeps.
+    private static let homeRegex = try! NSRegularExpression(pattern: "(?<!drive_c)/users/[^/]+",
+                                                            options: .caseInsensitive)
+    /// Unix paths into a Wine prefix: `…/drive_c/users/<name>` becomes `…/drive_c/users/~`.
+    private static let winePrefixRegex = try! NSRegularExpression(pattern: "(/drive_c/users/)[^/]+",
+                                                                  options: .caseInsensitive)
     private static let wineRegex = try! NSRegularExpression(pattern: #"([A-Za-z]):\\[Uu][Ss][Ee][Rr][Ss]\\[^\\]+"#)
     private static let stoplist: Set<String> = ["localhost", "mac", "macbook"]
 
@@ -29,10 +34,13 @@ public enum Privacy {
         return out.sorted { $0.count != $1.count ? $0.count > $1.count : $0 < $1 }
     }
 
-    /// Home paths only: `/Users/<name>` and Wine `X:\Users\<name>` become `~`.
+    /// Home paths only: `/Users/<name>` (any case) and Wine `X:\Users\<name>` become `~`; inside a Wine prefix,
+    /// `…/drive_c/users/<name>` becomes `…/drive_c/users/~`.
     public static func scrubPaths(_ text: String) -> String {
-        var s = homeRegex.stringByReplacingMatches(
-            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "~")
+        var s = winePrefixRegex.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1~")
+        s = homeRegex.stringByReplacingMatches(
+            in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "~")
         s = wineRegex.stringByReplacingMatches(
             in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "$1:\\\\Users\\\\~")
         return s

@@ -175,6 +175,14 @@ import Foundation
         #expect(Privacy.scrubPaths("D:\\Users\\Bob\\x and c:\\users\\al\\y") == "D:\\Users\\~\\x and c:\\Users\\~\\y")
     }
 
+    @Test func unixPathsIntoWinePrefixesAreScrubbed() {
+        #expect(Privacy.scrubPaths("/Users/bob/.wine/drive_c/users/bob/AppData/x.log")
+                == "~/.wine/drive_c/users/~/AppData/x.log")
+        #expect(Privacy.scrubPaths("/users/bob/y") == "~/y")
+        #expect(Privacy.scrubPaths("pfx/drive_c/Users/crossover/Desktop") == "pfx/drive_c/Users/~/Desktop")
+        #expect(Privacy.scrubPaths("/Applications/x/usersguide") == "/Applications/x/usersguide")
+    }
+
     @Test func samplesCSVScrubsFpsApp() throws {
         let dir = tempDir().appendingPathComponent("x.mptrun")
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }

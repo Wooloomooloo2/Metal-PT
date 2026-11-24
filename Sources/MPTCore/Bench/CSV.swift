@@ -14,6 +14,17 @@ public enum CSV {
     /// Parses text with a header row into rows keyed by header name. Rows may be shorter than the
     /// header (missing keys); extra cells are ignored. Blank lines are skipped.
     public static func parse(_ text: String) -> [[String: String]] {
+        let records = records(text)
+        guard let header = records.first else { return [] }
+        return records.dropFirst().map { r in
+            var row: [String: String] = [:]
+            for (k, name) in header.enumerated() where k < r.count { row[name] = r[k] }
+            return row
+        }
+    }
+
+    /// The raw records of `text`, header first, cells in file order (RFC-4180 quoting undone). Blank lines skipped.
+    public static func records(_ text: String) -> [[String]] {
         var records: [[String]] = []
         var record: [String] = []
         var field = ""
@@ -48,12 +59,7 @@ public enum CSV {
             i += 1
         }
         endRecord()
-        guard let header = records.first else { return [] }
-        return records.dropFirst().map { r in
-            var row: [String: String] = [:]
-            for (k, name) in header.enumerated() where k < r.count { row[name] = r[k] }
-            return row
-        }
+        return records
     }
 
     /// Fixed-point with `.` decimal separator and no grouping, regardless of locale. nil/non-finite → "".

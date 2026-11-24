@@ -20,7 +20,7 @@ enum RecordCommands {
          MPT_DATA_ROOT=DIR in the environment replaces ~/Documents/Metal-PT for runs and projects)
         """
 
-    static let appVersion = "0.2.0-dev"
+    static let appVersion = MetalPTVersion.current
     static let noHUDHint = "no Metal HUD lines yet — run 'mpt hud on' and relaunch the game"
 
     // MARK: - record / run

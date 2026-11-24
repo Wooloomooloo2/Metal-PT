@@ -12,7 +12,7 @@ public struct TimedFrame: Equatable, Sendable {
 
 public enum RunBundleError: Error { case missingFile(String) }
 
-private let framesHeader = ["t_ms", "interval_ms", "present_delay_ms"]
+let framesHeader = ["t_ms", "interval_ms", "present_delay_ms"]
 
 public final class RunBundleWriter: @unchecked Sendable {
     private let directory: URL
@@ -49,7 +49,8 @@ public final class RunBundleWriter: @unchecked Sendable {
         return try enc.encode(Privacy.scrub(info))
     }
 
-    private static let stringColumns: Set<String> = ["fps_app", "thermal_state"]
+    /// Free-text sample columns (privacy-scrubbed when written, and again on export).
+    static let stringColumns: Set<String> = ["fps_app", "thermal_state"]
 
     /// Writes one row; missing columns become empty cells; free-text cells are privacy-scrubbed.
     /// Written through immediately. Appends after `finish` are silently ignored (a signal handler may

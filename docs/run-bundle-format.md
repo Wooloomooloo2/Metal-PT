@@ -125,7 +125,8 @@ show the lows as "—" ("frame times mixed").
 
 Guarantee: no user name, home path, hostname or serial number in any bundle file. Applied at write time (`Privacy`):
 
-- Home paths `/Users/<name>` become `~`; Wine paths `X:\Users\<name>` become `X:\Users\~`. Applies to every string in `run.json`.
+- Home paths `/Users/<name>` (any case) become `~`; Wine paths `X:\Users\<name>` become `X:\Users\~`, and Unix paths
+  into a Wine prefix `…/drive_c/users/<name>` become `…/drive_c/users/~`. Applies to every string in `run.json`.
 - Host names (this machine's host name and computer name, with `.local` removed, first DNS label, and the
   `LocalHostName` form) become `<host>`, whole-word and case-insensitive. Names under 4 characters and `localhost`,
   `mac`, `macbook` are not scrubbed. Applies to free-text fields: `game.*`, `stack.*`, `settings.powerMode`, `user.*`,
@@ -138,15 +139,19 @@ Guarantee: no user name, home path, hostname or serial number in any bundle file
 
 What the app's Submit sheet ("Export file…") and `mpt export RUN` write, and what the website will accept. Written to
 `~/Documents/Metal-PT/exports/` (the data root's `exports`; `mpt export --out DIR`) as `<run folder name>.zip`, so
-`20261124-120000-hzd.mptrun.zip`; when the name is taken, `-2`, `-3`, … go before `.mptrun.zip`.
+`20261124-120000-hzd-exe.mptrun.zip`; when the name is taken, `-2`, `-3`, … go before `.mptrun.zip`. The name is
+rebuilt from the run, never taken from the folder (which a user may have renamed to anything): `yyyyMMdd-HHmmss` of
+`run.json` `start` in UTC, then the slug of the privacy-scrubbed `game.exe`, as new run folders are named.
 
-The zip holds one folder, named as the run folder, so unzipping it gives a run folder that `mpt` and the app read:
+The zip holds one folder with that name, so unzipping it gives a run folder that `mpt` and the app read:
 
-    20261124-120000-hzd.mptrun/
-      frames.csv      only if the run has one; copied as recorded
+    20261124-120000-hzd-exe.mptrun/
+      frames.csv      only if the run has one; re-written from its numbers: the three columns above (by header
+                      name, 2 decimals), rows with a missing or non-numeric value dropped, other columns dropped
       manifest.json
       run.json        the run's run.json, re-scrubbed; user.notes is "" unless the user opted in
-      samples.csv     copied as recorded
+      samples.csv     the run's samples.csv with every text cell scrubbed again (`fps_app`, `thermal_state`, and any
+                      cell in any column that is not a number); numbers and column order unchanged
 
 Nothing else from the run folder is included: no `summary.html` (the website renders its own), no dot-files, no
 other files. The zip is made with `ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent`, so it has no
@@ -173,10 +178,11 @@ other files. The zip is made with `ditto -c -k --norsrc --noextattr --noqtn --no
 | `format` | Always `metal-pt-run`. |
 | `schema` | The manifest's format, 1. (`run.json` carries its own `schema`.) |
 | `files` | Every other file in the folder, sorted by `path`: size in bytes and SHA-256 of its exact contents. |
-| `app` | Version of the Metal-PT (or `mpt`) that exported it; the version that recorded it is `run.json` `appVersion`. |
+| `app` | Version of the Metal-PT (or `mpt`) that exported it (`MetalPTVersion.current`); the version that recorded it is `run.json` `appVersion`. |
 | `includesNotes` | The user ticked "Also send my notes"; when false `run.json` has `user.notes` empty. |
 
-Privacy: the run folder's scrubbing (above) applies, and `run.json` goes through it again on export. The label and
+Privacy: the run folder's scrubbing (above) applies, and `run.json` and the text cells of `samples.csv` go
+through it again on export (a bundle may come from an older or other writer). The label and
 game settings are always included (they are the point of a submission); notes only when opted in.
 
 Size: when the files listed in the manifest total more than 25 MB (25 × 1024 × 1024 bytes, uncompressed), export is

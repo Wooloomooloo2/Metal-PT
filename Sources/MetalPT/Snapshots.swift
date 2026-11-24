@@ -106,6 +106,9 @@ enum Snapshots {
             // Submit with the notes left out, and ticked in.
             if let url = withRuns.runs.url(of: first.id), var info = try? RunBundle.load(url, frames: false).info {
                 info.user.notes = "Mountain path loop from the Mother's Heart save."
+                info.settings = .init(powerMode: "High", onACAtStart: true, displayWidth: 3456, displayHeight: 2234,
+                                      refreshHz: 120)
+                info.warnings = ["recording spanned a sleep"]
                 try? RunBundleWriter.writeInfo(info, to: url)
             }
             if let url = withRuns.runs.url(of: first.id), let b = try? RunBundle.load(url, frames: false) {
