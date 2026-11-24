@@ -6,13 +6,30 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     func sample() -> TelemetrySample { TelemetrySample(gpuW: 10, batteryPct: 90, onAC: true) }
 }
 
+/// Events sent before `start` are buffered and replayed (in order) when it starts; nothing after `stop`.
 private final class FakeHUD: HUDEventSource, @unchecked Sendable {
     private let lock = NSLock()
     private var handler: (@Sendable (HUDEvent) -> Void)?
-    private(set) var stopped = false
-    func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws { lock.withLock { handler = onEvent } }
-    func stop() { lock.withLock { stopped = true; handler = nil } }
-    func send(_ e: HUDEvent) { lock.withLock { handler }?(e) }
+    private var pending: [HUDEvent] = []
+    private var isStopped = false
+    var stopped: Bool { lock.withLock { isStopped } }
+    func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws {
+        let replay: [HUDEvent] = lock.withLock {
+            guard !isStopped else { return [] }
+            handler = onEvent
+            defer { pending = [] }
+            return pending
+        }
+        replay.forEach(onEvent)
+    }
+    func stop() { lock.withLock { isStopped = true; handler = nil } }
+    func send(_ e: HUDEvent) {
+        let h: (@Sendable (HUDEvent) -> Void)? = lock.withLock {
+            if handler == nil && !isStopped { pending.append(e) }
+            return handler
+        }
+        h?(e)
+    }
 }
 
 /// Returns `values` in order, then keeps returning the last one.
@@ -120,11 +137,12 @@ private let t0 = 1_700_000_000.0
         let s = try makeSession(root: root, seconds: 2, clock: clock, hud: hud)
         let ended = DispatchSemaphore(value: 0)
         s.onEnd = { _ in ended.signal() }
-        try s.start()
+        // Sent before start (replayed by the fake on start), so the first tick already follows the game.
         let line = MetalHUDLine(frames: 0, a: 0, b: 0, frameTimes: [])
         hud.send(HUDEvent(pid: 4242, imagePath: "/x/Game", time: t0, line: line))
         hud.send(HUDEvent(pid: 4242, imagePath: "/x/Game", time: t0 + 0.5,
                           line: MetalHUDLine(frames: 30, a: 0, b: 0, frameTimes: [])))
+        try s.start()
         #expect(ended.wait(timeout: .now() + 10) == .success)
         let r = try #require(s.stop())
         #expect(r.directory.lastPathComponent.hasSuffix("-game.mptrun"))
@@ -136,9 +154,9 @@ private let t0 = 1_700_000_000.0
     @Test func sleepGapAddsWarning() throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        // Ticks at 1, 2, then a 30 s gap (sleep), then 33; finish at 34.
+        // Start at 0; ticks at 1 and 2, then a 30 s gap (sleep) to the third and last tick at 32; finish at 33.
         let s = try makeSession(root: root, seconds: 3,
-                                clock: FakeClock([t0, t0 + 1, t0 + 2, t0 + 32, t0 + 33, t0 + 34]))
+                                clock: FakeClock([t0, t0 + 1, t0 + 2, t0 + 32, t0 + 33]))
         let (result, _) = try runToEnd(s)
         let b = try RunBundle.load(try #require(result).directory)
         #expect(b.info.warnings.contains("recording spanned a sleep"))
@@ -146,6 +164,31 @@ private let t0 = 1_700_000_000.0
         #expect(b.rows.count == 3)
         // Rows after the gap are outside the steady window.
         #expect(RunSummary(b).steadySeconds == [0, 1])
+    }
+
+    @Test func stopFromOnMessageReturnsEarly() throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let s = try makeSession(root: root, seconds: nil, clock: FakeClock([t0, t0 + 1]))
+        let messages = Messages()
+        let nested = ResultBox()
+        s.onMessage = { [unowned s] m in
+            messages.append(m.text)
+            nested.set(s.stop())
+        }
+        try s.start()
+        // A read-only bundle folder makes finishing and the summary fail, so `stop` sends error messages.
+        let dir = try #require(s.directory)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+        let outer = s.stop()
+        #expect(outer?.directory == dir)
+        #expect(outer?.summary == nil)
+        #expect(nested.value == nil)
+        let texts = messages.all
+        #expect(texts.filter { $0.hasPrefix("error finishing run") }.count == 1)
+        #expect(texts.filter { $0.hasPrefix("could not write the summary") }.count == 1)
+        #expect(s.stop() == outer)
     }
 
     @Test func rejectsWarmupNotShorterThanSeconds() {
@@ -163,6 +206,13 @@ private final class Statuses: @unchecked Sendable {
     private var items: [SessionStatus] = []
     func append(_ s: SessionStatus) { lock.withLock { items.append(s) } }
     var all: [SessionStatus] { lock.withLock { items } }
+}
+
+private final class Messages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    func append(_ s: String) { lock.withLock { items.append(s) } }
+    var all: [String] { lock.withLock { items } }
 }
 
 private final class ResultBox: @unchecked Sendable {

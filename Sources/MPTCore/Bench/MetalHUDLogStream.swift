@@ -2,8 +2,10 @@ import Foundation
 
 /// Where a `RecordingSession` gets Metal HUD events (the real `MetalHUDLogStream`, or a fake in tests).
 public protocol HUDEventSource: AnyObject {
-    /// Starts delivering events to `onEvent`, on any queue.
+    /// Starts delivering events to `onEvent`, on any queue. Must be a no-op after `stop` (a session can be stopped
+    /// while its source is starting).
     func start(onEvent: @escaping @Sendable (HUDEvent) -> Void) throws
+    /// Stops delivering events. Idempotent.
     func stop()
     /// False when the source died on its own (checked once per tick). Defaults to true.
     var isRunning: Bool { get }

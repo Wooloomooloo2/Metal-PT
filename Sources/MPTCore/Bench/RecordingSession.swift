@@ -69,6 +69,8 @@ public final class RecordingSession: @unchecked Sendable {
         public var runsRoot: URL
         public var follow: FollowRule
         /// A command to launch with the HUD variables set (`mpt run`); its stderr frame times are recorded.
+        /// The child inherits the owner's SIGPIPE disposition: the owner must ignore SIGPIPE (the CLI does), or the
+        /// child may die writing to its stderr pipe after the owner exits.
         public var launch: [String]?
         /// Written to run.json.
         public var appVersion: String
@@ -126,7 +128,8 @@ public final class RecordingSession: @unchecked Sendable {
     private let queue = DispatchQueue(label: "mpt.session.tick", qos: .utility)
     private let queueKey = DispatchSpecificKey<Bool>()
     private let detections = DispatchGroup()
-    /// Serialises `stop` (recursive so a nested call from a callback during `stop` returns instead of deadlocking).
+    /// Serialises `stop` (recursive so that a nested call on the same thread, e.g. from `onMessage` during `stop`,
+    /// gets past it and returns early via `stopping` instead of deadlocking).
     private let stopLock = NSRecursiveLock()
 
     // Under `lock`.
@@ -137,6 +140,7 @@ public final class RecordingSession: @unchecked Sendable {
     private var started = false
     private var stopRequested = false
     private var ended = false
+    private var stopping = false
     private var stopDone = false
     private var result: RunResult?
     private var timer: DispatchSourceTimer?
@@ -273,6 +277,8 @@ public final class RecordingSession: @unchecked Sendable {
             try spawn(launch, recorder: recorder)
         }
         try hud.start(onEvent: { recorder.hud($0) })
+        // A `stop` that ran while the source was starting may have stopped it before it started.
+        if lock.withLock({ stopRequested }) { hud.stop() }
 
         lock.withLock {
             guard !stopRequested else { return }
@@ -286,7 +292,8 @@ public final class RecordingSession: @unchecked Sendable {
 
     /// Stops ticking and the HUD source, waits briefly for a stack detection, finishes the bundle, renames it to the
     /// identified game and writes summary.html. Idempotent: later calls return the same result. nil if the session
-    /// never created a bundle (not started, or `start` failed before it).
+    /// never created a bundle (not started, or `start` failed before it). A nested call made from a callback while
+    /// the stop sequence runs returns immediately with nil.
     @discardableResult
     public func stop() -> RunResult? {
         let t: DispatchSourceTimer? = lock.withLock {
@@ -299,8 +306,14 @@ public final class RecordingSession: @unchecked Sendable {
         if DispatchQueue.getSpecific(key: queueKey) == nil { queue.sync {} }
 
         stopLock.lock(); defer { stopLock.unlock() }
-        if lock.withLock({ stopDone }) { return lock.withLock { result } }
-        defer { lock.withLock { stopDone = true } }
+        // Done, or a nested call (same thread) while the stop sequence runs: return what there is.
+        let early: Bool = lock.withLock {
+            if stopDone || stopping { return true }
+            stopping = true
+            return false
+        }
+        if early { return lock.withLock { result } }
+        defer { lock.withLock { stopDone = true; stopping = false } }
 
         hud.stop()
         let (recorder, dir0, start) = lock.withLock { (self.recorder, bundleDirectory, startDate) }
@@ -385,8 +398,9 @@ public final class RecordingSession: @unchecked Sendable {
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
                                               | POSIX_SPAWN_CLOEXEC_DEFAULT))
         posix_spawnattr_setpgroup(&attr, 0)
-        // SIGPIPE is deliberately NOT reset: the CLI's lease ignores it and the game inherits that, so the game
-        // survives writing to its stderr pipe after mpt has exited (Ctrl-C or --seconds leave it running).
+        // SIGPIPE is deliberately NOT reset: the child inherits the owner's disposition. The CLI's lease ignores it,
+        // so the game survives writing to its stderr pipe after mpt has exited (Ctrl-C or --seconds leave it
+        // running). Any other owner must ignore SIGPIPE too, or the child may die once the owner is gone.
         var defaults = sigset_t()
         sigemptyset(&defaults)
         for s in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] { sigaddset(&defaults, s) }
