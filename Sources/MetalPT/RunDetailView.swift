@@ -190,7 +190,7 @@ struct SummaryWebView: NSViewRepresentable {
         }
 
         private func log(_ text: String) {
-            FileHandle.standardError.write(Data("Metal-PT: \(text)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: \(text)\n".utf8))
         }
     }
 }

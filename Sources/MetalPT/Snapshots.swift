@@ -25,7 +25,7 @@ enum Snapshots {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            FileHandle.standardError.write(Data("Metal-PT: cannot create \(dir.path): \(error)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: cannot create \(dir.path): \(error)\n".utf8))
             return false
         }
         var ok = true
@@ -38,7 +38,7 @@ enum Snapshots {
                 if write(shot, scheme: scheme, appearance: appearance, to: url) {
                     print(url.path)
                 } else {
-                    FileHandle.standardError.write(Data("Metal-PT: could not render \(url.lastPathComponent)\n".utf8))
+                    try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: could not render \(url.lastPathComponent)\n".utf8))
                     ok = false
                 }
             }

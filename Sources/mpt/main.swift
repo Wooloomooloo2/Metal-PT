@@ -14,7 +14,7 @@ let usage = """
     """
 
 if geteuid() == 0 {
-    FileHandle.standardError.write(Data("mpt must not run as root\n".utf8))
+    try? FileHandle.standardError.write(contentsOf: Data("mpt must not run as root\n".utf8))
     exit(64)
 }
 
@@ -44,10 +44,10 @@ do {
         exit(64)
     }
 } catch let error as UsageError {
-    FileHandle.standardError.write(Data("error: \(error)\n\n\(usage)\n".utf8))
+    try? FileHandle.standardError.write(contentsOf: Data("error: \(error)\n\n\(usage)\n".utf8))
     exit(64)
 } catch {
-    FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+    try? FileHandle.standardError.write(contentsOf: Data("error: \(error)\n".utf8))
     exit(1)
 }
 
@@ -89,7 +89,7 @@ func benchFolder(_ name: String, override: String?) -> URL {
 }
 
 func printError(_ text: String) {
-    FileHandle.standardError.write(Data((text + "\n").utf8))
+    try? FileHandle.standardError.write(contentsOf: Data((text + "\n").utf8))
 }
 
 /// Runs a tool and returns its stdout (stderr discarded).

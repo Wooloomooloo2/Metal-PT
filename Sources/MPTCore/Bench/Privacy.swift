@@ -17,6 +17,9 @@ public enum Privacy {
     /// privacy and stalled a recording start (and quit) for over a minute.
     static let defaultHosts: [String] = hostVariants(of: localHostNames())
 
+    /// Computes `defaultHosts` now (the app calls it at launch, off the main thread), so the first scrub does not.
+    public static func prime() { _ = defaultHosts }
+
     /// `gethostname()`, the computer name ("Mark's MacBook Pro") and the Bonjour local host name
     /// ("Marks-MacBook-Pro"); none of them touches the network.
     static func localHostNames() -> [String] {

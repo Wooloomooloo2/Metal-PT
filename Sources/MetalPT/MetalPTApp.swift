@@ -9,10 +9,13 @@ enum MetalPTMain {
     @MainActor
     static func main() {
         if geteuid() == 0 { refuseRoot() }
+        // A closed stderr (launched from a terminal that went away) must not kill the app on a log write. Children
+        // (`log`, `launchctl`, `ps`) are started by Foundation's Process, which resets signal dispositions.
+        signal(SIGPIPE, SIG_IGN)
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--render-snapshots") {
             guard i + 1 < args.count else {
-                FileHandle.standardError.write(Data("usage: MetalPT --render-snapshots DIR\n".utf8))
+                try? FileHandle.standardError.write(contentsOf: Data("usage: MetalPT --render-snapshots DIR\n".utf8))
                 exit(2)
             }
             exit(Snapshots.render(to: URL(fileURLWithPath: args[i + 1], isDirectory: true)) ? 0 : 1)
@@ -23,7 +26,7 @@ enum MetalPTMain {
     @MainActor
     private static func refuseRoot() -> Never {
         let msg = "Metal-PT must not run as root. Quit and open it again as yourself (without sudo)."
-        FileHandle.standardError.write(Data("Metal-PT: \(msg)\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: \(msg)\n".utf8))
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         app.activate()
@@ -71,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let event = NSAppleEventManager.shared().currentAppleEvent
         let asLoginItem = LaunchKind.isLoginItemLaunch(event)
         let bundle = Bundle.main.bundleIdentifier ?? "none (unbundled executable)"
-        FileHandle.standardError.write(Data(("Metal-PT: launched \(MetalPTVersion.current); bundle \(bundle); "
+        try? FileHandle.standardError.write(contentsOf: Data(("Metal-PT: launched \(MetalPTVersion.current); bundle \(bundle); "
             + "login item \(LoginItem.describeAtLaunch()); "
             + "\(asLoginItem ? "opened as a login item: menu bar only" : "opening the window") "
             + "(\(LaunchKind.describe(event)))\n").utf8))
@@ -88,6 +91,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             signalSources.append(src)
         }
         if !asLoginItem { model.showMainWindow() }
+        DispatchQueue.global(qos: .utility).async {
+            // A `log stream` left by a crashed Metal-PT (see `OrphanedLogStreams`).
+            let ended = OrphanedLogStreams.terminateAll()
+            if !ended.isEmpty {
+                try? FileHandle.standardError.write(contentsOf: Data(
+                    "Metal-PT: ended leftover log stream(s) \(ended.map(String.init).joined(separator: ", "))\n".utf8))
+            }
+            // The host names the privacy scrub needs, computed once here rather than under a lock at the first scrub.
+            Privacy.prime()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

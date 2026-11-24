@@ -487,7 +487,7 @@ public final class RecordingSession: @unchecked Sendable {
                     passthrough.append(0x0A)
                 }
             }
-            if !passthrough.isEmpty { FileHandle.standardError.write(passthrough) }
+            if !passthrough.isEmpty { try? FileHandle.standardError.write(contentsOf: passthrough) }
             if chunk.isEmpty {
                 h.readabilityHandler = nil
                 eof.signal()

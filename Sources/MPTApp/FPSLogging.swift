@@ -147,7 +147,7 @@ public final class FPSLogging {
 
     private func report(_ body: () throws -> Void) {
         do { try body() } catch {
-            FileHandle.standardError.write(Data("Metal-PT FPS logging: \(error)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("Metal-PT FPS logging: \(error)\n".utf8))
         }
     }
 }

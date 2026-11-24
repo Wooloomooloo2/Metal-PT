@@ -35,6 +35,6 @@ do {
         exit(args.isEmpty ? 0 : 64)
     }
 } catch {
-    FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+    try? FileHandle.standardError.write(contentsOf: Data("error: \(error)\n".utf8))
     exit(1)
 }

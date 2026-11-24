@@ -613,7 +613,7 @@ final class AppModel: ObservableObject {
     }
 
     private static func log(_ text: String) {
-        FileHandle.standardError.write(Data("Metal-PT: \(text)\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: \(text)\n".utf8))
     }
 
     /// Snapshots only: fixed values for the published state.

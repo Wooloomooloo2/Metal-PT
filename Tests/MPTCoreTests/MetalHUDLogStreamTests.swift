@@ -13,6 +13,19 @@ import Foundation
         #expect(abs(e.time - 1795523100.502) < 0.001)
     }
 
+    /// The shared timestamp formatter gives the same answer from many threads at once (lines arrive on the pipe's
+    /// queue while a session or the hub decodes on others).
+    @Test func parsesTimestampsConcurrently() async {
+        let stamps = (0..<8).map { "2026-11-24 12:25:0\($0).502304+0000" }
+        let results = await withTaskGroup(of: [Double?].self) { group in
+            for _ in 0..<8 { group.addTask { (0..<200).map { MetalHUDLogStream.parseTimestamp(stamps[$0 % 8]) } } }
+            return await group.reduce(into: [[Double?]]()) { $0.append($1) }
+        }
+        for r in results {
+            for (i, t) in r.enumerated() { #expect(t.map { abs($0 - (1795523100.502 + Double(i % 8))) < 0.001 } == true) }
+        }
+    }
+
     @Test func splitsChunksIntoLines() {
         var buffer = Data()
         // A line split across chunks, then several lines in one chunk, then a trailing partial line.

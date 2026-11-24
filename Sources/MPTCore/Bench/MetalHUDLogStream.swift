@@ -41,6 +41,10 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
         self.init(onEvent: { _ in })
     }
 
+    /// The `log` command this stream runs (also how a leftover one is recognised: `OrphanedLogStreams`).
+    public static let executable = "/usr/bin/log"
+    public static let arguments = ["stream", "--style", "ndjson", "--predicate", #"eventMessage BEGINSWITH "metal-HUD""#]
+
     deinit { stop() }
 
     /// Decode one ndjson line; nil for the header, junk or non-HUD messages.
@@ -56,11 +60,17 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
         return HUDEvent(pid: Int32(truncatingIfNeeded: pid), imagePath: path, time: time, line: line)
     }
 
-    private static func parseTimestamp(_ s: String) -> Double? {
+    /// Made once (a formatter is costly to create, and this runs for every HUD line). Only `date(from:)` is called
+    /// after setup; `DateFormatter` is thread-safe for that on macOS 10.9+ (64-bit).
+    private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSZ"
-        return f.date(from: s)?.timeIntervalSince1970
+        return f
+    }()
+
+    static func parseTimestamp(_ s: String) -> Double? {
+        timestampFormatter.date(from: s)?.timeIntervalSince1970
     }
 
     /// Sets the event handler, then `start()`. The handler is replaced even if the stream is already running.
@@ -78,9 +88,8 @@ public final class MetalHUDLogStream: HUDEventSource, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard process == nil, !stopped else { return }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        p.arguments = ["stream", "--style", "ndjson",
-                       "--predicate", #"eventMessage BEGINSWITH "metal-HUD""#]
+        p.executableURL = URL(fileURLWithPath: Self.executable)
+        p.arguments = Self.arguments
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice

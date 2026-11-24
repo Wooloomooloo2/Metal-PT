@@ -48,7 +48,7 @@ enum FanCommands {
         let lease = Lease {
             guard let restoreSMC = try? SMCConnection() else {
                 restoreFailed.increment()
-                FileHandle.standardError.write(Data("RESTORE FAILED: cannot open the SMC. \(hint)\n".utf8))
+                try? FileHandle.standardError.write(contentsOf: Data("RESTORE FAILED: cannot open the SMC. \(hint)\n".utf8))
                 return
             }
             // Every write first; reporting (which can block on a stuck stdout) only afterwards.
@@ -63,7 +63,7 @@ enum FanCommands {
                 }
             }
             for line in report {
-                if line.ok { print(line.text) } else { FileHandle.standardError.write(Data((line.text + "\n").utf8)) }
+                if line.ok { print(line.text) } else { try? FileHandle.standardError.write(contentsOf: Data((line.text + "\n").utf8)) }
             }
         }
         lease.releaseOnSignals()
@@ -100,7 +100,7 @@ enum FanCommands {
     /// Reads a key's current bytes; on failure warns on stderr and returns `fallback`.
     private static func original(_ smc: SMCConnection, _ key: FourCC, fallback: [UInt8]) -> [UInt8] {
         if let bytes = try? smc.read(key).bytes { return bytes }
-        FileHandle.standardError.write(Data("WARNING: cannot read original \(key); restore will write fallback \(Hex.encode(fallback))\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("WARNING: cannot read original \(key); restore will write fallback \(Hex.encode(fallback))\n".utf8))
         return fallback
     }
 
@@ -111,7 +111,7 @@ enum FanCommands {
             print("\(timestamp())  \(label): \(key) = \(Hex.encode(bytes))")
             return true
         } catch {
-            FileHandle.standardError.write(Data("\(failure) for \(label) (\(key)): \(error)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("\(failure) for \(label) (\(key)): \(error)\n".utf8))
             return false
         }
     }
@@ -121,7 +121,7 @@ enum FanCommands {
     @discardableResult
     static func releaseFans(fanCount: Int) -> Int {
         guard let smc = try? SMCConnection() else {
-            FileHandle.standardError.write(Data("RELEASE FAILED: cannot open the SMC. Run: sudo mptprobe fan-release\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("RELEASE FAILED: cannot open the SMC. Run: sudo mptprobe fan-release\n".utf8))
             return 1
         }
         var failures = 0

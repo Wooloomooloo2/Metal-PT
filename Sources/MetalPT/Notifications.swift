@@ -75,7 +75,7 @@ final class Notifications: NSObject, RecordingNotifying {
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if !granted {
                 let why = error.map { ": \($0.localizedDescription)" } ?? ""
-                FileHandle.standardError.write(Data("Metal-PT: notifications not allowed\(why)\n".utf8))
+                try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: notifications not allowed\(why)\n".utf8))
             }
         }
     }
@@ -93,13 +93,13 @@ final class Notifications: NSObject, RecordingNotifying {
         center.add(request) { error in
             // Denied permission lands here; the recording is unaffected.
             if let error {
-                FileHandle.standardError.write(Data("Metal-PT: notification not shown: \(error.localizedDescription)\n".utf8))
+                try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: notification not shown: \(error.localizedDescription)\n".utf8))
             }
         }
     }
 
     private func log(_ text: String) {
-        FileHandle.standardError.write(Data("Metal-PT: \(text)\n".utf8))
+        try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: \(text)\n".utf8))
     }
 }
 

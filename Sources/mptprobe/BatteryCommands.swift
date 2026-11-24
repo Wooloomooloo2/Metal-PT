@@ -44,7 +44,7 @@ enum BatteryCommands {
                 print("\(timestamp())  restored \(key) = \(Hex.encode(original))")
             case .failure(let error):
                 restoreFailed.increment()
-                FileHandle.standardError.write(Data("RESTORE FAILED for \(key): \(error). Run: sudo mptprobe smc write \(key) \(undo)\n".utf8))
+                try? FileHandle.standardError.write(contentsOf: Data("RESTORE FAILED for \(key): \(error). Run: sudo mptprobe smc write \(key) \(undo)\n".utf8))
             }
         }
         lease.releaseOnSignals()
