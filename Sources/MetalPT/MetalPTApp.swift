@@ -48,11 +48,14 @@ struct MetalPTApp: App {
             MainWindow(model: delegate.model, hub: delegate.model.hub)
         }
         .defaultSize(width: 1000, height: 680)
+        // Not opened by SwiftUI: `AppDelegate` opens it at launch unless macOS opened Metal-PT as a login item.
+        .defaultLaunchBehavior(.suppressed)
 
         MenuBarExtra {
             MenuBarView(model: delegate.model, hub: delegate.model.hub)
         } label: {
             MenuBarLabel(hub: delegate.model.hub)
+                .background(OpenWindowRegistrar(model: delegate.model))
         }
         .menuBarExtraStyle(.window)
     }
@@ -63,15 +66,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel(hub: TelemetryHub(), fpsLogging: FPSLogging(), live: true)
     private var signalSources: [DispatchSourceSignal] = []
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        // The window opens at launch; `MainWindow` switches to .accessory when it closes.
-        NSApp.setActivationPolicy(.regular)
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Read while the launch's 'oapp' event is still the current Apple event (see `LaunchKind`).
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let asLoginItem = LaunchKind.isLoginItemLaunch(event)
         let bundle = Bundle.main.bundleIdentifier ?? "none (unbundled executable)"
         FileHandle.standardError.write(Data(("Metal-PT: launched \(MetalPTVersion.current); bundle \(bundle); "
-            + "login item \(LoginItem.describeAtLaunch())\n").utf8))
+            + "login item \(LoginItem.describeAtLaunch()); "
+            + "\(asLoginItem ? "opened as a login item: menu bar only" : "opening the window") "
+            + "(\(LaunchKind.describe(event)))\n").utf8))
+        // Dock icon only while the main window is open (`AppModel.mainWindowOpened`/`Closed`).
+        NSApp.setActivationPolicy(asLoginItem ? .accessory : .regular)
         model.launch()
         // SIGINT (Ctrl-C under `swift run`), SIGTERM and SIGHUP (terminal closed) quit through `terminate`, so the
         // quit path runs (variables handed back, recording finished).
@@ -82,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             src.resume()
             signalSources.append(src)
         }
-        NSApp.activate()
+        if !asLoginItem { model.showMainWindow() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

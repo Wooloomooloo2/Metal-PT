@@ -98,8 +98,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingProblem: String?
     /// Display names of runs finished in this session, newest first (the menu bar's recent runs).
     @Published private(set) var recentRuns: [String] = []
-    /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`).
-    var openMainWindow: (() -> Void)?
+    /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`): by the menu-bar
+    /// label at launch (`OpenWindowRegistrar`) and by the main window when it appears. A `showMainWindow` that came
+    /// before it was set runs once it is.
+    var openMainWindow: (() -> Void)? {
+        didSet {
+            guard pendingWindowOpen, let open = openMainWindow else { return }
+            pendingWindowOpen = false
+            open()
+        }
+    }
+    private var pendingWindowOpen = false
 
     private var hudToken: TelemetryHub.Token?
     private var hotkeys: GlobalHotkeys?
@@ -370,13 +379,32 @@ final class AppModel: ObservableObject {
         NSApp.setActivationPolicy(.accessory)
     }
 
-    /// A "Run saved" notification was clicked: bring the window forward on Runs with that run selected.
+    /// Opens the main window, or brings it forward. Before the scene has given `openMainWindow`: an existing main
+    /// window is ordered front (AppKit fallback), else the open waits until `openMainWindow` is set.
+    func showMainWindow() {
+        if let open = openMainWindow {
+            open()
+        } else if !(usesAppKit && Self.orderFrontMainWindow()) {
+            pendingWindowOpen = true
+        }
+        if usesAppKit { NSApp.activate() }
+    }
+
+    /// The SwiftUI main window, if it exists (its identifier starts with the scene id), made key and ordered front.
+    private static func orderFrontMainWindow() -> Bool {
+        guard let w = NSApp.windows.first(where: {
+            $0.identifier?.rawValue.hasPrefix(MetalPTApp.mainWindowID) == true && $0.canBecomeMain
+        }) else { return false }
+        w.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    /// A "Run saved" notification was clicked: bring the window forward on Runs with that run selected (also when
+    /// the window has never appeared, e.g. a login-item launch).
     func openRun(_ url: URL) {
         selectedRun = url
         page = .runs
-        guard usesAppKit else { return }
-        openMainWindow?()
-        NSApp.activate()
+        showMainWindow()
     }
 
     // MARK: - Actions

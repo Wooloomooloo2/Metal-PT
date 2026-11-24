@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import MetalPT
@@ -326,5 +327,39 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(!f.model.fpsLoggingOn)
         #expect(f.model.fpsLoggingError != nil)
         #expect(f.hudHolds == 0)
+    }
+}
+
+@MainActor
+@Suite struct LaunchAndWindowTests {
+    private func oapp(prop: UInt32?) -> NSAppleEventDescriptor {
+        let e = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEOpenApplication),
+                                       targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID),
+                                       transactionID: AETransactionID(kAnyTransactionID))
+        if let prop { e.setParam(NSAppleEventDescriptor(enumCode: prop), forKeyword: AEKeyword(keyAEPropData)) }
+        return e
+    }
+
+    @Test func loginItemLaunchIsDetectedFromTheOpenEvent() {
+        #expect(LaunchKind.isLoginItemLaunch(oapp(prop: keyAELaunchedAsLogInItem)))
+        #expect(!LaunchKind.isLoginItemLaunch(oapp(prop: nil)))
+        #expect(!LaunchKind.isLoginItemLaunch(oapp(prop: keyAELaunchedAsServiceItem)))
+        #expect(!LaunchKind.isLoginItemLaunch(nil))
+        #expect(LaunchKind.describe(oapp(prop: keyAELaunchedAsLogInItem)) == "event aevt/oapp prop lgit")
+    }
+
+    /// A notification click before the window ever appeared: the open is kept until the scene can open windows.
+    @Test func openRunBeforeTheWindowExistsOpensItOnceAvailable() {
+        let model = AppModel(hub: TelemetryHub(dependencies: .inert), fpsLogging: FPSLogging(), live: false)
+        let url = URL(fileURLWithPath: "/tmp/x.mptrun")
+        model.openRun(url)
+        #expect(model.page == .runs && model.selectedRun == url)
+        var opened = 0
+        model.openMainWindow = { opened += 1 }
+        #expect(opened == 1)
+        model.openMainWindow = { opened += 1 }   // re-registered (window appeared): no second open
+        #expect(opened == 1)
+        model.showMainWindow()
+        #expect(opened == 2)
     }
 }
