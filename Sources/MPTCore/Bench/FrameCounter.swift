@@ -74,6 +74,19 @@ public struct FrameCounter: Sendable {
 
     public func totalFrames(pid: Int32) -> Int { states[pid]?.total ?? 0 }
 
+    /// The PIDs seen (and not forgotten).
+    public var pids: [Int32] { Array(states.keys) }
+
+    /// Time of `pid`'s newest line; nil if never seen (or forgotten).
+    public func lastTime(pid: Int32) -> Double? { states[pid]?.lastTime }
+
+    /// Drops everything known about `pid` (gone long enough that the PID may be reused by another process). If it
+    /// was followed, the busiest remaining live process is followed instead (judged at that process's last line).
+    public mutating func forget(pid: Int32) {
+        guard states.removeValue(forKey: pid) != nil, followedPID == pid else { return }
+        followedPID = latestTime.flatMap { busiestLive(at: $0) } ?? states.keys.min()
+    }
+
     /// True when `pid` sent a line within `staleAfter` of `time`.
     public func isLive(pid: Int32, at time: Double) -> Bool {
         guard let s = states[pid] else { return false }

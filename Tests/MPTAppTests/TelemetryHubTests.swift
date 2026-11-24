@@ -149,6 +149,16 @@ private final class FakeActivities: ActivityProviding, @unchecked Sendable {
     var active: [Token] { begun.filter { !$0.ended } }
 }
 
+/// Per-PID argv[0] and detected runtime, changeable mid-test (a PID reused by another game).
+private final class ProcessTable: @unchecked Sendable {
+    private let lock = NSLock()
+    private var argv: [Int32: String] = [:]
+    private var runtime: [Int32: String] = [:]
+    func set(_ pid: Int32, exe: String, runtime r: String) { lock.withLock { argv[pid] = "/Games/\(exe)"; runtime[pid] = r } }
+    func argv0(_ pid: Int32) -> String { lock.withLock { argv[pid] } ?? "/Games/Game\(pid).exe" }
+    func runtime(_ pid: Int32) -> String { lock.withLock { runtime[pid] } ?? "native" }
+}
+
 private let t0 = 1_700_000_000.0
 private let selfPID: Int32 = 777
 
@@ -159,6 +169,7 @@ private final class Fixture {
     let clock = FakeClock(t0)
     let scheduler = ManualScheduler()
     let activities = FakeActivities()
+    let processes = ProcessTable()
     let detection = Gate()
     /// Holds `makeSession` (before the session exists).
     let creation = Gate()
@@ -167,13 +178,14 @@ private final class Fixture {
 
     init() {
         let samplers = samplers, streams = streams, clock = clock, detection = detection, creation = creation
+        let processes = processes
         var deps = TelemetryHub.Dependencies(
             makeSampler: { samplers.make() },
             makeStream: { streams.make() },
             clock: { clock.now },
             scheduler: scheduler,
-            argv0: { "/Games/Game\($0).exe" },
-            detectStack: { _ in detection.pass(); return Stack(runtime: "native") },
+            argv0: { processes.argv0($0) },
+            detectStack: { detection.pass(); return Stack(runtime: processes.runtime($0)) },
             selfPID: selfPID,
             makeSession: { options, parts in
                 creation.pass()
@@ -185,6 +197,7 @@ private final class Fixture {
                     stackDetector: parts.stackDetector, argv0: parts.argv0, stackOf: parts.stackOf)
             })
         deps.activities = activities
+        deps.startTime = { _ in nil }   // fake PIDs: no start time to check
         hub = TelemetryHub(dependencies: deps)
     }
 
@@ -542,6 +555,30 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         f.scheduler.fireOnce()
         await settle()
         #expect(f.streams.count == count)
+    }
+
+    /// A PID quiet for longer than `staleAfter` + 30 s is forgotten: when another game later gets the same PID it
+    /// is shown with its own exe name and stack, not the old game's.
+    @Test func reusedPIDGetsItsOwnNameAndStack() async throws {
+        let f = Fixture()
+        let hud = f.hub.acquire(.hud)
+        f.processes.set(4242, exe: "Old.exe", runtime: "Old")
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        try await waitUntil("the old game") { f.hub.latest?.followedApp == "Old.exe" }
+        for _ in 0..<200 where f.hub.followCandidates.first?.stack == nil { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(f.hub.followCandidates.first?.stack?.runtime == "Old")
+
+        // The old game quits; 40 s later a new game starts with the same PID.
+        f.processes.set(4242, exe: "New.exe", runtime: "New")
+        f.clock.set(t0 + 41)
+        f.play(4242, frames: 30, at: t0 + 41)
+        try await waitUntil("the new game") { f.hub.latest?.followedApp == "New.exe" }
+        for _ in 0..<200 where f.hub.followCandidates.first?.stack?.runtime != "New" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(f.hub.followCandidates.first?.stack?.runtime == "New")
+        withExtendedLifetime(hud) {}
     }
 
     /// Quit path: finishes synchronously.

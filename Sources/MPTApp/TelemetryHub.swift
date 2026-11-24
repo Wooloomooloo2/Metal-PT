@@ -143,6 +143,8 @@ public final class TelemetryHub: ObservableObject {
         public var makeSession: @Sendable (RecordingSession.Options, SessionParts) throws -> RecordingSession
         /// App Nap / idle-sleep activities (`AppActivity`): the hub holds one while a recording runs.
         public var activities: ActivityProviding
+        /// A process's start time (tells a reused PID apart; `ProcessNames.startTime`).
+        public var startTime: @Sendable (Int32) -> UInt64?
 
         public init(makeSampler: @escaping @Sendable () -> TelemetrySource,
                     makeStream: @escaping @Sendable () -> HUDEventSource,
@@ -153,7 +155,8 @@ public final class TelemetryHub: ObservableObject {
                     selfPID: Int32,
                     makeSession: @escaping @Sendable (RecordingSession.Options, SessionParts) throws
                         -> RecordingSession,
-                    activities: ActivityProviding = SystemActivities()) {
+                    activities: ActivityProviding = SystemActivities(),
+                    startTime: @escaping @Sendable (Int32) -> UInt64? = { ProcessNames.startTime(pid: $0) }) {
             self.makeSampler = makeSampler
             self.makeStream = makeStream
             self.clock = clock
@@ -163,6 +166,7 @@ public final class TelemetryHub: ObservableObject {
             self.selfPID = selfPID
             self.makeSession = makeSession
             self.activities = activities
+            self.startTime = startTime
         }
 
         /// The real sampler, `log stream`, wall clock, Dispatch timers and lsof stack detection.

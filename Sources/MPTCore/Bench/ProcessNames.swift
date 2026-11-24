@@ -16,6 +16,16 @@ public enum ProcessNames {
         return argv0(fromProcArgs: Array(buf.prefix(size)))
     }
 
+    /// The process's start time in microseconds since 1970 (`proc_pidinfo` `PROC_PIDTBSDINFO`), which tells a reused
+    /// PID apart from the process that had it before; nil if the process does not exist (or is not visible).
+    public static func startTime(pid: Int32) -> UInt64? {
+        guard pid > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return info.pbi_start_tvsec &* 1_000_000 &+ info.pbi_start_tvusec
+    }
+
     /// Layout: argc (Int32), exec path, NUL padding, then argv strings.
     static func argv0(fromProcArgs b: [UInt8]) -> String? {
         var i = MemoryLayout<Int32>.size

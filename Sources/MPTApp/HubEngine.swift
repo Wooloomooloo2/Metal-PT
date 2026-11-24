@@ -22,6 +22,9 @@ final class HubEngine: @unchecked Sendable {
 
     /// Margin past `FrameCounter.staleAfter` for the quiet check.
     static let quietMargin = 0.1
+    /// A PID with no line for this long is forgotten (exe name, image path, frame counts, stack): the PID may be
+    /// reused by another process, which must not inherit the old game's name or stack.
+    static let forgetAfter = FrameCounter.staleAfter + 30
 
     let stackCache: AsyncStackCache
     private let deps: TelemetryHub.Dependencies
@@ -55,7 +58,7 @@ final class HubEngine: @unchecked Sendable {
 
     init(deps: TelemetryHub.Dependencies) {
         self.deps = deps
-        stackCache = AsyncStackCache(now: deps.clock, detect: deps.detectStack)
+        stackCache = AsyncStackCache(now: deps.clock, startTime: deps.startTime, detect: deps.detectStack)
     }
 
     func setSink(_ sink: @escaping @Sendable (Update) -> Void) { lock.withLock { self.sink = sink } }
@@ -252,6 +255,11 @@ final class HubEngine: @unchecked Sendable {
     private func hud(_ event: HUDEvent, generation gen: Int) {
         let (subs, update): ([@Sendable (HUDEvent) -> Void], Update?) = lock.withLock {
             guard gen == generation else { return ([], nil) }
+            // Reused PID: quiet long enough, or another image. Forget the old process first.
+            if let last = counter.lastTime(pid: event.pid), event.time - last > Self.forgetAfter
+                || imagePaths[event.pid].map({ $0 != event.imagePath }) == true {
+                forgetLocked(event.pid)
+            }
             counter.add(event)
             imagePaths[event.pid] = event.imagePath
             return (Array(subscribers.values), followOnlyUpdate(gen))
@@ -291,6 +299,9 @@ final class HubEngine: @unchecked Sendable {
     /// Under `lock`: the live followed process now, and a pin that is no longer live (cleared here).
     private func resolve() -> (Follow, Double?, Int32?) {
         let now = deps.clock()
+        for pid in counter.pids where now - (counter.lastTime(pid: pid) ?? now) > Self.forgetAfter {
+            forgetLocked(pid)
+        }
         let exclude: Set<Int32> = [deps.selfPID]
         var expired: Int32?
         if let p = pinned, exclude.contains(p) || !counter.isLive(pid: p, at: now) {
@@ -303,6 +314,14 @@ final class HubEngine: @unchecked Sendable {
               counter.isLive(pid: pid, at: now) else { return (Follow(), nil, expired) }
         return (Follow(pid: pid, app: name(of: pid), stack: cache.stack(for: pid)), counter.fps(pid: pid, at: now),
                 expired)
+    }
+
+    /// Under `lock`: drops everything known about `pid`.
+    private func forgetLocked(_ pid: Int32) {
+        counter.forget(pid: pid)
+        imagePaths[pid] = nil
+        names[pid] = nil
+        stackCache.forget(pid: pid)
     }
 
     /// Under `lock`.

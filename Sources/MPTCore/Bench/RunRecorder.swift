@@ -26,42 +26,60 @@ public enum FollowRule: Sendable {
 /// "native" is re-detected once more after `retryAfter` seconds (Wine libraries may not have been loaded yet).
 /// `detectNow(pid:)` is the blocking lookup for callers already off the main thread: it shares a detection under way
 /// instead of starting a second lsof.
+///
+/// PID reuse: each result is stored with the process's start time (`startTime`); a lookup whose PID now has a
+/// different start time treats the stack as unknown and detects again. `forget(pid:)` drops a PID outright (its
+/// owner calls it once the PID has been quiet long enough to be reused).
 public final class AsyncStackCache: @unchecked Sendable {
     public static let retryAfter = 5.0
+    private struct Entry {
+        var stack: Stack
+        var at: Double
+        /// The process's start time when it was detected (nil: unknown, not checked).
+        var start: UInt64?
+    }
     private let detect: @Sendable (Int32) -> Stack
     private let now: @Sendable () -> Double
+    private let startTime: @Sendable (Int32) -> UInt64?
     /// Guards the state below; signalled when a detection finishes.
     private let condition = NSCondition()
-    private var known: [Int32: (stack: Stack, at: Double)] = [:]
+    private var known: [Int32: Entry] = [:]
     private var pending: Set<Int32> = []
     private var retried: Set<Int32> = []
+    /// Bumped by `forget` and a start-time change: a detection begun before it is not stored.
+    private var epochs: [Int32: Int] = [:]
     private let queue = DispatchQueue(label: "metalpt.stackcache", qos: .utility, attributes: .concurrent)
 
     public init(now: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 },
+                startTime: @escaping @Sendable (Int32) -> UInt64? = { ProcessNames.startTime(pid: $0) },
                 detect: @escaping @Sendable (Int32) -> Stack = { StackDetector.detect(pid: $0) }) {
         self.detect = detect
         self.now = now
+        self.startTime = startTime
     }
 
     var pendingCount: Int { condition.withLock { pending.count } }
 
     public func stack(for pid: Int32) -> Stack? {
+        let start = startTime(pid)
         condition.lock(); defer { condition.unlock() }
+        dropIfReusedLocked(pid, start: start)
         let entry = known[pid]
-        var start = false
+        var begin = false
         if let entry {
             let runtime = entry.stack.runtime
             if (runtime == nil || runtime == "native"), !retried.contains(pid), !pending.contains(pid),
                now() - entry.at >= Self.retryAfter {
                 retried.insert(pid)
-                start = true
+                begin = true
             }
         } else {
-            start = pending.insert(pid).inserted
+            begin = pending.insert(pid).inserted
         }
-        if start {
+        if begin {
             pending.insert(pid)
-            queue.async { [self] in finish(pid, detect(pid)) }
+            let epoch = epochs[pid, default: 0]
+            queue.async { [self] in finish(pid, detect(pid), start: start, epoch: epoch) }
         }
         return entry?.stack
     }
@@ -69,22 +87,45 @@ public final class AsyncStackCache: @unchecked Sendable {
     /// Blocking: waits for a detection (or re-detection) under way; else the known stack; else detects now (and
     /// caches the result).
     public func detectNow(pid: Int32) -> Stack {
+        let start = startTime(pid)
         condition.lock()
+        dropIfReusedLocked(pid, start: start)
         while pending.contains(pid) { condition.wait() }
         if let entry = known[pid] {
             condition.unlock()
             return entry.stack
         }
         pending.insert(pid)
+        let epoch = epochs[pid, default: 0]
         condition.unlock()
         let s = detect(pid)
-        finish(pid, s)
+        finish(pid, s, start: start, epoch: epoch)
         return s
     }
 
-    private func finish(_ pid: Int32, _ s: Stack) {
+    /// Drops everything cached for `pid`; a detection under way for it is not stored.
+    public func forget(pid: Int32) {
+        condition.withLock { forgetLocked(pid) }
+    }
+
+    private func forgetLocked(_ pid: Int32) {
+        known[pid] = nil
+        retried.remove(pid)
+        epochs[pid, default: 0] += 1
+        if pending.remove(pid) != nil { condition.broadcast() }
+    }
+
+    /// Under the lock: the cached entry belongs to an earlier process with this PID (both start times known and
+    /// different).
+    private func dropIfReusedLocked(_ pid: Int32, start: UInt64?) {
+        guard let start, let cached = known[pid]?.start, cached != start else { return }
+        forgetLocked(pid)
+    }
+
+    private func finish(_ pid: Int32, _ s: Stack, start: UInt64?, epoch: Int) {
         condition.withLock {
-            known[pid] = (s, now())
+            guard epochs[pid, default: 0] == epoch else { return }
+            known[pid] = Entry(stack: s, at: now(), start: start)
             pending.remove(pid)
             condition.broadcast()
         }
