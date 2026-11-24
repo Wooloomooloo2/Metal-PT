@@ -14,6 +14,37 @@ public enum FollowRule: Sendable {
     case pid(Int32)
     /// The busiest process whose name or image path contains the text (case-insensitive).
     case nameContains(String)
+    /// For the app: among live HUD processes minus `exclude` (Metal-PT itself), a live `pinned` PID wins; else the
+    /// busiest whose stack is known and not "native" (Wine, CrossOver, Protium ...); else the busiest candidate.
+    /// A pinned PID that has gone stale is ignored, so the rule falls back; the owner clears its pin when the PID
+    /// disappears from its candidates.
+    case preferTranslated(exclude: Set<Int32>, pinned: Int32?)
+}
+
+/// Per-PID stack cache whose detection (lsof, up to 5 s) runs on a background queue: `stack(for:)` never blocks and
+/// returns nil (unknown) until the detection finishes. Each PID is detected once.
+public final class AsyncStackCache: @unchecked Sendable {
+    private let detect: @Sendable (Int32) -> Stack
+    private let lock = NSLock()
+    private var known: [Int32: Stack] = [:]
+    private var pending: Set<Int32> = []
+    private let queue = DispatchQueue(label: "metalpt.stackcache", qos: .utility, attributes: .concurrent)
+
+    public init(detect: @escaping @Sendable (Int32) -> Stack = { StackDetector.detect(pid: $0) }) {
+        self.detect = detect
+    }
+
+    public func stack(for pid: Int32) -> Stack? {
+        lock.lock(); defer { lock.unlock() }
+        if let s = known[pid] { return s }
+        if pending.insert(pid).inserted {
+            queue.async { [self] in
+                let s = detect(pid)
+                lock.withLock { known[pid] = s; pending.remove(pid) }
+            }
+        }
+        return nil
+    }
 }
 
 /// What one `tick` wrote, for the CLI status line.
@@ -54,6 +85,7 @@ public final class RunRecorder: @unchecked Sendable {
     private let warmup: Double
     private let argv0: @Sendable (Int32) -> String?
     private let inLaunchedGroup: @Sendable (Int32) -> Bool
+    private let stackOf: @Sendable (Int32) -> Stack?
     private let lock = NSLock()
     /// Serialises `tick` so `telemetry` is used from one thread at a time.
     private let tickLock = NSLock()
@@ -78,12 +110,23 @@ public final class RunRecorder: @unchecked Sendable {
     private var sleepStart: Double?
 
     /// `argv0` looks up a live process's argv[0] (injectable for tests); the exe name is taken from it.
+    /// `stackOf` gives a PID's stack or nil while unknown; non-blocking (default: `AsyncStackCache`).
     /// `inLaunchedGroup` says whether a PID belongs to the process group `mpt run` launched; only those count
     /// for the mixed-frames check (`record` has no launched group: every PID counts, and there are no stderr frames).
     public init(writer: RunBundleWriter, telemetry: TelemetrySource, startTime: Double, follow: FollowRule,
                 warmup: Double = 0,
                 argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) },
-                inLaunchedGroup: @escaping @Sendable (Int32) -> Bool = { _ in true }) {
+                inLaunchedGroup: @escaping @Sendable (Int32) -> Bool = { _ in true },
+                stackOf: (@Sendable (Int32) -> Stack?)? = nil) {
+        // Only the `preferTranslated` rule consults it; it must not block (called with the lock held).
+        if let stackOf {
+            self.stackOf = stackOf
+        } else if case .preferTranslated = follow {
+            let cache = AsyncStackCache()
+            self.stackOf = { cache.stack(for: $0) }
+        } else {
+            self.stackOf = { _ in nil }
+        }
         self.writer = writer
         self.telemetry = telemetry
         self.startTime = startTime
@@ -260,6 +303,22 @@ public final class RunRecorder: @unchecked Sendable {
             return pid
         case .busiest:
             return counter.followedPID
+        case .preferTranslated(let exclude, let pinned):
+            guard let now = counter.latestTime else { return nil }
+            if let pinned, counter.isLive(pid: pinned, at: now) { return pinned }
+            let candidates = imagePaths.keys.filter { !exclude.contains($0) }
+            let live = candidates.filter { counter.isLive(pid: $0, at: now) }
+            let translated = live.filter { pid in
+                guard let runtime = (stacks[pid] ?? stackOf(pid))?.runtime else { return false }
+                return runtime != "native"
+            }
+            if let best = counter.busiestLive(at: now, among: translated) { return best }
+            if let best = counter.busiestLive(at: now, among: live) { return best }
+            // Nothing live: the most frames so far among the non-excluded.
+            return candidates.max { a, b in
+                let (fa, fb) = (counter.totalFrames(pid: a), counter.totalFrames(pid: b))
+                return fa != fb ? fa < fb : a > b
+            }
         case .nameContains(let text):
             let needle = text.lowercased()
             let matches = imagePaths.keys.filter { pid in

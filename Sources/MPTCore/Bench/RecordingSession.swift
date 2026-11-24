@@ -219,7 +219,7 @@ public final class RecordingSession: @unchecked Sendable {
             switch options.follow {
             case .pid(let pid): game = argv0(pid).map(ProcessNames.exeName(fromArgv0:))
             case .nameContains(let name): game = name
-            case .busiest: game = nil
+            case .busiest, .preferTranslated: game = nil
             }
             seedIsGuess = false
         }
