@@ -146,4 +146,81 @@ import Foundation
         #expect(CompareReport.label(.init(bundle: "x.fwrun", name: ""), a) == "Protium DXMT + vkd3d")
         #expect(CompareReport.label(.init(bundle: "/p/x.fwrun", name: ""), info()) == "x.fwrun")
     }
+
+    // MARK: - Fix round 1
+
+    private func entries(_ pairs: [(String, String)]) -> [CompareProject.Entry] {
+        pairs.map { CompareProject.Entry(bundle: $0.0, name: $0.1) }
+    }
+
+    @Test func pageNumbersFollowProjectEntries() {
+        let a = bundle("a.fwrun", info(), fps: 60)
+        let b = bundle("b.fwrun", info(label: "other"), fps: 50, seconds: 50)
+        let project = CompareProject(name: "p", baseline: 0,
+                                     runs: entries([("a.fwrun", "A run"), ("gone.fwrun", "Gone"), ("b.fwrun", "B run")]))
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(out.contains("short steady time (under 60 s): run 3 (B run) at 40 s"))
+        #expect(out.contains("<li value=\"2\" class=\"missing\">"))
+        #expect(out.contains("<li value=\"3\">"))
+        #expect(out.contains("3 · B run"))
+        #expect(!out.contains("2 · B run"))
+        // The public function keeps position-based names.
+        let w = CompareReport.warnings([(a.info, RunSummary(a)), (b.info, RunSummary(b))])
+        #expect(w.contains("short steady time (under 60 s): run 2 at 40 s"))
+    }
+
+    @Test func invalidBaselineIndexFallsBack() {
+        let a = bundle("a.fwrun", info(), fps: 60)
+        for bad in [5, -1] {
+            let project = CompareProject(name: "p", baseline: bad, runs: entries([("a.fwrun", "A")]))
+            let out = CompareReport.html(project: project, runs: [pair(a)])
+            #expect(out.contains("baseline index \(bad + 1) is not in the project — using run 1"))
+            #expect(!out.contains("is missing — using"))
+        }
+        let project = CompareProject(name: "p", baseline: 1, runs: entries([("a.fwrun", "A"), ("gone.fwrun", "Gone")]))
+        let out = CompareReport.html(project: project, runs: [pair(a)])
+        #expect(out.contains("baseline run 2 (Gone) is missing — using run 1"))
+        #expect(!out.contains("is not in the project"))
+    }
+
+    @Test func zeroLoadedRunsStillRender() {
+        let project = CompareProject(name: "p", baseline: 0, runs: entries([("x.fwrun", "X"), ("y.fwrun", "")]))
+        let out = CompareReport.html(project: project, runs: [])
+        #expect(out.contains("missing: X (x.fwrun)"))
+        #expect(out.contains("missing: y.fwrun"))
+        #expect(out.contains("<li value=\"1\" class=\"missing\">"))
+        #expect(out.contains("</html>"))
+    }
+
+    @Test func baselineWithoutFPSGivesDashGains() {
+        for fps in [0.0, -1] {
+            var b0 = bundle("a.fwrun", info(), fps: 60)
+            let rows = b0.rows.map { r -> [String: String] in var r = r; r["fps"] = fps < 0 ? "" : "0.0"; return r }
+            b0 = RunBundle(url: b0.url, info: b0.info, rows: rows, frames: nil, warnings: [])
+            let b1 = bundle("b.fwrun", info(), fps: 55)
+            let project = CompareProject(name: "p", baseline: 0, runs: entries([("a.fwrun", "A"), ("b.fwrun", "B")]))
+            let out = CompareReport.html(project: project, runs: [pair(b0), pair(b1)])
+            #expect(out.contains("B: 55.0 fps median (—)"))
+            #expect(!out.lowercased().contains("nan") && !out.lowercased().contains("inf"))
+        }
+    }
+
+    @Test func duplicateEntryMarksOnlyBaselineIndex() {
+        let a = bundle("a.fwrun", info(), fps: 60)
+        let project = CompareProject(name: "p", baseline: 1, runs: entries([("a.fwrun", "First"), ("a.fwrun", "Second")]))
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(a)])
+        #expect(out.components(separatedBy: "class=\"base\"").count == 2)
+        #expect(out.contains("<li value=\"2\" class=\"base\">"))
+        #expect(out.contains("First: 60.0 fps median (0.0 %)"))
+    }
+
+    @Test func fpsPerWattReferenceFromOtherRunIsNoted() {
+        var a = bundle("a.fwrun", info(), fps: 60)
+        a = RunBundle(url: a.url, info: a.info, rows: a.rows.map { r in r.filter { $0.key != "smc_PSTR_w" } },
+                      frames: nil, warnings: [])
+        let b = bundle("b.fwrun", info(), fps: 50)
+        let project = CompareProject(name: "p", baseline: 0, runs: entries([("a.fwrun", "A"), ("b.fwrun", "B")]))
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(out.contains("The baseline has no power readings; FPS/W compares runs measured like run 2 (B)."))
+    }
 }

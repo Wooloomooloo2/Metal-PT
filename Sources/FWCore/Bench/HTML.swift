@@ -141,6 +141,7 @@ public enum HTML {
           border-radius: 6px; display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem;
           font-variant-numeric: tabular-nums; }
         ol.runs li.base { color: var(--ink-2); }
+        ol.runs li.missing { color: var(--ink-3); font-style: italic; }
         .user { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 16px;
           display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem; }
         .user p { white-space: pre-wrap; color: var(--ink-2); }

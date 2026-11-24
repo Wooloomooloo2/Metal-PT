@@ -76,6 +76,11 @@ public enum CompareReport {
 
     /// What makes these runs hard to compare. Runs are referred to by position ("run 2").
     public static func warnings(_ runs: [(RunInfo, RunSummary)]) -> [String] {
+        warnings(runs, names: runs.indices.map { "run \($0 + 1)" })
+    }
+
+    /// As `warnings(_:)`, with `names[i]` used for run `i` (the report passes "run <entry number> (<label>)").
+    static func warnings(_ runs: [(RunInfo, RunSummary)], names: [String]) -> [String] {
         var out: [String] = []
         func distinct(_ values: [String]) -> [String] {
             var seen = Set<String>()
@@ -89,7 +94,7 @@ public enum CompareReport {
         if let lo = steady.min(), let hi = steady.max(), hi > 2 * lo {
             out.append("steady times differ more than 2× (\(lo) s to \(hi) s)")
         }
-        let short = steady.enumerated().filter { $0.element < 60 }.map { "run \($0.offset + 1) (\($0.element) s)" }
+        let short = steady.enumerated().filter { $0.element < 60 }.map { "\(names[$0.offset]) at \($0.element) s" }
         if !short.isEmpty { out.append("short steady time (under 60 s): " + short.joined(separator: ", ")) }
 
         let machines = Set(runs.map { i in fields(i.0).first { $0.field == "machine" }?.value ?? "" })
@@ -103,11 +108,15 @@ public enum CompareReport {
     // MARK: - Report
 
     private struct Item {
+        /// 1-based project entry number, the one `compare NAME baseline N` / `remove N` use.
+        let number: Int
         let entry: CompareProject.Entry
         let bundle: RunBundle
         let summary: RunSummary
         let label: String
+        var isBase = false
         var power: Double? { summary.powerColumn.flatMap { summary.stats[$0]?.mean } }
+        var name: String { "run \(number) (\(label))" }
     }
 
     /// Loads the project's runs, writes the report next to `projectURL` (same name, `.html`) and returns its URL.
@@ -126,46 +135,56 @@ public enum CompareReport {
         return bundle.url.lastPathComponent == entry.bundle
     }
 
+    private static func folderName(_ entry: CompareProject.Entry) -> String {
+        (entry.bundle as NSString).lastPathComponent
+    }
+
     public static func html(project: CompareProject, runs: [(RunBundle, RunSummary)]) -> String {
         let e = HTML.escape
 
-        // Pair entries with loaded runs, in project order; entries without one are missing.
+        // Pair entries with loaded runs, in project order; entries without one are missing. Every run keeps its
+        // entry number so the page matches the CLI's numbering.
         var unused = Array(runs.indices)
         var items: [Item] = []
-        var missing: [CompareProject.Entry] = []
-        var baseItem: Int?
+        var missing: [(number: Int, entry: CompareProject.Entry)] = []
         for (k, entry) in project.runs.enumerated() {
-            guard let pos = unused.firstIndex(where: { matches(entry, runs[$0].0) }) else { missing.append(entry); continue }
+            guard let pos = unused.firstIndex(where: { matches(entry, runs[$0].0) }) else {
+                missing.append((k + 1, entry)); continue
+            }
             let (b, s) = runs[unused.remove(at: pos)]
-            if k == project.baseline { baseItem = items.count }
-            items.append(Item(entry: entry, bundle: b, summary: s, label: label(entry, b.info)))
+            items.append(Item(number: k + 1, entry: entry, bundle: b, summary: s, label: label(entry, b.info),
+                              isBase: k == project.baseline))
         }
-        for i in unused {
+        // Runs passed in without an entry (not produced by `loadRuns`) are numbered after the entries.
+        for (extra, i) in unused.enumerated() {
             let entry = CompareProject.Entry(bundle: runs[i].0.url.lastPathComponent)
-            items.append(Item(entry: entry, bundle: runs[i].0, summary: runs[i].1, label: label(entry, runs[i].0.info)))
+            items.append(Item(number: project.runs.count + extra + 1,
+                              entry: entry, bundle: runs[i].0, summary: runs[i].1, label: label(entry, runs[i].0.info)))
         }
 
         var warns: [String] = []
-        if !items.isEmpty, baseItem == nil {
-            warns.append("baseline run missing — comparing against \(items[0].label)")
+        if !items.isEmpty, !items.contains(where: \.isBase) {
+            items[0].isBase = true
+            if project.runs.indices.contains(project.baseline) {
+                let entry = project.runs[project.baseline]
+                let shown = entry.name.isEmpty ? folderName(entry) : entry.name
+                warns.append("baseline run \(project.baseline + 1) (\(shown)) is missing — using run \(items[0].number)")
+            } else {
+                warns.append("baseline index \(project.baseline + 1) is not in the project — using run \(items[0].number)")
+            }
         }
-        let base = items.isEmpty ? nil : items[baseItem ?? 0]
+        let base = items.first(where: \.isBase)
         for m in missing {
-            let shown = m.name.isEmpty ? (m.bundle as NSString).lastPathComponent : "\(m.name) (\((m.bundle as NSString).lastPathComponent))"
-            warns.append("missing: \(shown) — the run folder is gone; it is left out")
+            let shown = m.entry.name.isEmpty ? folderName(m.entry) : "\(m.entry.name) (\(folderName(m.entry)))"
+            warns.append("missing: \(shown) — run \(m.number), the run folder is gone; it is left out")
         }
-        warns += warnings(items.map { ($0.bundle.info, $0.summary) })
-        for (n, it) in items.enumerated() {
+        warns += warnings(items.map { ($0.bundle.info, $0.summary) }, names: items.map(\.name))
+        for it in items {
             let notes = it.summary.notes.filter { $0.hasPrefix("thermal") || $0.hasPrefix("no ") }
-            for w in it.bundle.warnings + notes { warns.append("run \(n + 1): \(w)") }
+            for w in it.bundle.warnings + notes { warns.append("\(it.name): \(w)") }
         }
         var seen = Set<String>()
         warns = warns.filter { seen.insert($0).inserted }
-
-        // FPS/W only for runs measured like the baseline.
-        let powerColumn = base?.summary.powerColumn ?? items.compactMap(\.summary.powerColumn).first
-        let efficient = items.filter { $0.summary.powerColumn == powerColumn && $0.summary.fpsPerWatt != nil }
-        let skipped = items.filter { $0.summary.fpsPerWatt != nil && $0.summary.powerColumn != powerColumn }
 
         let games = Array(Set(items.map { $0.bundle.info.game.title ?? $0.bundle.info.game.exe })).sorted()
         var body = "<div class=\"wrap\">\n<header>\n"
@@ -187,15 +206,29 @@ public enum CompareReport {
         }
 
         guard let base else {
+            body += runLines(items, missing: missing, base: nil)
             body += "<p class=\"note\">No runs to compare: add some with <span class=\"mono\">fwbench compare "
             body += "\(e(project.name)) add RUN…</span>.</p>\n</div>"
             return HTML.page(title: "\(project.name) · fwbench compare", body: body)
         }
 
+        // FPS/W only for runs measured like the baseline (or, when it has no power, like the first run that has).
+        let reference = base.summary.powerColumn != nil ? base : items.first { $0.summary.powerColumn != nil }
+        let powerColumn = reference?.summary.powerColumn
+        let efficient = items.filter { $0.summary.powerColumn == powerColumn && $0.summary.fpsPerWatt != nil }
+        let skipped = items.filter { $0.summary.fpsPerWatt != nil && $0.summary.powerColumn != powerColumn }
+        var efficiencyNotes: [String] = []
+        if let reference, !reference.isBase {
+            efficiencyNotes.append("The baseline has no power readings; FPS/W compares runs measured like \(reference.name).")
+        }
+        if !skipped.isEmpty {
+            efficiencyNotes.append("Left out, power measured differently: \(skipped.map(\.name).joined(separator: ", ")).")
+        }
+
         body += tiles(items, base: base, efficient: efficient)
-        body += runLines(items, base: base)
-        body += barCharts(items, base: base, efficient: efficient, skipped: skipped)
-        body += differenceTable(items, base: base)
+        body += runLines(items, missing: missing, base: base)
+        body += barCharts(items, efficient: efficient, efficiencyNotes: efficiencyNotes)
+        body += differenceTable(items)
         body += "<footer>\(e(CompareProject.fileName(for: project.name))) · fwbench compare</footer>\n</div>"
         return HTML.page(title: "\(project.name) · fwbench compare", meta: [("fwhelper-compare", project.name)],
                          body: body)
@@ -217,9 +250,8 @@ public enum CompareReport {
         var out = "<div class=\"tiles\" style=\"--tiles:3\">"
         let baseFPS = base.summary.medianFPS
         if let fastest = items.filter({ $0.summary.medianFPS != nil }).max(by: { $0.summary.medianFPS! < $1.summary.medianFPS! }) {
-            let isBase = fastest.bundle.url == base.bundle.url
             // A no-break space keeps "%" with its number when the detail wraps.
-            let g = isBase ? "the baseline"
+            let g = fastest.isBase ? "the baseline"
                 : "\(gain(fastest.summary.medianFPS, baseline: baseFPS).replacingOccurrences(of: " %", with: "\u{00A0}%")) vs baseline"
             out += tile("Fastest", "\(HTML.number(fastest.summary.medianFPS, digits: 1))<small> fps</small>",
                         "\(fastest.label) · \(g)")
@@ -237,24 +269,35 @@ public enum CompareReport {
         return out + "</div>\n"
     }
 
-    private static func runLines(_ items: [Item], base: Item) -> String {
-        var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">Runs</div></div><ol class=\"runs\">"
+    /// Every project entry under its own number (`<li value=N>`), missing ones included.
+    private static func runLines(_ items: [Item], missing: [(number: Int, entry: CompareProject.Entry)],
+                                 base: Item?) -> String {
+        var lines: [(Int, String)] = []
         for it in items {
-            let isBase = it.bundle.url == base.bundle.url
-            let g = isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base.summary.medianFPS)
+            let g = it.isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base?.summary.medianFPS)
             let line = "\(it.label): \(HTML.number(it.summary.medianFPS, digits: 1)) fps median (\(g)), "
                 + "1 % low \(HTML.number(it.summary.low1, digits: 1)), \(powerText(it))"
-            out += "<li\(isBase ? " class=\"base\"" : "")>\(HTML.escape(line))"
-            out += "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"
+            lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(HTML.escape(line))"
+                + "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"))
         }
+        for m in missing {
+            let shown = m.entry.name.isEmpty ? folderName(m.entry) : m.entry.name
+            lines.append((m.number, "<li value=\"\(m.number)\" class=\"missing\">\(HTML.escape(shown)): missing"
+                + "<span class=\"key\">\(HTML.escape(folderName(m.entry)))</span></li>"))
+        }
+        guard !lines.isEmpty else { return "" }
+        var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">Runs</div>"
+        out += "<p class=\"note\">Numbers are the ones <span class=\"mono\">fwbench compare NAME baseline N</span> "
+        out += "and <span class=\"mono\">remove N</span> use.</p></div><ol class=\"runs\">"
+        out += lines.sorted { $0.0 < $1.0 }.map(\.1).joined()
         return out + "</ol></section>\n"
     }
 
     /// Bar labels sit in a fixed column; long names are cut (the hover title keeps the full name).
     private static func short(_ s: String) -> String { s.count > 26 ? String(s.prefix(25)) + "…" : s }
 
-    private static func barCharts(_ items: [Item], base: Item, efficient: [Item], skipped: [Item]) -> String {
-        func baseNote(_ it: Item) -> String { it.bundle.url == base.bundle.url ? "baseline" : "" }
+    private static func barCharts(_ items: [Item], efficient: [Item], efficiencyNotes: [String]) -> String {
+        func baseNote(_ it: Item) -> String { it.isBase ? "baseline" : "" }
         func join(_ parts: String...) -> String { parts.filter { !$0.isEmpty }.joined(separator: " · ") }
 
         var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">Side by side</div></div>\n"
@@ -282,20 +325,17 @@ public enum CompareReport {
             out += "<div class=\"chart\"><h3>FPS per watt</h3>"
             out += HTML.bars(efficient.map { (label: short($0.label), value: $0.summary.fpsPerWatt, note: baseNote($0)) },
                              unit: "FPS/W", digits: 2)
-            if !skipped.isEmpty {
-                let names = skipped.map(\.label).joined(separator: ", ")
-                out += "<p class=\"note\">Left out, power measured differently: \(HTML.escape(names)).</p>"
-            }
+            for note in efficiencyNotes { out += "<p class=\"note\">\(HTML.escape(note))</p>" }
             out += "</div>\n"
         }
         return out + "</section>\n"
     }
 
-    private static func differenceTable(_ items: [Item], base: Item) -> String {
+    private static func differenceTable(_ items: [Item]) -> String {
         let e = HTML.escape
         let infos = items.map(\.bundle.info)
         let diffs = differences(infos)
-        let baseIndex = items.firstIndex { $0.bundle.url == base.bundle.url } ?? 0
+        let baseIndex = items.firstIndex(where: \.isBase) ?? 0
         var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">What differs</div>"
         if diffs.isEmpty {
             out += "<p class=\"note\">No recorded setting differs between these runs.</p></div>"
@@ -303,7 +343,7 @@ public enum CompareReport {
             out += "<p class=\"note\">Highlighted cells differ from the baseline.</p></div>"
             out += "<div class=\"tbl text\"><table><thead><tr><th></th>"
             for (n, it) in items.enumerated() {
-                out += "<th>\(n + 1) · \(e(it.label))\(n == baseIndex ? " <span class=\"key\">baseline</span>" : "")</th>"
+                out += "<th>\(it.number) · \(e(it.label))\(n == baseIndex ? " <span class=\"key\">baseline</span>" : "")</th>"
             }
             out += "</tr></thead><tbody>"
             for d in diffs {

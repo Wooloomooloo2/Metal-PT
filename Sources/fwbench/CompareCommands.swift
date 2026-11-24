@@ -46,6 +46,9 @@ enum CompareCommands {
             guard exists else { throw BenchError("no project '\(name)' in \(projects.path)") }
             show(project, runsRoot: runsRoot)
         case "add":
+            if exists, project.name != name {
+                throw BenchError("project file \(url.lastPathComponent) already holds project '\(project.name)'")
+            }
             var added = 0
             var k = 0
             while k < tail.count {
@@ -79,7 +82,12 @@ enum CompareCommands {
                 project.baseline = n - 1
             } else {
                 project.runs.remove(at: n - 1)
-                if project.baseline == n - 1 { project.baseline = 0 } else if project.baseline > n - 1 { project.baseline -= 1 }
+                if project.baseline == n - 1 {
+                    project.baseline = 0
+                    if !project.runs.isEmpty { print("baseline was removed — run 1 is now the baseline") }
+                } else if project.baseline > n - 1 {
+                    project.baseline -= 1
+                }
             }
             try project.save(to: url)
             show(project, runsRoot: runsRoot)
