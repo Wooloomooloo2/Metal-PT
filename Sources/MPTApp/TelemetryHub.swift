@@ -251,6 +251,9 @@ public final class TelemetryHub: ObservableObject {
     /// Live HUD processes except Metal-PT, busiest first, with exe name and stack (nil while detecting).
     public var followCandidates: [(pid: Int32, app: String, stack: Stack?)] { engine.candidates() }
 
+    /// True when `pid` sent a Metal HUD line within `FrameCounter.staleAfter` (false while the stream is off).
+    public func hasLiveHUD(pid: Int32) -> Bool { engine.hasLiveHUD(pid: pid) }
+
     /// The hub's activity provider (the app also holds `AppActivity.overlay` from it while the overlay is shown).
     public var activities: ActivityProviding { deps.activities }
 

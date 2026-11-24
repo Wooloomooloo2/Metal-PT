@@ -8,12 +8,59 @@ public enum ProcessNames {
 
     /// argv[0] of a process via `sysctl KERN_PROCARGS2`; nil if unreadable.
     public static func displayName(pid: Int32) -> String? {
+        procArgs(pid: pid).flatMap(argv0(fromProcArgs:))
+    }
+
+    /// The environment of a process via `sysctl KERN_PROCARGS2` (readable for the same user's processes); nil if
+    /// unreadable (gone, another user's, or a malformed buffer). A process started without variables gives `[:]`.
+    public static func environment(pid: Int32) -> [String: String]? {
+        procArgs(pid: pid).flatMap(parseProcArgs)?.env
+    }
+
+    /// The raw `KERN_PROCARGS2` buffer of `pid`; nil if unreadable.
+    static func procArgs(pid: Int32) -> [UInt8]? {
+        guard pid > 0 else { return nil }
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
         var buf = [UInt8](repeating: 0, count: size)
         guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return nil }
-        return argv0(fromProcArgs: Array(buf.prefix(size)))
+        return Array(buf.prefix(size))
+    }
+
+    /// Parses a `KERN_PROCARGS2` buffer: argc (Int32, host order), exec path, NUL padding, `argc` argv strings, then
+    /// `KEY=value` env strings up to the first empty string (or the end). Nil when argc or the argv strings are
+    /// cut off. In env, a string cut off by the end of the buffer and strings without `=` are dropped; the first
+    /// value of a repeated key wins.
+    public static func parseProcArgs(_ b: [UInt8]) -> (argv: [String], env: [String: String])? {
+        let n = MemoryLayout<Int32>.size
+        guard b.count >= n else { return nil }
+        let argc = b.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        guard argc >= 0 else { return nil }
+        var i = n
+        while i < b.count, b[i] != 0 { i += 1 }      // exec path
+        guard i < b.count else { return nil }
+        while i < b.count, b[i] == 0 { i += 1 }      // padding
+        /// The NUL-terminated string at `i`, or nil if the buffer ends first.
+        func next() -> String? {
+            var j = i
+            while j < b.count, b[j] != 0 { j += 1 }
+            guard j < b.count else { return nil }
+            defer { i = j + 1 }
+            return String(decoding: b[i..<j], as: UTF8.self)
+        }
+        var argv: [String] = []
+        for _ in 0..<argc {
+            guard let s = next() else { return nil }
+            argv.append(s)
+        }
+        var env: [String: String] = [:]
+        while i < b.count, let s = next(), !s.isEmpty {
+            guard let eq = s.firstIndex(of: "=") else { continue }
+            let key = String(s[..<eq])
+            if env[key] == nil { env[key] = String(s[s.index(after: eq)...]) }
+        }
+        return (argv, env)
     }
 
     /// The process's start time in microseconds since 1970 (`proc_pidinfo` `PROC_PIDTBSDINFO`), which tells a reused

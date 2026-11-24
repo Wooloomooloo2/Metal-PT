@@ -113,7 +113,9 @@ private final class Fixture {
 
     /// `dataRoot`: the data root instead of `root` (a file there makes every recording start fail). `env`: extra
     /// environment.
-    init(fpsLogging: Bool = false, dataRoot: URL? = nil, env: [String: String] = [:]) {
+    init(fpsLogging: Bool = false, dataRoot: URL? = nil, env: [String: String] = [:],
+         frontmost: (@MainActor () -> (pid: Int32, name: String?)?)? = nil,
+         frameCheck: FrameReportingCheck? = nil) {
         defaults.set(fpsLogging, forKey: SettingsKey.fpsLogging)
         let deps = TelemetryHub.Dependencies(
             makeSampler: { CountingSampler() },
@@ -139,7 +141,8 @@ private final class Fixture {
                          env: env.merging(["MPT_DATA_ROOT": (dataRoot ?? root).path]) { a, _ in a },
                          notifier: notifier,
                          sounds: sounds, clock: { clock.read() },
-                         notificationStatus: FakeNotificationStatus(value: .denied))
+                         notificationStatus: FakeNotificationStatus(value: .denied),
+                         frontmost: frontmost, frameCheck: frameCheck)
     }
 
     deinit {
@@ -492,6 +495,46 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(NotificationStatus.settingsURL.absoluteString
                 == "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.wooloomooloo2.metal-pt")
     }
+
+    /// The not-reporting warning: shown after 10 busy samples of a frontmost app without HUD lines or variables,
+    /// cleared when FPS logging goes off; never for Metal-PT itself.
+    @Test func frameReportingWarningFollowsTheHub() async throws {
+        final class Front { var value: (pid: Int32, name: String?)? = (pid: 31337, name: "Cyberpunk2077") }
+        let front = Front()
+        let check = FrameReportingCheck(environment: { _ in ["HOME": "/"] },
+                                        launcher: { _ in (name: "Steam", pid: 500) })
+        let f = Fixture(fpsLogging: true, frontmost: { front.value }, frameCheck: check)
+        f.model.launch()
+        let samples = f.hub.acquire(.samples)
+        var seq: UInt64 = 0
+        func push(_ n: Int) {
+            for _ in 0..<n {
+                seq += 1
+                var s = TelemetrySample()
+                s.gpuBusyPct = 97
+                f.hub.applyForTesting(HubEngine.Update(
+                    snapshot: HubSnapshot(time: Double(seq), sample: s, fps: nil, followedPID: nil, followedApp: nil,
+                                          stack: nil),
+                    addToHistory: true, seq: seq))
+            }
+        }
+        push(9)
+        try await Task.sleep(for: .milliseconds(50))   // the checks run on the main queue after each sample
+        #expect(f.model.frameReportingWarning == nil)
+        push(1)
+        try await waitUntil("the warning") { f.model.frameReportingWarning != nil }
+        #expect(f.model.frameReportingWarning
+                == "Cyberpunk2077 started before FPS logging was on — quit it and Steam and open them again.")
+        f.model.setFPSLogging(false)
+        #expect(f.model.frameReportingWarning == nil)
+        f.model.setFPSLogging(true)
+        front.value = (pid: getpid(), name: "Metal-PT")
+        push(20)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(f.model.frameReportingWarning == nil)
+        samples.release()
+        f.model.quit()
+    }
 }
 
 @Suite struct SingleInstanceTests {
@@ -583,4 +626,5 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         model.showMainWindow()
         #expect(opened == 2)
     }
+
 }

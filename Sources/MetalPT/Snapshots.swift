@@ -64,10 +64,17 @@ enum Snapshots {
                          view: AnyView(WindowFrame(page: .live, model: noGame, hub: noGame.hub))))
         list.append(Shot(name: "live-loggingoff", size: windowSize, width: windowSize.width,
                          view: AnyView(WindowFrame(page: .live, model: idle, hub: idle.hub))))
+        let notReporting = Fixture.model(.noGame, suite: "fixture-notreporting")
+        notReporting.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [],
+                                 frameReportingWarning: Fixture.notReportingWarning)
+        list.append(Shot(name: "live-notreporting", size: windowSize, width: windowSize.width,
+                         view: AnyView(WindowFrame(page: .live, model: notReporting, hub: notReporting.hub))))
         list.append(Shot(name: "menu", size: nil, width: MenuBarView.width,
                          view: AnyView(MenuBarView(model: following, hub: following.hub))))
         list.append(Shot(name: "menu-nogame", size: nil, width: MenuBarView.width,
                          view: AnyView(MenuBarView(model: idle, hub: idle.hub))))
+        list.append(Shot(name: "menu-notreporting", size: nil, width: MenuBarView.width,
+                         view: AnyView(MenuBarView(model: notReporting, hub: notReporting.hub))))
         list += menuBarLabelShots()
         list += overlayShots()
         list += settingsShots()
@@ -359,6 +366,8 @@ enum Fixture {
 
     static let game = "HorizonZeroDawnRemastered"
     static let stack = Stack(runtime: "Protium", translator: "FEX", graphics: ["DXMT"])
+    static let notReportingWarning =
+        "Cyberpunk2077 started before FPS logging was on — quit it and Steam and open them again."
 
     /// FPS for second `i`: ~55–60 with a few sharp dips, and a 4 s gap (a loading screen, no frames logged).
     static func fps(_ i: Int) -> Double? {

@@ -109,6 +109,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingProblem: String?
     /// Display names of runs finished in this session, newest first (the menu bar's recent runs).
     @Published private(set) var recentRuns: [String] = []
+    /// "<App> started before FPS logging was on — …" (`FrameReportingCheck`); shown in Live and the menu, never
+    /// written to run bundles.
+    @Published private(set) var frameReportingWarning: String?
     /// Settings' notification permission row; nil until first refreshed.
     @Published private(set) var notificationStatus: NotificationStatus?
     /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`): by the menu-bar
@@ -141,12 +144,19 @@ final class AppModel: ObservableObject {
     /// An error message arrived during the current (or last) recording: its "Run saved" says "with problems".
     private var runHadErrors = false
     private var lastIndexedRun: RunResult?
+    /// The frontmost app (`NSWorkspace`, main thread); read only while FPS logging is on and the hub samples.
+    private let frontmost: @MainActor () -> (pid: Int32, name: String?)?
+    private var frameCheck: FrameReportingCheck
+    /// The hub sample time the check last ran for (one check per sample).
+    private var lastFrameCheckTime: Double?
 
     init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, usesAppKit: Bool? = nil,
          defaults: UserDefaults = .standard, env: [String: String] = ProcessInfo.processInfo.environment,
          notifier: RecordingNotifying? = nil, sounds: SoundPlaying? = nil,
          clock: @escaping @MainActor () -> Double = { ProcessInfo.processInfo.systemUptime },
-         notificationStatus: NotificationStatusProviding? = nil) {
+         notificationStatus: NotificationStatusProviding? = nil,
+         frontmost: (@MainActor () -> (pid: Int32, name: String?)?)? = nil,
+         frameCheck: FrameReportingCheck? = nil) {
         self.hub = hub
         self.fpsLogging = fpsLogging
         self.live = live
@@ -157,6 +167,16 @@ final class AppModel: ObservableObject {
         self.sounds = sounds ?? (live && (usesAppKit ?? live) ? SystemSounds() : nil)
         self.clock = clock
         self.notificationStatusProvider = notificationStatus ?? SystemNotificationStatus()
+        if let frontmost {
+            self.frontmost = frontmost
+        } else if usesAppKit ?? live {
+            self.frontmost = {
+                NSWorkspace.shared.frontmostApplication.map { (pid: $0.processIdentifier, name: $0.localizedName) }
+            }
+        } else {
+            self.frontmost = { nil }
+        }
+        self.frameCheck = frameCheck ?? FrameReportingCheck()
         self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
         hub.objectWillChange
             .sink { [weak self] _ in
@@ -164,6 +184,16 @@ final class AppModel: ObservableObject {
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.hubChanged() } }
             }
             .store(in: &cancellables)
+        if live {
+            // Each sampled snapshot (history only grows while the hub samples).
+            hub.$history
+                .sink { [weak self] history in
+                    guard let last = history.last else { return }
+                    // `@Published` sends before the value is stored: run after it lands.
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self?.frameCheckTick(last) } }
+                }
+                .store(in: &cancellables)
+        }
         windowState.$isOpen
             .removeDuplicates()
             .dropFirst()
@@ -292,7 +322,10 @@ final class AppModel: ObservableObject {
     /// register hotkeys, and let the menu bar sample while a game is followed.
     func launch() {
         guard live else { return }
-        hub.onSamplingChange = { on in Self.log("sampler \(on ? "on" : "off")") }
+        hub.onSamplingChange = { [weak self] on in
+            Self.log("sampler \(on ? "on" : "off")")
+            if !on { self?.runFrameCheck(now: nil, gpuBusyPct: nil) }
+        }
         hub.onRecordingMessage = { [weak self] m in self?.recordingMessage(m) }
         if launchctlDisabled {
             Self.log("\(SingleInstance.allowSecondKey)=1: second instance; FPS logging (launchctl) is left alone")
@@ -638,6 +671,7 @@ final class AppModel: ObservableObject {
 
     private func syncFPSLogging() {
         fpsLoggingOn = fpsLogging.isOn
+        if !fpsLoggingOn, frameReportingWarning != nil { runFrameCheck(now: nil, gpuBusyPct: nil) }
         fpsLoggingError = fpsLogging.lastError.map { "\($0)" }
         if fpsLogging.isOn, hudToken == nil {
             hudToken = hub.acquire(.hud)
@@ -688,6 +722,27 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// One check per new sampled snapshot.
+    private func frameCheckTick(_ snapshot: HubSnapshot) {
+        guard snapshot.time != lastFrameCheckTime else { return }
+        lastFrameCheckTime = snapshot.time
+        runFrameCheck(now: snapshot.time, gpuBusyPct: snapshot.sample.gpuBusyPct)
+    }
+
+    /// Runs `frameCheck`; the frontmost app is read only while FPS logging is on and the hub samples.
+    private func runFrameCheck(now: Double?, gpuBusyPct: Double?) {
+        let active = fpsLoggingOn && hub.isSampling
+        let front = active ? frontmost() : nil
+        let input = FrameReportingCheck.Input(
+            now: now ?? lastFrameCheckTime ?? 0, fpsLoggingOn: fpsLoggingOn, sampling: hub.isSampling,
+            frontmostPID: front?.pid, frontmostApp: front?.name, selfPID: ProcessInfo.processInfo.processIdentifier,
+            gpuBusyPct: gpuBusyPct, hudLive: front.map { hub.hasLiveHUD(pid: $0.pid) } ?? false)
+        let warning = frameCheck.tick(input)
+        guard warning != frameReportingWarning else { return }
+        frameReportingWarning = warning
+        Self.log(warning.map { "not reporting frames: \($0)" } ?? "not-reporting-frames warning cleared")
+    }
+
     private static func log(_ text: String) {
         try? FileHandle.standardError.write(contentsOf: Data("Metal-PT: \(text)\n".utf8))
     }
@@ -695,8 +750,9 @@ final class AppModel: ObservableObject {
     /// Snapshots only: fixed values for the published state.
     func showFixture(recordState: RecordState, fpsLoggingOn: Bool, recentRuns: [String],
                      hotkeyRegistration: [GlobalHotkeys.Action: String] = [:], fpsLoggingError: String? = nil,
-                     notificationStatus: NotificationStatus? = nil) {
+                     notificationStatus: NotificationStatus? = nil, frameReportingWarning: String? = nil) {
         self.notificationStatus = notificationStatus
+        self.frameReportingWarning = frameReportingWarning
         self.recordState = recordState
         self.fpsLoggingOn = fpsLoggingOn
         self.recentRuns = recentRuns

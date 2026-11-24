@@ -132,7 +132,7 @@ struct RecordButton: View {
     }
 }
 
-/// Warnings: FPS logging lease, hotkeys, recording start, log stream.
+/// Warnings: FPS logging lease, log stream, a game not reporting frames, hotkeys, recording start.
 struct ProblemsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
@@ -141,6 +141,7 @@ struct ProblemsView: View {
         var l: [String] = []
         if let e = model.fpsLoggingError { l.append("FPS logging: \(e)") }
         if let e = hub.streamError { l.append("FPS log stream: \(e)") }
+        if let w = model.frameReportingWarning { l.append(w) }
         l += model.hotkeyProblems
         if let e = model.recordingProblem { l.append(e) }
         return l

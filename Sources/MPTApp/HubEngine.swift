@@ -231,6 +231,11 @@ final class HubEngine: @unchecked Sendable {
         }
     }
 
+    /// True when `pid` sent a HUD line within `FrameCounter.staleAfter` (hub clock).
+    func hasLiveHUD(pid: Int32) -> Bool {
+        lock.withLock { counter.isLive(pid: pid, at: deps.clock()) }
+    }
+
     // MARK: Private
 
     private func tick() {

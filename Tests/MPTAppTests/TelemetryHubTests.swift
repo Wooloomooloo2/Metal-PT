@@ -345,6 +345,20 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         withExtendedLifetime(h) {}
     }
 
+    @Test func hasLiveHUDPerPID() async {
+        let f = Fixture()
+        #expect(!f.hub.hasLiveHUD(pid: 4242))
+        let h = f.hub.acquire(.hud)
+        f.clock.set(t0 + 1)
+        f.play(4242, frames: 60, at: t0 + 1)
+        await settle()
+        #expect(f.hub.hasLiveHUD(pid: 4242))
+        #expect(!f.hub.hasLiveHUD(pid: 4243))
+        f.clock.set(t0 + 4)   // past FrameCounter.staleAfter
+        #expect(!f.hub.hasLiveHUD(pid: 4242))
+        withExtendedLifetime(h) {}
+    }
+
     @Test func pinStickyUntilStale() async {
         let f = Fixture()
         let h = f.hub.acquire(.hud)
