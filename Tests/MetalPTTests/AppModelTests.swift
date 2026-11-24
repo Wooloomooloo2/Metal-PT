@@ -75,6 +75,29 @@ private final class FakeNotifier: RecordingNotifying {
     func post(_ notice: RecordingNotice) { posted.append(notice) }
 }
 
+@MainActor
+private final class FakeSounds: SoundPlaying {
+    var played: [RecordSound] = []
+    func play(_ sound: RecordSound) { played.append(sound) }
+}
+
+/// The model's clock: each read advances by `step` (2 s by default, so ordinary tests are never debounced); a test
+/// that sets `step = 0` moves `now` itself.
+@MainActor
+private final class StepClock {
+    var now = 1000.0
+    var step = 2.0
+    func read() -> Double {
+        defer { now += step }
+        return now
+    }
+}
+
+private struct FakeNotificationStatus: NotificationStatusProviding {
+    let value: NotificationStatus
+    func status() async -> NotificationStatus { value }
+}
+
 /// A hub whose recordings are real sessions on fake sources (fast ticks), writing under a temp root.
 @MainActor
 private final class Fixture {
@@ -82,6 +105,8 @@ private final class Fixture {
     let launchctl = FakeLaunchctl()
     let notifier = FakeNotifier()
     let activities = FakeActivities()
+    let sounds = FakeSounds()
+    let clock = StepClock()
     let defaults: UserDefaults = MemoryDefaults()   // in memory: no plist in ~/Library/Preferences
     let hub: TelemetryHub
     let model: AppModel
@@ -106,8 +131,11 @@ private final class Fixture {
             },
             activities: activities)
         hub = TelemetryHub(dependencies: deps)
+        let clock = clock
         model = AppModel(hub: hub, fpsLogging: FPSLogging(launchctl: launchctl), live: true, usesAppKit: false,
-                         defaults: defaults, env: ["MPT_DATA_ROOT": root.path], notifier: notifier)
+                         defaults: defaults, env: ["MPT_DATA_ROOT": root.path], notifier: notifier,
+                         sounds: sounds, clock: { clock.read() },
+                         notificationStatus: FakeNotificationStatus(value: .denied))
     }
 
     deinit {
@@ -329,6 +357,98 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(!f.model.fpsLoggingOn)
         #expect(f.model.fpsLoggingError != nil)
         #expect(f.hudHolds == 0)
+    }
+
+    // MARK: Recording feedback (spec §A)
+
+    /// A second press within 1 s of the accepted one is ignored (no start/stop churn); a press 1.1 s after it is
+    /// accepted and stops the run.
+    @Test func debounceIgnoresSecondPress() async throws {
+        let f = Fixture()
+        f.clock.step = 0
+        f.model.launch()
+        f.model.toggleRecording()
+        #expect(f.model.recordState == .starting)
+        f.clock.now += 0.5
+        f.model.toggleRecording()
+        #expect(f.model.recordState == .starting)
+        try await waitUntil("recording") { f.model.recordState == .recording }
+        f.clock.now += 0.4   // 0.9 s after the accepted press: still ignored
+        f.model.toggleRecording()
+        #expect(f.model.recordState == .recording)
+        f.clock.now += 0.2   // 1.1 s after the accepted press
+        f.model.toggleRecording()
+        #expect(f.model.recordState == .saving)
+        try await waitUntil("idle") { f.model.recordState == .idle }
+        #expect(f.sounds.played == [.start, .stop])
+        #expect(f.model.recentRuns.count == 1)
+    }
+
+    /// Tink on start, Pop on stop; none when the setting is off; none on a quit-driven stop.
+    @Test func soundsFollowTheSettingAndNotQuit() async throws {
+        let f = Fixture()
+        f.model.launch()
+        #expect(f.model.soundOnRecord)   // default on
+        f.model.toggleRecording()
+        try await waitUntil("recording") { f.model.recordState == .recording }
+        f.model.toggleRecording()
+        try await waitUntil("idle") { f.model.recordState == .idle }
+        #expect(f.sounds.played == [.start, .stop])
+        #expect(RecordSound.start.name == "Tink" && RecordSound.stop.name == "Pop")
+
+        f.defaults.set(false, forKey: SettingsKey.soundOnRecord)
+        #expect(!f.model.soundOnRecord)
+        f.model.toggleRecording()
+        try await waitUntil("recording again") { f.model.recordState == .recording }
+        f.model.toggleRecording()
+        try await waitUntil("idle again") { f.model.recordState == .idle }
+        #expect(f.sounds.played.count == 2)
+
+        f.defaults.set(true, forKey: SettingsKey.soundOnRecord)
+        f.model.toggleRecording()
+        try await waitUntil("recording a third time") { f.model.recordState == .recording }
+        #expect(f.sounds.played == [.start, .stop, .start])
+        f.model.quit()
+        #expect(f.sounds.played == [.start, .stop, .start])
+    }
+
+    /// The menu-bar label: red "● 02:31 · 35 fps" while recording (FPS only when known), "● starting…",
+    /// "saving…", else the followed game's numbers (not red) or the icon.
+    @Test func menuBarLabelShowsRecordingState() {
+        func status(_ elapsed: Double, fps: Double?) -> SessionStatus {
+            SessionStatus(elapsed: elapsed, fps: fps, followedPID: nil, followedApp: nil, stack: nil,
+                          sample: TelemetrySample(), sawFPSSource: false)
+        }
+        let rec = MenuBarLabel.title(state: .recording, status: status(151, fps: 35.2), snapshot: nil)
+        #expect(rec == MenuBarLabel.Title(text: "● 02:31 · 35 fps", recording: true))
+        let noFPS = MenuBarLabel.title(state: .recording, status: status(151, fps: nil), snapshot: nil)
+        #expect(noFPS == MenuBarLabel.Title(text: "● 02:31", recording: true))
+        // Recording before the first tick: elapsed 0.
+        #expect(MenuBarLabel.title(state: .recording, status: nil, snapshot: nil)?.text == "● 00:00")
+        #expect(MenuBarLabel.title(state: .starting, status: nil, snapshot: nil)
+                == MenuBarLabel.Title(text: "● starting…", recording: true))
+        #expect(MenuBarLabel.title(state: .saving, status: status(151, fps: 35), snapshot: nil)
+                == MenuBarLabel.Title(text: "saving…", recording: true))
+        #expect(MenuBarLabel.title(state: .idle, status: nil, snapshot: nil) == nil)
+        let snap = HubSnapshot(time: 0, sample: TelemetrySample(), fps: 58, followedPID: 1, followedApp: "x",
+                               stack: nil)
+        #expect(MenuBarLabel.title(state: .idle, status: nil, snapshot: snap)
+                == MenuBarLabel.Title(text: "◉ 58 fps", recording: false))
+    }
+
+    /// Settings' notification row: the provider's status is published on refresh, with its text.
+    @Test func notificationStatusIsRefreshed() async throws {
+        let f = Fixture()
+        #expect(f.model.notificationStatus == nil)
+        f.model.refreshNotificationStatus()
+        try await waitUntil("status") { f.model.notificationStatus != nil }
+        #expect(f.model.notificationStatus == .denied)
+        #expect(NotificationStatus.allowed.text == "Allowed")
+        #expect(NotificationStatus.denied.text == "Not allowed — turn on in System Settings")
+        #expect(NotificationStatus.notAsked.text == "Not asked yet")
+        #expect(NotificationStatus.unavailable.text == "Available in the installed app")
+        #expect(NotificationStatus.settingsURL.absoluteString
+                == "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.wooloomooloo2.metal-pt")
     }
 }
 

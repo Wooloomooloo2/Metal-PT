@@ -19,6 +19,8 @@ enum SettingsKey {
     static let overlayCorner = "overlayCorner"
     /// Double 0…1, default 0.6: the overlay background's alpha ("Background opacity").
     static let overlayOpacity = "overlayOpacity"
+    /// Bool, default true: a short sound when recording starts and stops.
+    static let soundOnRecord = "soundOnRecord"
     /// The overlay's own keys: the panel re-lays itself out only when one of these changes.
     static let overlayKeys = [overlayStyle, overlayCorner, overlayOpacity]
 }
@@ -67,6 +69,15 @@ final class AppModel: ObservableObject {
     let defaults: UserDefaults
     private let env: [String: String]
     private let notifier: RecordingNotifying?
+    private let sounds: SoundPlaying?
+    /// Seconds on a monotonic clock (the debounce).
+    private let clock: @MainActor () -> Double
+    private let notificationStatusProvider: NotificationStatusProviding
+    /// A record toggle within this many seconds of the previous accepted one is ignored (an accidental double press
+    /// must not cancel a start).
+    static let toggleDebounce = 1.0
+    /// When the last record toggle was accepted (`clock`).
+    private var lastAcceptedToggle: Double?
 
     /// The in-game overlay is shown. Not persisted: off at every launch, so it never appears unexpectedly.
     /// While on it holds `.samples`; off, it holds nothing.
@@ -98,6 +109,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingProblem: String?
     /// Display names of runs finished in this session, newest first (the menu bar's recent runs).
     @Published private(set) var recentRuns: [String] = []
+    /// Settings' notification permission row; nil until first refreshed.
+    @Published private(set) var notificationStatus: NotificationStatus?
     /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`): by the menu-bar
     /// label at launch (`OpenWindowRegistrar`) and by the main window when it appears. A `showMainWindow` that came
     /// before it was set runs once it is.
@@ -131,7 +144,9 @@ final class AppModel: ObservableObject {
 
     init(hub: TelemetryHub, fpsLogging: FPSLogging, live: Bool, usesAppKit: Bool? = nil,
          defaults: UserDefaults = .standard, env: [String: String] = ProcessInfo.processInfo.environment,
-         notifier: RecordingNotifying? = nil) {
+         notifier: RecordingNotifying? = nil, sounds: SoundPlaying? = nil,
+         clock: @escaping @MainActor () -> Double = { ProcessInfo.processInfo.systemUptime },
+         notificationStatus: NotificationStatusProviding? = nil) {
         self.hub = hub
         self.fpsLogging = fpsLogging
         self.live = live
@@ -139,6 +154,9 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.env = env
         self.notifier = notifier ?? (live && (usesAppKit ?? live) ? Notifications() : nil)
+        self.sounds = sounds ?? (live && (usesAppKit ?? live) ? SystemSounds() : nil)
+        self.clock = clock
+        self.notificationStatusProvider = notificationStatus ?? SystemNotificationStatus()
         self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
         hub.objectWillChange
             .sink { [weak self] _ in
@@ -180,6 +198,20 @@ final class AppModel: ObservableObject {
 
     var overlayCombo: HotkeyCombo {
         defaults.string(forKey: SettingsKey.hotkeyOverlay).flatMap(HotkeyCombo.init(display:)) ?? .overlay
+    }
+
+    /// Settings → "Play a sound when recording starts and stops" (default on).
+    var soundOnRecord: Bool {
+        defaults.object(forKey: SettingsKey.soundOnRecord) as? Bool ?? true
+    }
+
+    /// Settings' notification row: asks macOS again (on Settings appear and app activation).
+    func refreshNotificationStatus() {
+        let provider = notificationStatusProvider
+        Task { [weak self] in
+            let status = await provider.status()
+            self?.notificationStatus = status
+        }
     }
 
     func combo(for action: GlobalHotkeys.Action) -> HotkeyCombo {
@@ -422,17 +454,34 @@ final class AppModel: ObservableObject {
         overlayOn.toggle()
     }
 
-    /// Hotkey / menu / Live button. Starting (pressed, not yet started) counts as recording: a quick second press
-    /// stops the run once it has started, instead of being refused as "already running".
+    /// Hotkey / menu / Live button. Starting (pressed, not yet started) counts as recording: a second press stops
+    /// the run once it has started, instead of being refused as "already running". A press within
+    /// `toggleDebounce` of the previous accepted one is ignored.
     func toggleRecording() {
         guard !quitDone else { return }
+        let now = clock()
+        if let last = lastAcceptedToggle, now - last < Self.toggleDebounce {
+            if usesAppKit { Self.log("record toggle ignored (\(String(format: "%.2f", now - last)) s after the last)") }
+            return
+        }
         if stopping || hub.isFinishingRecording {
             recordingProblem = "\(TelemetryHub.RecordingError.stillFinishing)"
         } else if startTask != nil || hub.isRecording {
+            lastAcceptedToggle = now
+            if usesAppKit { Self.log("record toggle: stop") }
+            playSound(.stop)
             stopRecording()
         } else {
+            lastAcceptedToggle = now
+            if usesAppKit { Self.log("record toggle: start") }
+            playSound(.start)
             startRecording()
         }
+    }
+
+    private func playSound(_ sound: RecordSound) {
+        guard soundOnRecord else { return }
+        sounds?.play(sound)
     }
 
     // MARK: - Private
@@ -618,7 +667,9 @@ final class AppModel: ObservableObject {
 
     /// Snapshots only: fixed values for the published state.
     func showFixture(recordState: RecordState, fpsLoggingOn: Bool, recentRuns: [String],
-                     hotkeyRegistration: [GlobalHotkeys.Action: String] = [:], fpsLoggingError: String? = nil) {
+                     hotkeyRegistration: [GlobalHotkeys.Action: String] = [:], fpsLoggingError: String? = nil,
+                     notificationStatus: NotificationStatus? = nil) {
+        self.notificationStatus = notificationStatus
         self.recordState = recordState
         self.fpsLoggingOn = fpsLoggingOn
         self.recentRuns = recentRuns

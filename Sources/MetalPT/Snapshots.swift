@@ -68,18 +68,37 @@ enum Snapshots {
                          view: AnyView(MenuBarView(model: following, hub: following.hub))))
         list.append(Shot(name: "menu-nogame", size: nil, width: MenuBarView.width,
                          view: AnyView(MenuBarView(model: idle, hub: idle.hub))))
-        list.append(Shot(name: "menubar-label", size: nil, width: 160,
-                         view: AnyView(MenuBarStrip(hub: following.hub))))
+        list += menuBarLabelShots()
         list += overlayShots()
         list += settingsShots()
         return list
+    }
+
+    /// The menu-bar label: following a game (not recording), recording (red "● 01:23 · 58 fps"), starting, saving.
+    private static func menuBarLabelShots() -> [Shot] {
+        let following = Fixture.model(.following)
+        following.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [])
+        let recording = Fixture.model(.following)
+        let starting = Fixture.model(.loggingOff)
+        starting.showFixture(recordState: .starting, fpsLoggingOn: true, recentRuns: [])
+        let saving = Fixture.model(.following)
+        saving.showFixture(recordState: .saving, fpsLoggingOn: true, recentRuns: [])
+        return [("menubar-label", following), ("menubar-recording", recording), ("menubar-starting", starting),
+                ("menubar-saving", saving)].map { name, model in
+            Shot(name: name, size: nil, width: 200, view: AnyView(MenuBarStrip(model: model)))
+        }
     }
 
     /// Settings: defaults (unbundled, so launch at login is off with its note); recording the Record hotkey with a
     /// refused combo on Overlay; and the data folder locked by `MPT_DATA_ROOT` with an FPS-logging failure.
     private static func settingsShots() -> [Shot] {
         let plain = Fixture.model(.loggingOff, suite: "settings")
-        plain.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [])
+        plain.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [], notificationStatus: .unavailable)
+        let allowed = Fixture.model(.loggingOff, suite: "settings-notify-allowed")
+        allowed.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [], notificationStatus: .allowed)
+        let denied = Fixture.model(.loggingOff, suite: "settings-notify-denied")
+        denied.defaults.set(false, forKey: SettingsKey.soundOnRecord)
+        denied.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [], notificationStatus: .denied)
         let recording = Fixture.model(.loggingOff, suite: "settings-hotkey")
         recording.defaults.set("⌃⌥R", forKey: SettingsKey.hotkeyOverlay)
         recording.defaults.set(OverlayStyle.detailed.rawValue, forKey: SettingsKey.overlayStyle)
@@ -91,11 +110,13 @@ enum Snapshots {
                            fpsLoggingError: "\(FPSLoggingError.commandFailed(operation: "setenv", name: "MTL_HUD_ENABLED", status: 1))")
         // Taller than the window: the whole form (it scrolls in the app).
         func shot(_ name: String, _ model: AppModel, _ page: SettingsPage) -> Shot {
-            Shot(name: name, size: CGSize(width: windowSize.width, height: 1020), width: windowSize.width,
+            Shot(name: name, size: CGSize(width: windowSize.width, height: 1200), width: windowSize.width,
                  view: AnyView(WindowFrame(page: .settings, model: model, hub: model.hub) { page }))
         }
         return [
             shot("settings", plain, SettingsPage(model: plain)),
+            shot("settings-notify-allowed", allowed, SettingsPage(model: allowed)),
+            shot("settings-notify-denied", denied, SettingsPage(model: denied)),
             shot("settings-hotkey", recording,
                  SettingsPage(model: recording, recordingField: .record,
                               hotkeyMessages: [.overlay: "⌃⇧F6 is already the Record hotkey"])),
@@ -314,12 +335,12 @@ private struct OverlayOnGame<Content: View>: View {
 
 /// A strip of menu bar with the item's title, to check its width and digits.
 private struct MenuBarStrip: View {
-    @ObservedObject var hub: TelemetryHub
+    @ObservedObject var model: AppModel
 
     var body: some View {
         HStack {
             Spacer()
-            MenuBarLabel(hub: hub).font(.system(size: 13))
+            MenuBarLabel(model: model, hub: model.hub).font(.system(size: 13))
         }
         .padding(.horizontal, 10)
         .frame(height: 24)

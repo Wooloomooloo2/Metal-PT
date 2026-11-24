@@ -28,6 +28,7 @@ private struct SettingsContent: View {
     @AppStorage(SettingsKey.overlayStyle) private var styleSetting = OverlayStyle.defaultValue.rawValue
     @AppStorage(SettingsKey.overlayCorner) private var cornerSetting = OverlayCorner.defaultValue.rawValue
     @AppStorage(SettingsKey.overlayOpacity) private var opacity = OverlayDefaults.opacity
+    @AppStorage(SettingsKey.soundOnRecord) private var soundOnRecord = true
     @Environment(\.rendersSnapshot) private var snapshot
 
     init(model: AppModel, recordingField: GlobalHotkeys.Action?, hotkeyMessages: [GlobalHotkeys.Action: String]) {
@@ -40,16 +41,21 @@ private struct SettingsContent: View {
         SettingsForm {
             fpsSection
             hotkeySection
+            feedbackSection
             overlaySection
             dataSection
             loginSection
             aboutSection
         }
-        .onAppear { loginItem.refresh() }
+        .onAppear {
+            loginItem.refresh()
+            if !snapshot { model.refreshNotificationStatus() }
+        }
         .onDisappear { stopRecording() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Approval in System Settings → Login Items happens outside the app.
+            // Approval in System Settings → Login Items and → Notifications happens outside the app.
             loginItem.refresh()
+            model.refreshNotificationStatus()
         }
     }
 
@@ -119,6 +125,38 @@ private struct SettingsContent: View {
     private func stopRecording() {
         guard !snapshot else { return }
         recorder.stop()
+    }
+
+    // MARK: - Recording feedback
+
+    private var feedbackSection: some View {
+        SettingsSection("Recording feedback") {
+            SettingsToggle("Play a sound when recording starts and stops", isOn: $soundOnRecord)
+            notificationRow
+            SettingsNote("While recording, the menu bar shows a red ● with the elapsed time. Metal-PT asks for "
+                         + "notification permission at the first recording; \"Run saved\" notifications open the run.")
+        }
+    }
+
+    private var notificationRow: some View {
+        let status = model.notificationStatus
+        return HStack(alignment: .firstTextBaseline) {
+            Text("Notifications")
+            Spacer(minLength: 8)
+            if let status {
+                if status == .denied {
+                    Label(status.text, systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(WarningLabelStyle())
+                } else {
+                    Text(status.text).foregroundStyle(.secondary)
+                }
+                if status != .unavailable {
+                    Button("Open Notification Settings") { NSWorkspace.shared.open(NotificationStatus.settingsURL) }
+                }
+            } else {
+                Text("Checking…").foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: - Overlay
@@ -507,6 +545,16 @@ private struct SettingsNote: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A label whose icon is the orange warning triangle.
+private struct WarningLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.foregroundStyle(.orange)
+            configuration.title
+        }
     }
 }
 

@@ -57,7 +57,7 @@ struct MetalPTApp: App {
         MenuBarExtra {
             MenuBarView(model: delegate.model, hub: delegate.model.hub)
         } label: {
-            MenuBarLabel(hub: delegate.model.hub)
+            MenuBarLabel(model: delegate.model, hub: delegate.model.hub)
                 .background(OpenWindowRegistrar(model: delegate.model))
         }
         .menuBarExtraStyle(.window)

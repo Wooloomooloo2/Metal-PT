@@ -3,20 +3,58 @@ import MPTApp
 import MPTCore
 import SwiftUI
 
-/// The menu-bar item's title: "◉ 58 fps · 41 W" while a game is followed, else an icon.
+/// The menu-bar item's title: red "● 02:31 · 35 fps" while recording ("● starting…" / "saving…" around it), else
+/// "◉ 58 fps · 41 W" while a game is followed, else an icon. The elapsed time follows the recording's 1 Hz ticks:
+/// no timer of its own.
 struct MenuBarLabel: View {
+    @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
 
-    static func title(_ snap: HubSnapshot?) -> String? {
-        guard let snap, snap.followedPID != nil else { return nil }
-        var s = "◉ \(Fmt.int(snap.fps)) fps"
-        if let w = Fmt.systemW(snap.sample) { s += " · \(Fmt.int(w)) W" }
-        return s
+    struct Title: Equatable {
+        let text: String
+        /// Drawn red (the recording states).
+        let recording: Bool
+    }
+
+    static func title(state: AppModel.RecordState, status: SessionStatus?, snapshot: HubSnapshot?) -> Title? {
+        switch state {
+        case .starting:
+            return Title(text: "● starting…", recording: true)
+        case .saving:
+            return Title(text: "saving…", recording: true)
+        case .recording:
+            var s = "● \(Fmt.elapsed(status?.elapsed ?? 0))"
+            if let fps = status?.fps { s += " · \(Fmt.int(fps)) fps" }
+            return Title(text: s, recording: true)
+        case .idle:
+            guard let snapshot, snapshot.followedPID != nil else { return nil }
+            var s = "◉ \(Fmt.int(snapshot.fps)) fps"
+            if let w = Fmt.systemW(snapshot.sample) { s += " · \(Fmt.int(w)) W" }
+            return Title(text: s, recording: false)
+        }
+    }
+
+    /// `text` drawn red as a non-template image. A `MenuBarExtra` label's `Text` becomes the status item's plain
+    /// title and an SF Symbol's palette colours reach only the symbol, so a red title needs an image with
+    /// `isTemplate == false` (checked on the real status item: macOS 26, see the task-4 report).
+    static func redImage(_ text: String) -> NSImage {
+        let r = ImageRenderer(content: Text(text)
+            .font(Font(NSFont.menuBarFont(ofSize: 0)))
+            .monospacedDigit()
+            .foregroundStyle(Color(nsColor: .systemRed)))
+        r.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = r.nsImage ?? NSImage()
+        image.isTemplate = false
+        return image
     }
 
     var body: some View {
-        if let title = Self.title(hub.latest) {
-            Text(title).monospacedDigit()
+        if let title = Self.title(state: model.recordState, status: hub.recording, snapshot: hub.latest) {
+            if title.recording {
+                Image(nsImage: Self.redImage(title.text)).accessibilityLabel(title.text)
+            } else {
+                Text(title.text).monospacedDigit()
+            }
         } else {
             Image(systemName: "gauge.with.dots.needle.67percent")
         }
