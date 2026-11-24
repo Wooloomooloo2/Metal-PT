@@ -7,6 +7,8 @@ public final class MetalHUDLogStream: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var buffer = Data()
+    /// Set by `stop`; a later `start` does nothing (a signal can stop a session before its stream has started).
+    private var stopped = false
 
     public init(onEvent: @escaping @Sendable (HUDEvent) -> Void) {
         self.onEvent = onEvent
@@ -34,9 +36,10 @@ public final class MetalHUDLogStream: @unchecked Sendable {
         return f.date(from: s)?.timeIntervalSince1970
     }
 
+    /// Launches `log stream`. Does nothing if already started or after `stop`.
     public func start() throws {
         lock.lock(); defer { lock.unlock() }
-        guard process == nil else { return }
+        guard process == nil, !stopped else { return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
         p.arguments = ["stream", "--style", "ndjson",
@@ -56,6 +59,7 @@ public final class MetalHUDLogStream: @unchecked Sendable {
 
     public func stop() {
         lock.lock()
+        stopped = true
         let p = process
         process = nil
         lock.unlock()

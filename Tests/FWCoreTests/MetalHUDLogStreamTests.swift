@@ -31,4 +31,14 @@ import Foundation
         #expect(MetalHUDLogStream.decode(ndjsonLine: #"{"processID":1}"#) == nil)
         #expect(MetalHUDLogStream.decode(ndjsonLine: #"{"processID":1,"processImagePath":"/x","timestamp":"2026-11-24 12:25:00.502304+0000","eventMessage":"other"}"#) == nil)
     }
+
+    // A signal can stop the session before its log stream has started; the late start must not spawn `log`.
+    @Test func startAfterStopDoesNothing() throws {
+        let stream = MetalHUDLogStream { _ in }
+        stream.stop()
+        try stream.start()
+        let running = stream.isRunning
+        stream.stop()   // clean up if the start did spawn
+        #expect(!running)
+    }
 }
