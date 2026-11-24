@@ -24,7 +24,7 @@ public struct RunSummary: Sendable {
     public let powerColumn: String?
     public let notes: [String]
 
-    private static let skipColumns: Set<String> = ["t", "fps_app", "thermal_state", "fps_pid", "on_ac"]
+    private static let skipColumns: Set<String> = ["t", "fps_app", "thermal_state", "fps_pid", "on_ac", "mem_pressure"]
 
     /// Ascending sort, index ceil(p*n)-1 clamped to >= 0.
     static func percentile(_ sorted: [Double], _ p: Double) -> Double {

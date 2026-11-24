@@ -80,6 +80,8 @@ public enum SampleColumns {
         "smc_PMVC_w", "smc_PPMC_w", "smc_PPSC_w",
         "temp_max_c", "temp_battery_c", "fan0_rpm", "fan1_rpm", "mem_used_gb", "battery_pct", "battery_w",
         "on_ac", "thermal_state",
+        // Appended 2026-11-24 (append-only).
+        "gpu_mhz", "mem_pressure", "swap_used_gb", "compressed_gb", "pageouts_per_s",
     ]
 
     nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
@@ -90,9 +92,9 @@ public enum SampleColumns {
 
     static func digits(for column: String) -> Int {
         switch column {
-        case "battery_pct", "fan0_rpm", "fan1_rpm", "fps_pid": return 0
+        case "battery_pct", "fan0_rpm", "fan1_rpm", "fps_pid", "gpu_mhz", "pageouts_per_s": return 0
         case "fps", "elapsed_s": return 1
-        case "mem_used_gb": return 2
+        case "mem_used_gb", "swap_used_gb", "compressed_gb": return 2
         default:
             if column.hasSuffix("_pct") || column.hasSuffix("_c") { return 1 }
             if column.hasSuffix("_rpm") { return 0 }

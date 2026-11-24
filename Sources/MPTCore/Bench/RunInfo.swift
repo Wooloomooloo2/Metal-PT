@@ -8,10 +8,13 @@ public struct RunInfo: Codable, Sendable {
         public var memoryGB: Int
         public var osVersion: String
         public var osBuild: String
+        /// Top GPU clock (MHz) from the `pmgr` frequency table; nil when unknown (and in runs written before it).
+        public var gpuMaxMHz: Int?
         public init(modelID: String, chip: String, gpuCores: Int? = nil, memoryGB: Int,
-                    osVersion: String, osBuild: String) {
+                    osVersion: String, osBuild: String, gpuMaxMHz: Int? = nil) {
             self.modelID = modelID; self.chip = chip; self.gpuCores = gpuCores
             self.memoryGB = memoryGB; self.osVersion = osVersion; self.osBuild = osBuild
+            self.gpuMaxMHz = gpuMaxMHz
         }
     }
     public struct Game: Codable, Sendable {

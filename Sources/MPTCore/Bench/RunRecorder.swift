@@ -292,6 +292,7 @@ public final class RunRecorder: @unchecked Sendable {
             "ft_max_ms": SampleColumns.format(frameTimes.max(), column: "ft_max_ms"),
             "on_ac": SampleColumns.format(onAC: s.onAC),
             "thermal_state": s.thermalState,
+            "mem_pressure": s.memPressure ?? "",
         ]
         let numbers: [(String, Double?)] = [
             ("gpu_w", s.gpuW), ("cpu_p_util_pct", s.cpuPUtilPct), ("cpu_e_util_pct", s.cpuEUtilPct),
@@ -299,6 +300,8 @@ public final class RunRecorder: @unchecked Sendable {
             ("temp_max_c", s.tempMaxC), ("temp_battery_c", s.tempBatteryC),
             ("fan0_rpm", s.fanRPM.count > 0 ? s.fanRPM[0] : nil), ("fan1_rpm", s.fanRPM.count > 1 ? s.fanRPM[1] : nil),
             ("mem_used_gb", s.memUsedGB), ("battery_pct", s.batteryPct.map(Double.init)), ("battery_w", s.batteryW),
+            ("gpu_mhz", s.gpuMHz), ("swap_used_gb", s.swapUsedGB), ("compressed_gb", s.compressedGB),
+            ("pageouts_per_s", s.pageoutsPerS),
         ]
         for (column, value) in numbers { row[column] = SampleColumns.format(value, column: column) }
         for (key, watts) in s.smcPower { row["smc_\(key)_w"] = SampleColumns.format(watts, column: "smc_\(key)_w") }

@@ -15,7 +15,8 @@ public enum MachineInfo {
             gpuCores: gpuCoreCount(),
             memoryGB: Int((Double(bytes) / 1_073_741_824).rounded()),
             osVersion: os,
-            osBuild: sysctlString("kern.osversion") ?? "")
+            osBuild: sysctlString("kern.osversion") ?? "",
+            gpuMaxMHz: GPUClock.currentMaxMHz())
     }
 
     /// `base` with the main display's size (CGDisplayPixelsWide/High) and refresh rate (its current mode).

@@ -30,6 +30,7 @@ or null. A reader must treat any missing optional key as unknown.
 | `machine.modelID` | string | Model identifier, e.g. `Mac16,5`. |
 | `machine.chip` | string | e.g. `Apple M4 Max`. |
 | `machine.gpuCores` | int? | GPU core count when known. |
+| `machine.gpuMaxMHz` | int? | Top GPU clock, MHz, from the IORegistry `pmgr` frequency table (the table whose entry count matches IOReport `GPUPH`'s states). Absent when no table fits, and in runs written before 2026-11-24. |
 | `machine.memoryGB` | int | Installed RAM, GB, rounded. |
 | `machine.osVersion` | string | macOS version, e.g. `26.6`. |
 | `machine.osBuild` | string | macOS build, e.g. `25G...`. |
@@ -89,6 +90,14 @@ the decimal separator, no grouping, whatever the machine's locale. **Empty cell 
 | `battery_w` | W | 2 | Battery power, voltage x current; negative while discharging. |
 | `on_ac` | 0/1 | | `1` on AC power, `0` on battery. |
 | `thermal_state` | text | | macOS thermal pressure (`ProcessInfo.thermalState`): `nominal`, `fair`, `serious`, `critical`. |
+| `gpu_mhz` | MHz | 0 | GPU clock: IOReport `GPUPH` residency-weighted mean over the active (non-`OFF`) states, P*n* → entry *n* of the `pmgr` `voltage-states*` table (hardware-baseline 2026-11-24; the P*n* mapping is `[?]`). Empty when the GPU was off the whole second or no table fits this Mac. |
+| `mem_pressure` | text | | `kern.memorystatus_vm_pressure_level`: `normal` (1), `warn` (2), `critical` (4); empty if unreadable or another value. |
+| `swap_used_gb` | GB | 2 | Swap in use (`vm.swapusage` used), GiB. |
+| `compressed_gb` | GB | 2 | Memory held by the compressor (`host_statistics64` compressor pages × page size), GiB. |
+| `pageouts_per_s` | 1/s | 0 | Pages written out per second (`host_statistics64` pageouts, difference between ticks). Empty on the first tick. |
+
+Columns are append-only: the five above were added 2026-11-24 after `thermal_state`; older runs lack them and readers
+must treat a missing column as unknown.
 
 The `smc_*` columns are SMC keys as measured on one machine (MacBook Pro M4 Max); their meanings are tagged `[?]`
 unless hardware-baseline says "measured", and key availability differs between Mac models. Do not compare them across
@@ -130,7 +139,7 @@ Guarantee: no user name, home path, hostname or serial number in any bundle file
 - Host names (this machine's host name and computer name, with `.local` removed, first DNS label, and the
   `LocalHostName` form) become `<host>`, whole-word and case-insensitive. Names under 4 characters and `localhost`,
   `mac`, `macbook` are not scrubbed. Applies to free-text fields: `game.*`, `stack.*`, `settings.powerMode`, `user.*`,
-  `warnings`, and the text columns `fps_app` and `thermal_state`.
+  `warnings`, and the text columns `fps_app`, `thermal_state` and `mem_pressure`.
 - The serial number is not collected.
 - Not scrubbed: anything a user types into `--label`, `--notes` or `--settings` that is not a home path or this machine's host name
   (for example a real name). A website should treat `user.*` as untrusted free text.
@@ -150,7 +159,7 @@ The zip holds one folder with that name, so unzipping it gives a run folder that
                       name, 2 decimals), rows with a missing or non-numeric value dropped, other columns dropped
       manifest.json
       run.json        the run's run.json, re-scrubbed; user.notes is "" unless the user opted in
-      samples.csv     the run's samples.csv with every text cell scrubbed again (`fps_app`, `thermal_state`, and any
+      samples.csv     the run's samples.csv with every text cell scrubbed again (`fps_app`, `thermal_state`, `mem_pressure`, and any
                       cell in any column that is not a number); numbers and column order unchanged
 
 Nothing else from the run folder is included: no `summary.html` (the website renders its own), no dot-files, no

@@ -10,6 +10,12 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     }
 }
 
+private final class GPUMemoryTelemetry: TelemetrySource, @unchecked Sendable {
+    func sample() -> TelemetrySample {
+        TelemetrySample(gpuMHz: 957.6, memPressure: "warn", swapUsedGB: 4.567, compressedGB: 1.234, pageoutsPerS: 12.4)
+    }
+}
+
 @Suite struct RunRecorderTests {
     private func makeWriter() throws -> (RunBundleWriter, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fwrec-\(UUID().uuidString)")
@@ -281,6 +287,48 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         let b = try RunBundle.load(dir)
         #expect(b.info.stack.runtime == "Protium")
     }
+    @Test func gpuClockAndMemoryColumnsRoundTrip() throws {
+        let tail = ["gpu_mhz", "mem_pressure", "swap_used_gb", "compressed_gb", "pageouts_per_s"]
+        #expect(Array(SampleColumns.all.suffix(5)) == tail)
+        #expect(Array(SampleColumns.all.prefix(31)).last == "thermal_state")
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let r = RunRecorder(writer: w, telemetry: GPUMemoryTelemetry(), startTime: 0, follow: .busiest,
+                            argv0: { _ in nil })
+        try r.tick(at: 1)
+        try r.finish(at: 2)
+        let b = try RunBundle.load(dir)
+        #expect(b.rows[0]["gpu_mhz"] == "958")
+        #expect(b.rows[0]["mem_pressure"] == "warn")
+        #expect(b.rows[0]["swap_used_gb"] == "4.57")
+        #expect(b.rows[0]["compressed_gb"] == "1.23")
+        #expect(b.rows[0]["pageouts_per_s"] == "12")
+        #expect(RunBundleWriter.stringColumns.contains("mem_pressure"))
+    }
+
+    @Test func emptyGPUClockAndMemoryCellsStayEmpty() throws {
+        let (w, dir) = try makeWriter()
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, argv0: { _ in nil })
+        try r.tick(at: 1)
+        try r.finish(at: 2)
+        let b = try RunBundle.load(dir)
+        for c in ["gpu_mhz", "mem_pressure", "swap_used_gb", "compressed_gb", "pageouts_per_s"] {
+            #expect(b.rows[0][c] == "")
+        }
+    }
+
+    @Test func gpuMaxMHzIsOptionalInRunJSON() throws {
+        let old = #"{"schema":1,"machine":{"modelID":"Mac16,5","chip":"Apple M4 Max","memoryGB":48,"#
+            + #""osVersion":"27.0","osBuild":"x"},"game":{"exe":"g"},"start":0}"#
+        let decoder = JSONDecoder()
+        let info = try decoder.decode(RunInfo.self, from: Data(old.utf8))
+        #expect(info.machine.gpuMaxMHz == nil)
+        var m = info.machine
+        m.gpuMaxMHz = 1578
+        let back = try decoder.decode(RunInfo.Machine.self, from: try JSONEncoder().encode(m))
+        #expect(back.gpuMaxMHz == 1578)
+    }
 }
 
 @Suite struct MachineInfoTests {
@@ -314,4 +362,5 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         #expect(TelemetrySampler.isDieSensor("PMU tdie10"))
         #expect(!TelemetrySampler.isDieSensor("PMU tcal"))
     }
+
 }

@@ -16,12 +16,21 @@ public struct TelemetrySample: Sendable {
     public var batteryW: Double?
     public var onAC: Bool?
     public var thermalState: String
+    /// Residency-weighted GPU clock over the active (non-OFF) time; nil with no active time or no frequency table.
+    public var gpuMHz: Double?
+    /// "normal", "warn" or "critical" (`kern.memorystatus_vm_pressure_level`).
+    public var memPressure: String?
+    public var swapUsedGB: Double?
+    public var compressedGB: Double?
+    public var pageoutsPerS: Double?
 
     public init(
         gpuW: Double? = nil, cpuPUtilPct: Double? = nil, cpuEUtilPct: Double? = nil, cpuCoreMaxPct: Double? = nil,
         gpuBusyPct: Double? = nil, smcPower: [String: Double] = [:], tempMaxC: Double? = nil,
         tempBatteryC: Double? = nil, fanRPM: [Double] = [], memUsedGB: Double? = nil, batteryPct: Int? = nil,
-        batteryW: Double? = nil, onAC: Bool? = nil, thermalState: String = "nominal"
+        batteryW: Double? = nil, onAC: Bool? = nil, thermalState: String = "nominal",
+        gpuMHz: Double? = nil, memPressure: String? = nil, swapUsedGB: Double? = nil, compressedGB: Double? = nil,
+        pageoutsPerS: Double? = nil
     ) {
         self.gpuW = gpuW
         self.cpuPUtilPct = cpuPUtilPct
@@ -37,5 +46,10 @@ public struct TelemetrySample: Sendable {
         self.batteryW = batteryW
         self.onAC = onAC
         self.thermalState = thermalState
+        self.gpuMHz = gpuMHz
+        self.memPressure = memPressure
+        self.swapUsedGB = swapUsedGB
+        self.compressedGB = compressedGB
+        self.pageoutsPerS = pageoutsPerS
     }
 }

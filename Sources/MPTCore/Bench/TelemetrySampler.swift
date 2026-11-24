@@ -17,10 +17,17 @@ public final class TelemetrySampler {
         return die.sensorCount > 0 ? die : HIDTemperatureSource(include: { $0 != TelemetrySampler.calibrationSensor })
     }()
     private var previous: (sample: CFDictionary, uptime: TimeInterval)?
+    /// MHz per GPUPH state, read once here (nil: no `pmgr` table fits this Mac's GPUPH states).
+    private let gpuTable: [Double]?
+    private var previousPageouts: (count: UInt64, uptime: TimeInterval)?
 
     public init() {
-        ioreport = try? IOReportSampler(groups: ["Energy Model", "CPU Stats", "GPU Stats"])
+        let ioreport = try? IOReportSampler(groups: ["Energy Model", "CPU Stats", "GPU Stats"])
+        self.ioreport = ioreport
         smc = try? SMCConnection()
+        gpuTable = ioreport?.sample()
+            .flatMap { GPUClock.gpuphStateCount(in: IOReportSampler.channels(in: $0, readValues: true)) }
+            .flatMap { GPUClock.loadTable(stateCount: $0) }
     }
 
     public func sample() -> TelemetrySample {
@@ -31,6 +38,7 @@ public final class TelemetrySampler {
         let temps = temperatures.read()
         result.tempMaxC = Self.maxTemperature(temps)
         result.memUsedGB = Self.memoryUsedGB()
+        sampleMemoryPressure(into: &result)
         if let battery = try? SmartBatteryReader.read() {
             result.batteryPct = battery.percent
             result.onAC = battery.externalConnected
@@ -60,6 +68,27 @@ public final class TelemetrySampler {
         result.cpuEUtilPct = aggregate.eUtil
         result.cpuCoreMaxPct = aggregate.coreMax
         result.gpuBusyPct = aggregate.gpuBusy
+
+        if let gpuTable,
+           let gpu = channels.first(where: { $0.subgroup == "GPU Performance States" && $0.name == "GPUPH" }),
+           case .states(let states) = gpu.value {
+            result.gpuMHz = GPUClock.meanMHz(states: states, table: gpuTable)
+        }
+    }
+
+    private func sampleMemoryPressure(into result: inout TelemetrySample) {
+        let reading = MemoryPressureReading.read()
+        result.memPressure = reading.level
+        result.swapUsedGB = reading.swapUsedGB
+        result.compressedGB = reading.compressedGB
+        let now = ProcessInfo.processInfo.systemUptime
+        if let count = reading.pageouts {
+            if let previousPageouts {
+                result.pageoutsPerS = MemoryPressureReading.pageoutsPerSecond(
+                    from: (previousPageouts.count, previousPageouts.uptime), to: (count, now))
+            }
+            previousPageouts = (count, now)
+        }
     }
 
     private func sampleSMC(into result: inout TelemetrySample) {
@@ -104,7 +133,7 @@ public final class TelemetrySampler {
     }
 
     /// `vm_kernel_page_size` is a mutable C global (rejected by Swift 6); ask the kernel via sysctl instead.
-    private static var kernelPageSize: Int {
+    static var kernelPageSize: Int {
         var size = 0
         var length = MemoryLayout<Int>.size
         return sysctlbyname("vm.pagesize", &size, &length, nil, 0) == 0 && size > 0 ? size : 16384
