@@ -115,7 +115,8 @@ window: a samples row at `elapsed_s` t covers the second (t − 1, t], so steady
 Stderr frames carry no process id, so several Metal processes under the launched command can interleave here. While
 recording, `fwbench run` checks each second after the warm-up (the lows use only those frames). It adds the warning
 `frame times may include more than one process` when, for 3 consecutive such seconds, either the stderr frame count
-is more than 15 % above the followed process's log FPS, or more than one process in the launched command's process
+is more than 15 % above the followed process's log FPS (only when that process is in the launched command's
+process group), or more than one process in the launched command's process
 group gains frames in the log while stderr frames arrive. Processes outside that group, for example other apps with the
 HUD on, are ignored. With that warning the summary and compare
 show the lows as "—" ("frame times mixed").

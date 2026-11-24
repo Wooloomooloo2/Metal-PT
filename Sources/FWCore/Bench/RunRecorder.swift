@@ -137,7 +137,7 @@ public final class RunRecorder: @unchecked Sendable {
         let frameTimes = pendingFrameTimes
         pendingFrameTimes.removeAll(keepingCapacity: true)
         let saw = sawHUD || sawFrames
-        checkMixedFrames(stderrCount: frameTimes.count, logFPS: fps, at: time)
+        checkMixedFrames(stderrCount: frameTimes.count, logFPS: fps, followed: pid, at: time)
         lock.unlock()
 
         var row: [String: String] = [
@@ -212,7 +212,9 @@ public final class RunRecorder: @unchecked Sendable {
     /// frames.csv. Only ticks in the steady window count (the lows use only those frames); either rule must hold for
     /// `mixedSeconds` consecutive ticks: stderr frame rate more than `mixedExcess` above the followed process's log
     /// FPS, or more than one process of the launched group gaining frames in the log while stderr frames arrive.
-    private func checkMixedFrames(stderrCount: Int, logFPS: Double?, at time: Double) {
+    /// The excess rule applies only when `followed` is in the launched group: otherwise its log FPS is some other
+    /// app's (e.g. one with `hud on`) and says nothing about the launched command's stderr frames.
+    private func checkMixedFrames(stderrCount: Int, logFPS: Double?, followed: Int32?, at time: Double) {
         let previous = lastTickTime ?? startTime
         lastTickTime = time
         var gaining = 0
@@ -225,7 +227,8 @@ public final class RunRecorder: @unchecked Sendable {
         guard time - startTime > warmup, stderrCount > 0 else { excessTicks = 0; multiTicks = 0; return }
         multiTicks = gaining > 1 ? multiTicks + 1 : 0
         let dt = time - previous
-        if dt > 0, let logFPS, logFPS > 0, Double(stderrCount) / dt > logFPS * (1 + Self.mixedExcess) {
+        if dt > 0, let logFPS, logFPS > 0, let followed, inLaunchedGroup(followed),
+           Double(stderrCount) / dt > logFPS * (1 + Self.mixedExcess) {
             excessTicks += 1
         } else {
             excessTicks = 0

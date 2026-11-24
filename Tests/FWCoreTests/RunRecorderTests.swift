@@ -199,11 +199,11 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
     /// in second k+1 when `extraGains[k]`; it is in the launched process group when `extraInGroup`. Returns the
     /// run's warnings.
     private func mixedRun(stderrPerSecond: [Int], extraGains: [Bool] = [], extraInGroup: Bool = true,
-                          warmup: Double = 0) throws -> [String] {
+                          warmup: Double = 0, followedInGroup: Bool = true) throws -> [String] {
         let (w, dir) = try makeWriter()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
         let r = RunRecorder(writer: w, telemetry: FakeTelemetry(), startTime: 0, follow: .busiest, warmup: warmup,
-                            argv0: { _ in "g" }, inLaunchedGroup: { $0 == 9 || ($0 == 10 && extraInGroup) })
+                            argv0: { _ in "g" }, inLaunchedGroup: { ($0 == 9 && followedInGroup) || ($0 == 10 && extraInGroup) })
         r.hud(event(pid: 9, frames: 0, at: 0))
         var extra = 0
         if !extraGains.isEmpty { r.hud(event(pid: 10, frames: 0, at: 0, path: "/x/Launcher")) }
@@ -230,6 +230,13 @@ private final class FakeTelemetry: TelemetrySource, @unchecked Sendable {
         // Two seconds over, then back; and 10 % over for a long time.
         #expect(try mixedRun(stderrPerSecond: [60, 120, 120, 60, 120, 120, 60]).isEmpty)
         #expect(try mixedRun(stderrPerSecond: [66, 66, 66, 66, 66]).isEmpty)
+    }
+
+    // An unrelated `hud on` app at 60 fps is followed while the launched game renders 120 fps to stderr: the log
+    // FPS is not the launched process's, so the excess rule does not apply.
+    @Test func excessRuleIgnoresFollowedProcessOutsideLaunchedGroup() throws {
+        #expect(try mixedRun(stderrPerSecond: [120, 120, 120, 120], followedInGroup: false).isEmpty)
+        #expect(try mixedRun(stderrPerSecond: [120, 120, 120, 120]) == [RunRecorder.mixedFramesWarning])
     }
 
     @Test func excessRuleIgnoresWarmup() throws {

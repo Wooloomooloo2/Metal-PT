@@ -39,7 +39,7 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
 ## Current state
 
 M0 in progress — see `docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md` (E2–E5, E7 pending).
-M1B benchmarking (`fwbench`, branch `m1b-benchmarking`) built: Tasks 1–10 done and reviewed, final-review fixes applied, 153 tests. Docs:
+M1B benchmarking (`fwbench`, branch `m1b-benchmarking`) built: Tasks 1–10 done and reviewed, final-review fixes applied, 154 tests. Docs:
 `docs/run-bundle-format.md`, README. Not yet verified with a real Wine game (Task 11 steps 1–3).
 
 ## Resume here
