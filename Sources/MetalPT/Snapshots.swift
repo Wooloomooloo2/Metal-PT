@@ -16,6 +16,8 @@ enum Snapshots {
         let size: CGSize?
         let width: CGFloat
         let view: AnyView
+        /// The overlay is always dark: one image, `<name>.png`.
+        var appearanceIndependent = false
     }
 
     /// Returns false if any image could not be written.
@@ -28,9 +30,11 @@ enum Snapshots {
         }
         var ok = true
         for shot in shots() {
-            for (suffix, scheme, appearance) in [("light", ColorScheme.light, NSAppearance.Name.aqua),
-                                                 ("dark", .dark, .darkAqua)] {
-                let url = dir.appendingPathComponent("\(shot.name)-\(suffix).png")
+            let variants: [(String, ColorScheme, NSAppearance.Name)] = shot.appearanceIndependent
+                ? [("", .dark, .darkAqua)]
+                : [("-light", .light, .aqua), ("-dark", .dark, .darkAqua)]
+            for (suffix, scheme, appearance) in variants {
+                let url = dir.appendingPathComponent("\(shot.name)\(suffix).png")
                 if write(shot, scheme: scheme, appearance: appearance, to: url) {
                     print(url.path)
                 } else {
@@ -62,7 +66,32 @@ enum Snapshots {
                          view: AnyView(MenuBarView(model: idle, hub: idle.hub))))
         list.append(Shot(name: "menubar-label", size: nil, width: 160,
                          view: AnyView(MenuBarStrip(hub: following.hub))))
+        list += overlayShots()
         return list
+    }
+
+    /// The overlay over a game-like background: compact (not recording), compact style while recording, and the
+    /// detailed panel (auto style while recording).
+    private static func overlayShots() -> [Shot] {
+        let notRecording = Fixture.model(.following)
+        notRecording.showFixture(recordState: .idle, fpsLoggingOn: true, recentRuns: [])
+        let recording = Fixture.model(.following)
+        let cases: [(String, AppModel, OverlayStyle, OverlayCorner)] = [
+            ("overlay-compact", notRecording, .auto, .topLeft),
+            ("overlay-compact-recording", recording, .compact, .topLeft),
+            ("overlay-detailed-recording", recording, .auto, .topLeft),
+            ("overlay-detailed-bottomright", recording, .detailed, .bottomRight),
+        ]
+        return cases.map { name, model, style, corner in
+            let defaults = UserDefaults(suiteName: "metal-pt.snapshots.\(name)") ?? .standard
+            defaults.set(style.rawValue, forKey: SettingsKey.overlayStyle)
+            defaults.set(OverlayDefaults.opacity, forKey: SettingsKey.overlayOpacity)
+            return Shot(name: name, size: CGSize(width: 520, height: 300), width: 520,
+                        view: AnyView(OverlayOnGame(corner: corner) {
+                            OverlayView(model: model, hub: model.hub).defaultAppStorage(defaults)
+                        }),
+                        appearanceIndependent: true)
+        }
     }
 
     private static func write(_ shot: Shot, scheme: ColorScheme, appearance: NSAppearance.Name, to url: URL) -> Bool {
@@ -127,6 +156,28 @@ private struct WindowFrame: View {
                 Divider()
                 PageView(page: page, model: model, hub: hub)
             }
+        }
+    }
+}
+
+/// A stand-in game frame (the mockup's gradient, with a bright patch to check legibility) with the overlay in a
+/// corner, inset as on screen.
+private struct OverlayOnGame<Content: View>: View {
+    let corner: OverlayCorner
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        let alignment: Alignment = switch corner {
+        case .topLeft: .topLeading
+        case .topRight: .topTrailing
+        case .bottomLeft: .bottomLeading
+        case .bottomRight: .bottomTrailing
+        }
+        ZStack(alignment: alignment) {
+            LinearGradient(colors: [Color(red: 0.23, green: 0.29, blue: 0.16), Color(red: 0.48, green: 0.42, blue: 0.23),
+                                    Color(red: 0.85, green: 0.86, blue: 0.80), Color(red: 0.16, green: 0.23, blue: 0.29)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            content.padding(OverlayCorner.inset)
         }
     }
 }

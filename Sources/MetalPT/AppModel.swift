@@ -13,6 +13,12 @@ enum SettingsKey {
     /// String, `HotkeyCombo.display` form ("⌃⇧F6").
     static let hotkeyRecord = "hotkeyRecord"
     static let hotkeyOverlay = "hotkeyOverlay"
+    /// String `OverlayStyle`: "auto" (default; compact, detailed while recording), "compact", "detailed".
+    static let overlayStyle = "overlayStyle"
+    /// String `OverlayCorner`: "topLeft" (default), "topRight", "bottomLeft", "bottomRight".
+    static let overlayCorner = "overlayCorner"
+    /// Double, default 0.85.
+    static let overlayOpacity = "overlayOpacity"
 }
 
 /// The app's state and its wiring to `MPTApp`: the telemetry hub, the FPS-logging lease, hotkeys, recording control.
@@ -24,6 +30,8 @@ final class AppModel: ObservableObject {
     /// Dev/test only, honoured when `MPT_DEBUG=1`: a distributed notification with this name toggles recording
     /// (the Carbon hotkey cannot be pressed from a script).
     static let debugToggleRecording = "io.github.wooloomooloo2.metal-pt.debug.toggleRecording"
+    /// Dev/test only, as `debugToggleRecording`: toggles the overlay and logs the panel's state.
+    static let debugToggleOverlay = "io.github.wooloomooloo2.metal-pt.debug.toggleOverlay"
 
     enum RecordState: Equatable {
         case idle
@@ -44,8 +52,11 @@ final class AppModel: ObservableObject {
     private let env: [String: String]
     private let notifier: RecordingNotifying?
 
-    /// Placeholder until the overlay arrives (T10).
-    @Published var overlayOn = false
+    /// The in-game overlay is shown. Not persisted: off at every launch, so it never appears unexpectedly.
+    /// While on it holds `.samples`; off, it holds nothing.
+    @Published var overlayOn = false {
+        didSet { if overlayOn != oldValue { overlayChanged() } }
+    }
     /// The sidebar selection (a "Run saved" notification switches it to Runs).
     @Published var page: Page? = .live
     /// The run to show in Runs (set by a "Run saved" notification; the Runs page arrives in T11).
@@ -66,7 +77,9 @@ final class AppModel: ObservableObject {
     private var hudToken: TelemetryHub.Token?
     private var hotkeys: GlobalHotkeys?
     private var cancellables: Set<AnyCancellable> = []
-    private var debugObserver: NSObjectProtocol?
+    private var debugObservers: [NSObjectProtocol] = []
+    private let overlayLease = HubLease()
+    private var overlay: OverlayController?
     private var quitDone = false
     /// The press-to-start task, from the press until the hub has started (or refused) the recording. While it is
     /// set the state is `.starting` even though the hub does not know about the recording yet.
@@ -136,14 +149,22 @@ final class AppModel: ObservableObject {
         hub.menuBarWantsSamplesWhenFollowing = true
         registerHotkeys()
         if usesAppKit, env["MPT_DEBUG"] == "1" {
-            debugObserver = DistributedNotificationCenter.default().addObserver(
+            let center = DistributedNotificationCenter.default()
+            debugObservers.append(center.addObserver(
                 forName: Notification.Name(Self.debugToggleRecording), object: nil, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated {
                         Self.log("debug: toggle recording")
                         self?.toggleRecording()
                     }
-                }
-            Self.log("debug: listening for \(Self.debugToggleRecording)")
+                })
+            debugObservers.append(center.addObserver(
+                forName: Notification.Name(Self.debugToggleOverlay), object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        Self.log("debug: toggle overlay")
+                        self?.toggleOverlay()
+                    }
+                })
+            Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay)")
         }
     }
 
@@ -153,8 +174,9 @@ final class AppModel: ObservableObject {
         guard !quitDone else { return }
         quitDone = true
         hotkeys = nil
-        if let debugObserver { DistributedNotificationCenter.default().removeObserver(debugObserver) }
-        debugObserver = nil
+        for o in debugObservers { DistributedNotificationCenter.default().removeObserver(o) }
+        debugObservers.removeAll()
+        overlayOn = false
         if live { fpsLogging.releaseAtQuit() }
         let wasRecording = hub.isRecording || hub.isFinishingRecording || startTask != nil
         let run = hub.stopRecordingNow()
@@ -229,7 +251,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - Actions
 
-    func toggleOverlay() { overlayOn.toggle() }
+    /// Hotkey / menu row.
+    func toggleOverlay() {
+        guard !quitDone else { return }
+        overlayOn.toggle()
+    }
 
     /// Hotkey / menu / Live button. Starting (pressed, not yet started) counts as recording: a quick second press
     /// stops the run once it has started, instead of being refused as "already running".
@@ -283,6 +309,33 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.stopping = false
             self.hubChanged()
+        }
+    }
+
+    /// Holds `.samples` exactly while the overlay is on (live models only) and shows or hides the panel (AppKit).
+    private func overlayChanged() {
+        guard live else { return }   // snapshots set `overlayOn` for the menu row only
+        overlayLease.set(overlayOn, .samples, on: hub)
+        guard usesAppKit else { return }
+        if overlayOn {
+            let controller = overlay ?? OverlayController(model: self, defaults: defaults)
+            if overlay == nil, env["MPT_DEBUG"] == "1" {
+                controller.onDebugEvent = { Self.log("debug: \($0)") }
+            }
+            overlay = controller
+            controller.show()
+        } else {
+            overlay?.hide()
+        }
+        Self.log("overlay \(overlayOn ? "on" : "off"); \(overlay?.describe() ?? "no panel")")
+        if overlayOn, env["MPT_DEBUG"] == "1" {
+            // Once laid out and ordered in: the state a user would see.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.overlayOn else { return }
+                    Self.log("debug: \(self.overlay?.describe() ?? "no panel")")
+                }
+            }
         }
     }
 
