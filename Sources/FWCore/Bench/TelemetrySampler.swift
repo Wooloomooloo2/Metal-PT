@@ -1,0 +1,114 @@
+import Darwin
+import Foundation
+
+/// Reads power, utilisation, temperature, fans, memory and battery for the benchmark recorder.
+///
+/// `init()` never throws: each source (IOReport, SMC) that fails to open is simply absent and its fields stay
+/// nil / empty; a single key that fails to read is omitted. Use from one thread only.
+/// The first `sample()` primes IOReport and returns nil power/utilisation fields.
+public final class TelemetrySampler {
+    static let smcPowerKeys = ["PSTR", "PDTR", "PHPC", "PHPS", "PSVR", "PZC0", "PZC1", "PMVC", "PPMC", "PPSC"]
+
+    private let ioreport: IOReportSampler?
+    private let smc: SMCConnection?
+    private var previous: (sample: CFDictionary, uptime: TimeInterval)?
+
+    public init() {
+        ioreport = try? IOReportSampler(groups: ["Energy Model", "CPU Stats", "GPU Stats"])
+        smc = try? SMCConnection()
+    }
+
+    public func sample() -> TelemetrySample {
+        var result = TelemetrySample()
+        result.thermalState = Self.thermalName(ProcessInfo.processInfo.thermalState)
+        sampleIOReport(into: &result)
+        sampleSMC(into: &result)
+        let temps = HIDTemperatureReader.read()
+        result.tempMaxC = temps.map(\.celsius).max()
+        result.memUsedGB = Self.memoryUsedGB()
+        if let battery = try? SmartBatteryReader.read() {
+            result.batteryPct = battery.percent
+            result.onAC = battery.externalConnected
+            if let mV = battery.voltageMillivolts, let mA = battery.amperageMilliamps {
+                result.batteryW = Double(mV) * Double(mA) / 1e6
+            }
+        }
+        return result
+    }
+
+    private func sampleIOReport(into result: inout TelemetrySample) {
+        guard let ioreport, let current = ioreport.sample() else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        defer { previous = (current, now) }
+        guard let previous else { return }
+        let seconds = now - previous.uptime
+        let channels = ioreport.delta(from: previous.sample, to: current)
+
+        if let gpu = channels.first(where: { $0.group == "Energy Model" && $0.name == "GPU Energy" }),
+           case .simple(let value) = gpu.value,
+           let joules = PowerMath.joules(value, unit: gpu.unit) {
+            result.gpuW = PowerMath.watts(joules: joules, seconds: seconds)
+        }
+
+        var p: [Double] = [], e: [Double] = []
+        for channel in channels where channel.subgroup == "CPU Core Performance States" {
+            guard case .states(let states) = channel.value,
+                  let busy = Utilisation.busyShare(states, idleNames: ["IDLE", "DOWN"]) else { continue }
+            if channel.name.hasPrefix("PCPU") { p.append(busy * 100) }
+            else if channel.name.hasPrefix("ECPU") { e.append(busy * 100) }
+        }
+        result.cpuPUtilPct = p.isEmpty ? nil : p.reduce(0, +) / Double(p.count)
+        result.cpuEUtilPct = e.isEmpty ? nil : e.reduce(0, +) / Double(e.count)
+        result.cpuCoreMaxPct = (p + e).max()
+
+        if let gpu = channels.first(where: { $0.subgroup == "GPU Performance States" && $0.name == "GPUPH" }),
+           case .states(let states) = gpu.value,
+           let busy = Utilisation.busyShare(states, idleNames: ["OFF"]) {
+            result.gpuBusyPct = busy * 100
+        }
+    }
+
+    private func sampleSMC(into result: inout TelemetrySample) {
+        guard let smc else { return }
+        for key in Self.smcPowerKeys {
+            if let value = try? smc.read(FourCC(string: key)!).number { result.smcPower[key] = value }
+        }
+        if let count = (try? smc.read("FNum"))?.number, count >= 0, count < 16 {
+            for index in 0..<Int(count) {
+                if let rpm = (try? smc.read(FourCC(string: "F\(index)Ac")!))?.number { result.fanRPM.append(rpm) }
+            }
+        }
+        result.tempBatteryC = (try? smc.read("TB0T"))?.number
+    }
+
+    /// (active + wired + compressor pages) × kernel page size, in GiB (1024³ bytes).
+    static func memoryUsedGB() -> Double? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { return nil }
+        let pages = Double(stats.active_count) + Double(stats.wire_count) + Double(stats.compressor_page_count)
+        return pages * Double(Self.kernelPageSize) / (1024 * 1024 * 1024)
+    }
+
+    /// `vm_kernel_page_size` is a mutable C global (rejected by Swift 6); ask the kernel via sysctl instead.
+    private static var kernelPageSize: Int {
+        var size = 0
+        var length = MemoryLayout<Int>.size
+        return sysctlbyname("vm.pagesize", &size, &length, nil, 0) == 0 && size > 0 ? size : 16384
+    }
+
+    private static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: "nominal"
+        case .fair: "fair"
+        case .serious: "serious"
+        case .critical: "critical"
+        @unknown default: "nominal"
+        }
+    }
+}
