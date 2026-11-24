@@ -27,6 +27,9 @@ Why: Metal-PT is signed ad hoc, not with an Apple Developer ID, because the auth
 membership. macOS therefore cannot check who made it and asks you to approve it yourself. The source is all here;
 you can build it yourself instead (below).
 
+Because each ad-hoc build is a new signature, macOS may treat an update as a new app: after updating you may be asked
+again to allow notifications (System Settings → Notifications → Metal-PT), and to turn "Open at login" back on.
+
 ## Using it
 
 - **FPS logging** (Settings, or the menu bar): FPS comes from Apple's Metal HUD. Turning FPS logging on sets the
@@ -44,7 +47,8 @@ you can build it yourself instead (below).
 - **Export**: on a run, "Submit…" shows exactly what would be sent, then "Export file…" writes one
   `<run>.mptrun.zip` to the `exports` folder. The website that will take these files does not exist yet.
 - Files live in `~/Documents/Metal-PT/` (`runs/`, `projects/`, `exports/`); Settings can move the data folder.
-  Metal-PT can open at login (Settings).
+- Metal-PT can open at login (Settings). This needs Metal-PT.app in your **Applications** folder. Opened at login
+  it starts in the menu bar only; opened yourself it shows its window.
 
 ## Privacy
 

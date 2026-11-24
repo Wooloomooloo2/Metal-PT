@@ -48,13 +48,16 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
 
 ## Current state
 
-Metal-PT app plan (`docs/superpowers/plans/2026-11-24-metal-pt-app.md`) complete, pending final review: app with
+Metal-PT app plan (`docs/superpowers/plans/2026-11-24-metal-pt-app.md`) done, including the final whole-branch review
+fixes (`.superpowers/sdd/2026-11-24-metal-pt-app/final-fix-report.md`), pending the user's manual checks: app with
 Live, Runs, Compare, Settings, overlay, hotkeys, export; `scripts/make-app.sh` builds the ad-hoc-signed
 `Metal-PT.app` (0.2.0, hardened runtime; launchctl, `log stream` and SMC/IOKit reads verified under it).
+Still to check by hand: a real Wine game (CrossOver/Protium), a "Run saved" notification click in the bundled app,
+and launch at login from /Applications (starts menu-bar only).
 M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`) is paused (E2-E5, E7 pending).
-Not yet verified with a real Wine game. Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
+Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
 ## Resume here
 
-Final review of the Metal-PT app plan, then a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write
-the Metal-PT Helper plan (battery charge limit and fans via a root helper; `make-app.sh helper` is reserved).
+After the user's manual checks: a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the
+Metal-PT Helper plan (battery charge limit and fans via a root helper; `make-app.sh helper` is reserved).
