@@ -48,8 +48,6 @@ final class OverlayController {
         self.defaults = defaults
     }
 
-    var isShown: Bool { panel?.isVisible == true }
-
     func show() {
         let panel = self.panel ?? makePanel()
         self.panel = panel

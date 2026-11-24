@@ -10,14 +10,13 @@ import Testing
         let n = OverlayNumbers(recordingElapsed: 83, fps: 58.2, systemW: 40.6, gpuPct: 92.3, dieC: 78.1)
         #expect(n.recText == "● 01:23")
         #expect(n.stripParts == ["58 fps", "41 W", "GPU 92%", "78 °C"])
-        #expect(n.stripText == "● 01:23  58 fps · 41 W · GPU 92% · 78 °C")
     }
 
     /// Not recording: no mark; unknown values are left out; FPS shows "–" without a game.
     @Test func stripLeavesOutUnknowns() {
         let n = OverlayNumbers(fps: nil, systemW: 9.2, gpuPct: nil, dieC: .nan)
         #expect(n.recText == nil)
-        #expect(n.stripText == "– fps · 9 W")
+        #expect(n.stripParts == ["– fps", "9 W"])
     }
 
     @Test func detailLines() {

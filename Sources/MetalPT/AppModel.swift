@@ -95,7 +95,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var fpsLoggingOn = false
     /// The last refused or failed recording start; "still being saved" is cleared once the save completes.
     @Published private(set) var recordingProblem: String?
-    /// Placeholder until the Runs index (T11): display names of runs finished in this session, newest first.
+    /// Display names of runs finished in this session, newest first (the menu bar's recent runs).
     @Published private(set) var recentRuns: [String] = []
     /// Opens (or brings forward) the main window; set by the SwiftUI scene (it owns `openWindow`).
     var openMainWindow: (() -> Void)?

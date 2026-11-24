@@ -117,10 +117,6 @@ struct OverlayNumbers: Equatable {
         return p
     }
 
-    var stripText: String {
-        ([recText].compactMap { $0 } + [stripParts.joined(separator: " · ")]).joined(separator: "  ")
-    }
-
     /// Detailed panel rows under the big FPS (rows with nothing known are left out).
     var detailLines: [String] {
         var lines: [String] = []

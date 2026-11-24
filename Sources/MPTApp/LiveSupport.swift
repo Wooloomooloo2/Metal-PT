@@ -10,8 +10,6 @@ public final class HubLease: ObservableObject {
 
     public init() {}
 
-    public var isHeld: Bool { token != nil }
-
     public func hold(_ need: TelemetryHub.Need, on hub: TelemetryHub) {
         guard token == nil else { return }
         token = hub.acquire(need)

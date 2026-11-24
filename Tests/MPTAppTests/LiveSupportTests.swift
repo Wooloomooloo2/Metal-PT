@@ -13,14 +13,11 @@ import MPTCore
     @Test func leaseHoldsOnceAndReleases() {
         let hub = TelemetryHub(dependencies: .inert)
         let lease = HubLease()
-        #expect(!lease.isHeld)
         lease.hold(.samples, on: hub)
         lease.hold(.samples, on: hub)   // appear twice: still one hold
-        #expect(lease.isHeld)
         #expect(hub.holdCountForTesting(.samples) == 1)
         lease.release()
         lease.release()
-        #expect(!lease.isHeld)
         #expect(hub.holdCountForTesting(.samples) == 0)
         lease.hold(.samples, on: hub)   // reappear
         #expect(hub.holdCountForTesting(.samples) == 1)
