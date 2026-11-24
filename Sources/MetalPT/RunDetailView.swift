@@ -106,16 +106,19 @@ private struct SummaryArea: View {
     }
 }
 
-/// `WKWebView` on a run's summary.html: JavaScript off (the report has none), file access limited to the run folder,
-/// and no navigation anywhere else (links to the web open in the browser).
+/// `WKWebView` on a run's summary.html (or a compare report): JavaScript off (the reports have none), file access
+/// limited to `folder` (the run folder; the projects folder), and no navigation anywhere else (links to the web open
+/// in the browser).
 struct SummaryWebView: NSViewRepresentable {
     let file: URL
     let folder: URL
     /// Bumped when the file is rewritten: reload.
     let version: Int
     var debug = false
+    /// For log lines: "summary" (logs the run folder) or "report" (logs the file).
+    var kind = "summary"
 
-    func makeCoordinator() -> Coordinator { Coordinator(debug: debug) }
+    func makeCoordinator() -> Coordinator { Coordinator(debug: debug, kind: kind) }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -141,8 +144,13 @@ struct SummaryWebView: NSViewRepresentable {
         var folder: URL?
         var version = -1
         private let debug: Bool
+        private let kind: String
 
-        init(debug: Bool) { self.debug = debug }
+        init(debug: Bool, kind: String) { self.debug = debug; self.kind = kind }
+
+        private var loggedName: String {
+            (kind == "summary" ? file?.deletingLastPathComponent() : file)?.lastPathComponent ?? "?"
+        }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
@@ -161,7 +169,7 @@ struct SummaryWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if debug { log("summary loaded \(file?.deletingLastPathComponent().lastPathComponent ?? "?") (v\(version))") }
+            if debug { log("\(kind) loaded \(loggedName) (v\(version))") }
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
@@ -170,14 +178,14 @@ struct SummaryWebView: NSViewRepresentable {
             let e = error as NSError
             // 102: "Frame load interrupted", what a cancelled policy decision reports.
             if e.code == NSURLErrorCancelled || (e.domain == "WebKitErrorDomain" && e.code == 102) {
-                if debug { log("summary navigation stopped: \(error.localizedDescription)") }
+                if debug { log("\(kind) navigation stopped: \(error.localizedDescription)") }
                 return
             }
-            log("summary failed to load: \(error.localizedDescription)")
+            log("\(kind) failed to load: \(error.localizedDescription)")
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            log("summary failed to load: \(error.localizedDescription)")
+            log("\(kind) failed to load: \(error.localizedDescription)")
         }
 
         private func log(_ text: String) {

@@ -46,9 +46,7 @@ enum CompareCommands {
             guard exists else { throw BenchError("no project '\(name)' in \(projects.path)") }
             show(project, runsRoot: runsRoot)
         case "add":
-            if exists, project.name != name {
-                throw BenchError("project file \(url.lastPathComponent) already holds project '\(project.name)'")
-            }
+            try CompareProject.checkFile(url, isFreeFor: name)
             var added = 0
             var k = 0
             while k < tail.count {
@@ -63,10 +61,7 @@ enum CompareCommands {
                 guard !a.hasPrefix("--") else { throw UsageError("unexpected argument '\(a)'") }
                 let dir = try RecordCommands.locateRun(a, out: out)
                 let bundle = CompareProject.entryBundle(for: dir, runsRoot: runsRoot)
-                if project.runs.contains(where: { $0.bundle == bundle }) {
-                    throw BenchError("'\(bundle)' is already in '\(project.name)'")
-                }
-                project.runs.append(.init(bundle: bundle))
+                try project.add(bundle: bundle)
                 added += 1
                 k += 1
             }
@@ -79,15 +74,9 @@ enum CompareCommands {
                 throw UsageError("\(rest[1]) needs a run number from 1 to \(project.runs.count)")
             }
             if rest[1] == "baseline" {
-                project.baseline = n - 1
-            } else {
-                project.runs.remove(at: n - 1)
-                if project.baseline == n - 1 {
-                    project.baseline = 0
-                    if !project.runs.isEmpty { print("baseline was removed — run 1 is now the baseline") }
-                } else if project.baseline > n - 1 {
-                    project.baseline -= 1
-                }
+                try project.setBaseline(n - 1)
+            } else if try project.remove(at: n - 1) {
+                print("baseline was removed — run 1 is now the baseline")
             }
             try project.save(to: url)
             show(project, runsRoot: runsRoot)

@@ -34,6 +34,46 @@ public struct CompareProject: Codable, Sendable {
         try enc.encode(self).write(to: url, options: .atomic)
     }
 
+    // MARK: - Edits (shared by `mpt compare` and the app's Compare page)
+
+    /// Appends a run; refuses a bundle already in the project.
+    public mutating func add(bundle: String, name: String = "") throws {
+        guard !runs.contains(where: { $0.bundle == bundle }) else {
+            throw CompareProjectError.alreadyAdded(bundle: bundle, project: self.name)
+        }
+        runs.append(.init(bundle: bundle, name: name))
+    }
+
+    /// Takes entry `index` out (the run itself is kept). The baseline stays on the same run; when the baseline itself
+    /// goes, run 1 takes over and this returns true.
+    @discardableResult
+    public mutating func remove(at index: Int) throws -> Bool {
+        guard runs.indices.contains(index) else { throw CompareProjectError.runNumber(index + 1, count: runs.count) }
+        runs.remove(at: index)
+        if baseline == index {
+            baseline = 0
+            return !runs.isEmpty
+        }
+        if baseline > index { baseline -= 1 }
+        return false
+    }
+
+    /// Compares against entry `index`.
+    public mutating func setBaseline(_ index: Int) throws {
+        guard runs.indices.contains(index) else { throw CompareProjectError.runNumber(index + 1, count: runs.count) }
+        baseline = index
+    }
+
+    /// Refuses `url` (a project file) when it holds a project other than `name` (two names can share a slug), or
+    /// cannot be read. A missing file is free.
+    public static func checkFile(_ url: URL, isFreeFor name: String) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let existing = try load(url)
+        guard existing.name == name else {
+            throw CompareProjectError.fileHoldsOther(file: url.lastPathComponent, project: existing.name)
+        }
+    }
+
     /// The entry's bundle folder: an absolute path as stored, a bare name under `runsRoot`.
     public static func bundleURL(_ entry: Entry, runsRoot: URL) -> URL {
         entry.bundle.hasPrefix("/") ? URL(fileURLWithPath: entry.bundle, isDirectory: true)
@@ -90,4 +130,22 @@ public struct CompareProject: Codable, Sendable {
             return error.localizedDescription
         }
     }
+}
+
+public enum CompareProjectError: Error, Equatable, CustomStringConvertible, LocalizedError {
+    case alreadyAdded(bundle: String, project: String)
+    case fileHoldsOther(file: String, project: String)
+    /// A 1-based run number outside 1…count.
+    case runNumber(Int, count: Int)
+
+    public var description: String {
+        switch self {
+        case .alreadyAdded(let bundle, let project): "'\(bundle)' is already in '\(project)'"
+        case .fileHoldsOther(let file, let project): "project file \(file) already holds project '\(project)'"
+        case .runNumber(let n, let count):
+            count == 0 ? "no run \(n) (the project has no runs)" : "no run \(n) (the project has runs 1 to \(count))"
+        }
+    }
+
+    public var errorDescription: String? { description.prefix(1).uppercased() + description.dropFirst() + "." }
 }

@@ -35,6 +35,10 @@ final class AppModel: ObservableObject {
     /// Dev/test only, as `debugToggleRecording`: sets the notes of the newest run to the notification's object
     /// string (the Runs edit path without the sheet). `MPT_DEBUG_PAGE=runs` opens that page at launch.
     static let debugEditRun = "io.github.wooloomooloo2.metal-pt.debug.editRun"
+    /// Dev/test only, as `debugToggleRecording`: sets the baseline of the most recently modified compare project to
+    /// the run number in the notification's object string (the Compare edit path without the menu).
+    /// `MPT_DEBUG_PAGE=compare` opens that page at launch.
+    static let debugCompareBaseline = "io.github.wooloomooloo2.metal-pt.debug.compareBaseline"
 
     enum RecordState: Equatable {
         case idle
@@ -64,10 +68,12 @@ final class AppModel: ObservableObject {
     @Published var page: Page? = .live
     /// The run to show in Runs (set by a "Run saved" notification; the Runs page selects it).
     @Published var selectedRun: URL?
-    /// The compare project to show in Compare (set by Runs → "Compare selected…"; the Compare page arrives in T12).
+    /// The compare project to show in Compare (set by Runs → "Compare selected…"; the Compare page selects it).
     @Published var selectedProject: URL?
     /// The runs folder's index, for the Runs page.
     let runs = RunsStore()
+    /// The compare projects, for the Compare page.
+    let projects = ProjectsStore()
     @Published private(set) var recordState: RecordState = .idle
     /// Hotkeys that could not be registered (shown as warnings).
     @Published private(set) var hotkeyProblems: [String] = []
@@ -180,9 +186,14 @@ final class AppModel: ObservableObject {
                     let notes = note.object as? String ?? "debug edit"
                     MainActor.assumeIsolated { self?.debugEditNewestRun(notes: notes) }
                 })
+            debugObservers.append(center.addObserver(
+                forName: Notification.Name(Self.debugCompareBaseline), object: nil, queue: .main) { [weak self] note in
+                    let number = (note.object as? String).flatMap { Int($0) } ?? 1
+                    MainActor.assumeIsolated { self?.debugSetBaseline(number: number) }
+                })
             if let p = env["MPT_DEBUG_PAGE"].flatMap(Page.init(rawValue:)) { page = p }
             Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay), "
-                     + "\(Self.debugEditRun)")
+                     + "\(Self.debugEditRun), \(Self.debugCompareBaseline)")
         }
     }
 
@@ -372,6 +383,18 @@ final class AppModel: ObservableObject {
                 Self.log("debug: edited \(run.id) (notes \(notes.count) chars)")
             } catch {
                 Self.log("debug: edit failed: \(error)")
+            }
+        }
+    }
+
+    private func debugSetBaseline(number: Int) {
+        guard let project = projects.projects.first else { Self.log("debug: no compare project"); return }
+        Task {
+            do {
+                try await projects.setBaseline(project.id, index: number - 1)
+                Self.log("debug: baseline of \(project.id) is run \(number)")
+            } catch {
+                Self.log("debug: baseline failed: \(error)")
             }
         }
     }

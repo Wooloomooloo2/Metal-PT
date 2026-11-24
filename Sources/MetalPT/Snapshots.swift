@@ -53,11 +53,12 @@ enum Snapshots {
         let following = Fixture.model(.following)
         let idle = Fixture.model(.loggingOff)
         let noGame = Fixture.model(.noGame)
-        var list: [Shot] = Page.allCases.filter { $0 != .runs }.map { page in
+        var list: [Shot] = Page.allCases.filter { $0 != .runs && $0 != .compare }.map { page in
             Shot(name: page.rawValue, size: windowSize, width: windowSize.width,
                  view: AnyView(WindowFrame(page: page, model: following, hub: following.hub)))
         }
         list += runsShots()
+        list += compareShots()
         list.append(Shot(name: "live-nogame", size: windowSize, width: windowSize.width,
                          view: AnyView(WindowFrame(page: .live, model: noGame, hub: noGame.hub))))
         list.append(Shot(name: "live-loggingoff", size: windowSize, width: windowSize.width,
@@ -103,6 +104,38 @@ enum Snapshots {
                                               notes: "Mountain path loop from the Mother's Heart save.\n"
                                                 + "Fans audible after ~90 s.")))))
         }
+        return list
+    }
+
+    /// Compare with two fixture projects (one with a trashed run), the add-runs and rename sheets, and no projects.
+    private static func compareShots() -> [Shot] {
+        let model = Fixture.model(.loggingOff)
+        let (runsRoot, projectsRoot) = Fixture.makeProjects()
+        model.runs.showFixture(root: runsRoot)
+        model.projects.showFixture(projectsRoot: projectsRoot, runsRoot: runsRoot)
+        let empty = Fixture.model(.loggingOff)
+        empty.projects.showFixture(projectsRoot: Fixture.emptyRunsRoot().deletingLastPathComponent()
+                                    .appendingPathComponent("projects"), runsRoot: Fixture.emptyRunsRoot())
+        var list = [
+            Shot(name: "compare", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .compare, model: model, hub: model.hub) {
+                     ComparePage(model: model, selection: Fixture.stacksProject)
+                 })),
+            Shot(name: "compare-empty", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .compare, model: empty, hub: empty.hub))),
+        ]
+        if let detail = model.projects.details[Fixture.stacksProject] {
+            let candidates = model.projects.candidates(detail.id, from: model.runs.entries)
+            list.append(Shot(name: "compare-add", size: nil, width: 520,
+                             view: AnyView(AddRunsSheet(detail: detail, store: model.projects, runs: model.runs,
+                                                        ticked: Set(candidates.prefix(1).map(\.id)), onAdd: { _ in }))))
+        }
+        list.append(Shot(name: "compare-rename", size: nil, width: 420,
+                         view: AnyView(RenameProjectSheet(
+                            name: "HZD stacks", edited: "Runs comparison",
+                            problem: CompareProjectError.fileHoldsOther(file: "runs-comparison.json",
+                                                                       project: "Runs comparison").errorDescription,
+                            onSave: { _ in }))))
         return list
     }
 
@@ -331,8 +364,8 @@ extension Fixture {
     /// Three finished runs written by the real bundle writer: two of the same game on different stacks (today), one
     /// of another game (yesterday). Two minutes or three, 1 Hz rows and per-frame times.
     /// `recording`: a separate folder whose newest run is still being written (no end, samples just now).
-    static func makeRuns(recording: Bool = false) -> URL {
-        let root = tempRoot().appendingPathComponent(recording ? "recording/runs" : "runs")
+    static func makeRuns(recording: Bool = false, folder: String? = nil) -> URL {
+        let root = tempRoot().appendingPathComponent(folder ?? (recording ? "recording/runs" : "runs"))
         let now = Date()
         let cases: [(exe: String, stack: Stack, settings: String, label: String, ago: Double, seconds: Int,
                      fps: Double, frames: Bool)] = [
@@ -373,6 +406,28 @@ extension Fixture {
             try? w.finish { $0.end = start.addingTimeInterval(Double(c.seconds)) }
         }
         return root
+    }
+
+    /// The Compare fixture's project shown in the detail.
+    static let stacksProject = "hzd-stacks.json"
+
+    /// The three fixture runs in their own folder and two projects: "Runs comparison" (all three, baseline run 2)
+    /// and, newer, "HZD stacks" (the Protium run against a Whisky run since moved to the Trash).
+    static func makeProjects() -> (runs: URL, projects: URL) {
+        let runs = makeRuns(folder: "compare/runs")
+        let projects = runs.deletingLastPathComponent().appendingPathComponent("projects")
+        let ids = RunIndex(root: runs).entries().sorted { $0.start < $1.start }.map(\.id)   // CP, HZD CrossOver, HZD Protium
+        guard ids.count == 3 else { return (runs, projects) }
+        let all = CompareProject(name: "Runs comparison", baseline: 1, runs: ids.map { .init(bundle: $0) })
+        let stacks = CompareProject(name: "HZD stacks", baseline: 0,
+                                    runs: [.init(bundle: ids[2]),
+                                           .init(bundle: "2026-11-20-hzd-whisky.mptrun", name: "Whisky 2.3")])
+        let allURL = projects.appendingPathComponent(CompareProject.fileName(for: all.name))
+        try? all.save(to: allURL)
+        try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-26 * 3600)],
+                                               ofItemAtPath: allURL.path)
+        try? stacks.save(to: projects.appendingPathComponent(stacksProject))
+        return (runs, projects)
     }
 
     static func removeRuns() {

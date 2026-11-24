@@ -62,9 +62,7 @@ struct PageView: View {
         switch page {
         case .live: LivePage(model: model, hub: hub)
         case .runs: RunsPage(model: model)
-        case .compare:
-            PlaceholderPage(symbol: page.symbol, title: "Compare",
-                            text: "Saved comparisons of runs will appear here, each with its report.")
+        case .compare: ComparePage(model: model)
         case .settings:
             PlaceholderPage(symbol: page.symbol, title: "Settings",
                             text: "Hotkeys, overlay, FPS logging, data folder and launch at login will be set here.")
