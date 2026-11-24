@@ -55,12 +55,17 @@ Live, Runs, Compare, Settings, overlay, hotkeys, export; `scripts/make-app.sh` b
 `Metal-PT.app` (0.2.0, hardened runtime; launchctl, `log stream` and SMC/IOKit reads verified under it).
 Still to check by hand: a real Wine game (CrossOver/Protium), a "Run saved" notification click in the bundled app,
 and launch at login from /Applications (starts menu-bar only).
-Metal-PT limiter/feedback plan (`docs/superpowers/plans/2026-11-24-metal-pt-limiter-and-feedback.md`) complete pending final
-review: GPU clock and memory-pressure columns, "What held it back", recording feedback, not-reporting-frames warning.
+Metal-PT limiter/feedback plan (`docs/superpowers/plans/2026-11-24-metal-pt-limiter-and-feedback.md`) done incl. final
+review fixes (`.superpowers/sdd/2026-11-24-metal-pt-limiter-and-feedback/final-fix-report.md`): GPU clock and
+memory-pressure columns, "What held it back" (rulings L1/L3: clock threshold from the pmgr table, busy-only on low
+power/battery), recording feedback, single instance + reopen, not-reporting-frames warning. Open `[?]`: P n -> MHz
+mapping unverified until a heavy GPU-bound game run with `gpu_mhz` shows ~1578 MHz and "Mostly GPU".
 M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`) is paused (E2-E5, E7 pending).
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
 ## Resume here
 
-Final review of the limiter/feedback plan. Then, after the user's manual checks: a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the
-Metal-PT Helper plan (battery charge limit and fans via a root helper; `make-app.sh helper` is reserved).
+User's manual checks of the rebuilt app: a heavy GPU-bound game recording (verify the GPU clock mapping and record it
+`[M]` in hardware-baseline), the red menu-bar label and sounds, the not-reporting warning, notifications. Then a first
+GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the Metal-PT Helper plan (battery charge limit and
+fans via a root helper; `make-app.sh helper` is reserved).
