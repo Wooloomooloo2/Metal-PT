@@ -132,6 +132,15 @@ public enum HTML {
         th:first-child, td:first-child { text-align: left; }
         th { font-weight: 600; color: var(--ink-2); font-size: 0.75rem; }
         td .key { color: var(--ink-3); font-family: var(--f-mono); font-size: 0.85em; margin-left: 6px; }
+        .tbl.text th, .tbl.text td { text-align: left; white-space: normal; vertical-align: top; }
+        td.diff { background: var(--hover); color: var(--ink); font-weight: 600; }
+        th .key, li .key { color: var(--ink-3); font-family: var(--f-mono); font-size: 0.8em; font-weight: 400;
+          margin-left: 6px; }
+        ol.runs li .key { display: block; margin-left: 0; }
+        ol.runs { margin: 0; padding: 12px 16px 12px 2.2em; background: var(--panel); border: 1px solid var(--rule);
+          border-radius: 6px; display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem;
+          font-variant-numeric: tabular-nums; }
+        ol.runs li.base { color: var(--ink-2); }
         .user { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 16px;
           display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem; }
         .user p { white-space: pre-wrap; color: var(--ink-2); }
@@ -143,7 +152,7 @@ public enum HTML {
         @media print {
           body { background: #fff; }
           .wrap { padding: 0; max-width: none; }
-          .chart, .tile, .tbl, .warn, .user { break-inside: avoid; }
+          .chart, .tile, .tbl, .warn, .user, ol.runs { break-inside: avoid; }
         }
 
         """
