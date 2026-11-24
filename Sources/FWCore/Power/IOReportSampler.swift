@@ -18,6 +18,14 @@ public struct IOReportChannel: Sendable {
     public let name: String
     public let unit: String
     public let value: Value
+
+    init(group: String, subgroup: String, name: String, unit: String, value: Value) {
+        self.group = group
+        self.subgroup = subgroup
+        self.name = name
+        self.unit = unit
+        self.value = value
+    }
 }
 
 /// A subscription to IOReport channel groups (e.g. "Energy Model", "CPU Stats", "GPU Stats").

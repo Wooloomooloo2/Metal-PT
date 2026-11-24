@@ -50,22 +50,11 @@ public final class TelemetrySampler {
             result.gpuW = PowerMath.watts(joules: joules, seconds: seconds)
         }
 
-        var p: [Double] = [], e: [Double] = []
-        for channel in channels where channel.subgroup == "CPU Core Performance States" {
-            guard case .states(let states) = channel.value,
-                  let busy = Utilisation.busyShare(states, idleNames: ["IDLE", "DOWN"]) else { continue }
-            if channel.name.hasPrefix("PCPU") { p.append(busy * 100) }
-            else if channel.name.hasPrefix("ECPU") { e.append(busy * 100) }
-        }
-        result.cpuPUtilPct = p.isEmpty ? nil : p.reduce(0, +) / Double(p.count)
-        result.cpuEUtilPct = e.isEmpty ? nil : e.reduce(0, +) / Double(e.count)
-        result.cpuCoreMaxPct = (p + e).max()
-
-        if let gpu = channels.first(where: { $0.subgroup == "GPU Performance States" && $0.name == "GPUPH" }),
-           case .states(let states) = gpu.value,
-           let busy = Utilisation.busyShare(states, idleNames: ["OFF"]) {
-            result.gpuBusyPct = busy * 100
-        }
+        let aggregate = Utilisation.aggregate(channels)
+        result.cpuPUtilPct = aggregate.pUtil
+        result.cpuEUtilPct = aggregate.eUtil
+        result.cpuCoreMaxPct = aggregate.coreMax
+        result.gpuBusyPct = aggregate.gpuBusy
     }
 
     private func sampleSMC(into result: inout TelemetrySample) {
@@ -73,9 +62,12 @@ public final class TelemetrySampler {
         for key in Self.smcPowerKeys {
             if let value = try? smc.read(FourCC(string: key)!).number { result.smcPower[key] = value }
         }
-        if let count = (try? smc.read("FNum"))?.number, count >= 0, count < 16 {
-            for index in 0..<Int(count) {
-                if let rpm = (try? smc.read(FourCC(string: "F\(index)Ac")!))?.number { result.fanRPM.append(rpm) }
+        // Key names are "F<digit>Ac", so at most 10 fans.
+        if let count = (try? smc.read("FNum"))?.number, count >= 0 {
+            for index in 0..<min(Int(count), 10) {
+                if let key = FourCC(string: "F\(index)Ac"), let rpm = (try? smc.read(key))?.number {
+                    result.fanRPM.append(rpm)
+                }
             }
         }
         result.tempBatteryC = (try? smc.read("TB0T"))?.number
