@@ -1,6 +1,7 @@
 /// Raw bytes of one SMC key plus a best-effort numeric reading.
 ///
-/// Integer and fixed-point types are big-endian; `flt ` is little-endian on Apple Silicon.
+/// Measured on this machine (hardware-baseline E1): `ui16`/`ui32`/`ui64`/`si16` and `flt ` are little-endian, except
+/// the key `#KEY`, which is big-endian. `sp78`/`fpe2` are big-endian but not measured `[?]`.
 public struct SMCValue: Equatable, Sendable {
     public let key: FourCC
     public let type: FourCC
@@ -22,19 +23,19 @@ public struct SMCValue: Equatable, Sendable {
             return Double(bytes[0])
         case "ui16":
             guard bytes.count == 2 else { return nil }
-            return Double(bigEndian(bytes))
+            return Double(integer(bytes))
         case "ui32":
             guard bytes.count == 4 else { return nil }
-            return Double(bigEndian(bytes))
+            return Double(integer(bytes))
         case "ui64":
             guard bytes.count == 8 else { return nil }
-            return Double(bigEndian(bytes))
+            return Double(integer(bytes))
         case "si8 ":
             guard bytes.count == 1 else { return nil }
             return Double(Int8(bitPattern: bytes[0]))
         case "si16":
             guard bytes.count == 2 else { return nil }
-            return Double(Int16(bitPattern: UInt16(bigEndian(bytes))))
+            return Double(Int16(bitPattern: UInt16(integer(bytes))))
         case "sp78":
             guard bytes.count == 2 else { return nil }
             return Double(Int16(bitPattern: UInt16(bigEndian(bytes)))) / 256
@@ -44,6 +45,11 @@ public struct SMCValue: Equatable, Sendable {
         default:
             return nil
         }
+    }
+
+    /// Little-endian, except the one measured big-endian key `#KEY`.
+    private func integer(_ bytes: [UInt8]) -> UInt64 {
+        key == "#KEY" ? bigEndian(bytes) : littleEndian(bytes)
     }
 
     public var hex: String { Hex.encode(bytes) }
