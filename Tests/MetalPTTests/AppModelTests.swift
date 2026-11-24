@@ -516,6 +516,17 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(SingleInstance.decide(selfPID: 10, running: [me], allowSecond: true) == .runWithoutLaunchctl)
     }
 
+    /// The running instance is told to reopen (LaunchServices' reopen event, which shows its window) when it is a
+    /// bundled app; an unbundled one can only be activated.
+    @Test func handOffReopensABundledInstance() {
+        let app = URL(fileURLWithPath: "/Applications/Metal-PT.app")
+        let bundled = R(pid: 20, bundleID: SingleInstance.bundleID,
+                        executablePath: "/Applications/Metal-PT.app/Contents/MacOS/Metal-PT", bundleURL: app)
+        let dev = R(pid: 30, bundleID: nil, executablePath: "/y/.build/debug/MetalPT")
+        #expect(SingleInstance.handOff(to: bundled) == .reopen(app))
+        #expect(SingleInstance.handOff(to: dev) == .activate(30))
+    }
+
     @Test func overrideIsDebugOnlyEnv() {
         #if DEBUG
         #expect(SingleInstance.allowSecond(env: ["MPT_ALLOW_SECOND_INSTANCE": "1"]))
@@ -541,6 +552,21 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(!LaunchKind.isLoginItemLaunch(oapp(prop: keyAELaunchedAsServiceItem)))
         #expect(!LaunchKind.isLoginItemLaunch(nil))
         #expect(LaunchKind.describe(oapp(prop: keyAELaunchedAsLogInItem)) == "event aevt/oapp prop lgit")
+    }
+
+    /// Opening the running app again (Finder, Dock, Spotlight): its window is shown unless it is already visible.
+    @Test func reopenShowsTheMainWindowUnlessVisible() {
+        let model = AppModel(hub: TelemetryHub(dependencies: .inert), fpsLogging: FPSLogging(), live: false)
+        var opened = 0
+        model.openMainWindow = { opened += 1 }
+        #expect(model.handleReopen())
+        #expect(opened == 1)
+        model.windowState.update(windowVisible: true, onScreen: true)
+        #expect(model.handleReopen())
+        #expect(opened == 1)
+        model.windowState.update(windowVisible: false, onScreen: false, miniaturized: true)
+        #expect(model.handleReopen())
+        #expect(opened == 2)
     }
 
     /// A notification click before the window ever appeared: the open is kept until the scene can open windows.

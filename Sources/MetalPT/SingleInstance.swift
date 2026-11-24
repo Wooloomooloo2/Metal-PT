@@ -14,6 +14,8 @@ enum SingleInstance {
         let pid: Int32
         let bundleID: String?
         let executablePath: String?
+        /// The `.app` bundle, when it is one.
+        var bundleURL: URL? = nil
     }
 
     enum Decision: Equatable {
@@ -37,6 +39,37 @@ enum SingleInstance {
         return .run
     }
 
+    /// How to bring the running instance forward. A menu-bar-only app ignores activation, so a bundled one is
+    /// opened again through LaunchServices, which sends it the reopen event (its delegate shows the window).
+    enum HandOff: Equatable {
+        case reopen(URL)
+        case activate(Int32)
+    }
+
+    static func handOff(to other: Running) -> HandOff {
+        if let url = other.bundleURL, url.pathExtension == "app" { return .reopen(url) }
+        return .activate(other.pid)
+    }
+
+    /// Hands off to `other` and waits (up to 5 s) for LaunchServices to deliver the reopen event.
+    @MainActor
+    static func perform(_ handOff: HandOff) {
+        switch handOff {
+        case .reopen(let url):
+            let done = DispatchSemaphore(value: 0)
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if let error {
+                    try? FileHandle.standardError.write(contentsOf: Data(
+                        "Metal-PT: could not reopen the running Metal-PT: \(error.localizedDescription)\n".utf8))
+                }
+                done.signal()
+            }
+            _ = done.wait(timeout: .now() + 5)
+        case .activate(let pid):
+            NSRunningApplication(processIdentifier: pid)?.activate(from: .current, options: [.activateAllWindows])
+        }
+    }
+
     /// `MPT_ALLOW_SECOND_INSTANCE=1` in a debug build; always false in release builds.
     static func allowSecond(env: [String: String]) -> Bool {
         #if DEBUG
@@ -50,7 +83,8 @@ enum SingleInstance {
     @MainActor
     static func runningInstances() -> [Running] {
         NSWorkspace.shared.runningApplications.map {
-            Running(pid: $0.processIdentifier, bundleID: $0.bundleIdentifier, executablePath: $0.executableURL?.path)
+            Running(pid: $0.processIdentifier, bundleID: $0.bundleIdentifier, executablePath: $0.executableURL?.path,
+                    bundleURL: $0.bundleURL)
         }
     }
 }

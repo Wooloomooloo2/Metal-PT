@@ -436,6 +436,17 @@ final class AppModel: ObservableObject {
         if usesAppKit { NSApp.activate() }
     }
 
+    /// The app was opened again while running (the reopen event): shows the main window unless it is already
+    /// visible on screen. Always handled (returns true).
+    @discardableResult
+    func handleReopen() -> Bool {
+        if !windowState.isVisible {
+            if usesAppKit { Self.log("reopen: showing the window") }
+            showMainWindow()
+        }
+        return true
+    }
+
     /// The SwiftUI main window, if it exists (its identifier starts with the scene id), made key and ordered front.
     private static func orderFrontMainWindow() -> Bool {
         guard let w = NSApp.windows.first(where: {

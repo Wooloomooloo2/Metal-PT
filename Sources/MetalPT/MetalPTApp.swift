@@ -22,12 +22,14 @@ enum MetalPTMain {
         }
         // Two instances would fight over the launchctl HUD variables: hand off before anything touches them (the
         // app delegate, and with it the model and its FPS-logging lease, does not exist yet).
-        let decision = SingleInstance.decide(selfPID: getpid(), running: SingleInstance.runningInstances(),
+        let running = SingleInstance.runningInstances()
+        let decision = SingleInstance.decide(selfPID: getpid(), running: running,
                                              allowSecond: SingleInstance.allowSecond(env: ProcessInfo.processInfo.environment))
-        if case .handOff(let pid) = decision {
+        if case .handOff(let pid) = decision, let other = running.first(where: { $0.pid == pid }) {
+            let handOff = SingleInstance.handOff(to: other)
             try? FileHandle.standardError.write(contentsOf: Data(
-                "Metal-PT: already running (pid \(pid)); activating it and exiting\n".utf8))
-            NSRunningApplication(processIdentifier: pid)?.activate(from: .current, options: [.activateAllWindows])
+                "Metal-PT: already running (pid \(pid)); handing off (\(handOff)) and exiting\n".utf8))
+            SingleInstance.perform(handOff)
             exit(0)
         }
         MetalPTApp.main()
@@ -115,6 +117,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model.quit()
+    }
+
+    /// Opened again while running (Finder, Dock, Spotlight, or a second launch handing off): LaunchServices sends
+    /// a reopen event instead of starting another instance. Show the window unless it is already visible (the
+    /// overlay panel may count as a visible window, so `flag` is not used).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        model.handleReopen()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
