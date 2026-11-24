@@ -4,11 +4,20 @@ import MPTCore
 import SwiftUI
 
 /// Live (spec §5): who is being followed, Record/Stop, the current numbers and the last five minutes as charts.
-/// Holds `.samples` while visible.
+/// Holds `.samples` while shown in a visible main window (`LiveSeries.wantsSamples`): released on disappear and
+/// when the window closes, is minimised or fully covered, even if SwiftUI never calls `onDisappear`.
 struct LivePage: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
+    @ObservedObject private var window: MainWindowState
     @StateObject private var lease = HubLease()
+    @State private var pageVisible = false
+
+    init(model: AppModel, hub: TelemetryHub) {
+        self.model = model
+        self.hub = hub
+        self.window = model.windowState
+    }
 
     private var following: Bool { hub.latest?.followedPID != nil }
 
@@ -36,8 +45,13 @@ struct LivePage: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { lease.hold(.samples, on: hub) }
-        .onDisappear { lease.release() }
+        .onAppear { pageVisible = true; syncLease() }
+        .onDisappear { pageVisible = false; syncLease() }
+        .onChange(of: window.isVisible) { syncLease() }
+    }
+
+    private func syncLease() {
+        lease.set(LiveSeries.wantsSamples(pageVisible: pageVisible, window: window), .samples, on: hub)
     }
 }
 
@@ -314,7 +328,7 @@ private struct LiveChart: View {
             }
             Chart {
                 ForEach(series, id: \.name) { s in
-                    ForEach(s.points, id: \.secondsAgo) { p in
+                    ForEach(s.points, id: \.time) { p in
                         LineMark(x: .value("Seconds ago", p.secondsAgo),
                                  y: .value(unit, p.value),
                                  series: .value("Series", "\(s.name)#\(p.segment)"))

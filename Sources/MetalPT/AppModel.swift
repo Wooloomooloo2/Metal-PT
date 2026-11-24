@@ -32,6 +32,8 @@ final class AppModel: ObservableObject {
 
     let hub: TelemetryHub
     let fpsLogging: FPSLogging
+    /// The main window's open/visible state, from its own notifications (`WindowObserver`).
+    let windowState = MainWindowState()
     let live: Bool
     private let defaults: UserDefaults
     private let env: [String: String]
@@ -67,6 +69,21 @@ final class AppModel: ObservableObject {
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.hubChanged() } }
             }
             .store(in: &cancellables)
+        windowState.$isOpen
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] open in
+                if open { self?.mainWindowOpened() } else { self?.mainWindowClosed() }
+            }
+            .store(in: &cancellables)
+        windowState.$isVisible
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] visible in
+                guard self?.live == true else { return }
+                FileHandle.standardError.write(Data("Metal-PT: main window \(visible ? "visible" : "hidden")\n".utf8))
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Settings
@@ -90,6 +107,9 @@ final class AppModel: ObservableObject {
     /// register hotkeys, and let the menu bar sample while a game is followed.
     func launch() {
         guard live else { return }
+        hub.onSamplingChange = { on in
+            FileHandle.standardError.write(Data("Metal-PT: sampler \(on ? "on" : "off")\n".utf8))
+        }
         fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
@@ -136,7 +156,7 @@ final class AppModel: ObservableObject {
 
     // MARK: - Window and Dock icon
 
-    /// Dock icon only while the main window is open.
+    /// Dock icon only while the main window is open (driven by `windowState.isOpen`).
     func mainWindowOpened() {
         guard live else { return }
         NSApp.setActivationPolicy(.regular)

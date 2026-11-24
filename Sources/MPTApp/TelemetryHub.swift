@@ -189,7 +189,9 @@ public final class TelemetryHub: ObservableObject {
     @Published public private(set) var streamError: String?
 
     /// The user's pick among `followCandidates`; cleared by the hub once that PID is no longer live.
+    /// Not `@Published` (the hub clears it itself), but a change is announced at once so the picker updates.
     public var pinned: Int32? {
+        willSet { if newValue != pinned { objectWillChange.send() } }
         didSet { engine.setPinned(pinned) }
     }
 
@@ -197,6 +199,11 @@ public final class TelemetryHub: ObservableObject {
     public var menuBarWantsSamplesWhenFollowing = false {
         didSet { updateMenuBarHold() }
     }
+
+    /// True while the sampler runs (a `.samples` hold or a recording).
+    public private(set) var isSampling = false
+    /// Called on the main thread when `isSampling` changes (the app logs it).
+    public var onSamplingChange: ((Bool) -> Void)?
 
     /// Session messages (progress, problems), on the main thread.
     public var onRecordingMessage: ((SessionMessage) -> Void)?
@@ -451,6 +458,10 @@ public final class TelemetryHub: ObservableObject {
             streamError = "\(error)"
         }
         engine.setSampling(active: wantSamples || recordingActive, ticking: wantSamples && !recordingActive)
+        if isSampling != (wantSamples || recordingActive) {
+            isSampling = wantSamples || recordingActive
+            onSamplingChange?(isSampling)
+        }
     }
 
     private func updateMenuBarHold() {

@@ -43,8 +43,7 @@ struct MainWindow: View {
                 .navigationTitle((page ?? .live).title)
         }
         .frame(minWidth: 760, minHeight: 520)
-        .onAppear { model.mainWindowOpened() }
-        .onDisappear { model.mainWindowClosed() }
+        .background(WindowObserver(state: model.windowState))
     }
 }
 
