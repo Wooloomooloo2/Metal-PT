@@ -42,7 +42,7 @@ struct MainWindow: View {
             PageView(page: model.page ?? .live, model: model, hub: hub)
                 .navigationTitle((model.page ?? .live).title)
         }
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(minWidth: 820, minHeight: 520)   // sidebar (up to 240) + PageView.minimumWidth
         .background(WindowObserver(state: model.windowState))
         .onAppear {
             // Kept after the window closes, so a notification click can reopen it.
@@ -58,12 +58,21 @@ struct PageView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
 
+    /// Pages are never measured narrower than this. macOS sizes the window from the content's minimum size, taken
+    /// at the narrowest width the content allows; without a floor, wrapping text (empty-state cards, Settings
+    /// explanations) asks for thousands of points of height there, and the window content is laid out too tall —
+    /// the sidebar rows and the page header end up off-screen (WindowLayoutTests).
+    static let minimumWidth: CGFloat = 600
+
     var body: some View {
-        switch page {
-        case .live: LivePage(model: model, hub: hub)
-        case .runs: RunsPage(model: model)
-        case .compare: ComparePage(model: model)
-        case .settings: SettingsPage(model: model)
+        Group {
+            switch page {
+            case .live: LivePage(model: model, hub: hub)
+            case .runs: RunsPage(model: model)
+            case .compare: ComparePage(model: model)
+            case .settings: SettingsPage(model: model)
+            }
         }
+        .frame(minWidth: Self.minimumWidth)
     }
 }
