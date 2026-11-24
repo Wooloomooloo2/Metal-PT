@@ -43,6 +43,7 @@ enum Snapshots {
                 }
             }
         }
+        Fixture.removeRuns()
         return ok
     }
 
@@ -52,10 +53,11 @@ enum Snapshots {
         let following = Fixture.model(.following)
         let idle = Fixture.model(.loggingOff)
         let noGame = Fixture.model(.noGame)
-        var list: [Shot] = Page.allCases.map { page in
+        var list: [Shot] = Page.allCases.filter { $0 != .runs }.map { page in
             Shot(name: page.rawValue, size: windowSize, width: windowSize.width,
                  view: AnyView(WindowFrame(page: page, model: following, hub: following.hub)))
         }
+        list += runsShots()
         list.append(Shot(name: "live-nogame", size: windowSize, width: windowSize.width,
                          view: AnyView(WindowFrame(page: .live, model: noGame, hub: noGame.hub))))
         list.append(Shot(name: "live-loggingoff", size: windowSize, width: windowSize.width,
@@ -67,6 +69,36 @@ enum Snapshots {
         list.append(Shot(name: "menubar-label", size: nil, width: 160,
                          view: AnyView(MenuBarStrip(hub: following.hub))))
         list += overlayShots()
+        return list
+    }
+
+    /// Runs with three fixture bundles (two ticked for comparison), the edit sheet, and the empty folder.
+    private static func runsShots() -> [Shot] {
+        let withRuns = Fixture.model(.loggingOff)
+        withRuns.runs.showFixture(root: Fixture.makeRuns())
+        let ids = withRuns.runs.entries.map(\.id)
+        let empty = Fixture.model(.loggingOff)
+        empty.runs.showFixture(root: Fixture.emptyRunsRoot())
+        var list = [
+            Shot(name: "runs", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .runs, model: withRuns, hub: withRuns.hub) {
+                     RunsPage(model: withRuns, ticked: Set(ids.prefix(2)))
+                 })),
+            Shot(name: "runs-filtered", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .runs, model: withRuns, hub: withRuns.hub) {
+                     RunsPage(model: withRuns, filter: "crossover")
+                 })),
+            Shot(name: "runs-empty", size: windowSize, width: windowSize.width,
+                 view: AnyView(WindowFrame(page: .runs, model: empty, hub: empty.hub))),
+        ]
+        if let first = withRuns.runs.entries.first {
+            list.append(Shot(name: "runs-edit", size: nil, width: 480,
+                             view: AnyView(EditNotesSheet(
+                                entry: first, store: withRuns.runs,
+                                fields: .init(label: first.label, gameSettings: first.settings,
+                                              notes: "Mountain path loop from the Mother's Heart save.\n"
+                                                + "Fans audible after ~90 s.")))))
+        }
         return list
     }
 
@@ -99,6 +131,7 @@ enum Snapshots {
             .frame(width: shot.size?.width ?? shot.width, height: shot.size?.height)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, scheme)
+            .environment(\.rendersSnapshot, true)
         var data: Data?
         NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
             let r = ImageRenderer(content: content)
@@ -118,6 +151,17 @@ private struct WindowFrame: View {
     let page: Page
     @ObservedObject var model: AppModel
     @ObservedObject var hub: TelemetryHub
+    /// The page's view when it needs fixture arguments; nil: `PageView`.
+    var content: AnyView?
+
+    init(page: Page, model: AppModel, hub: TelemetryHub) {
+        self.page = page; self.model = model; self.hub = hub
+    }
+
+    init<C: View>(page: Page, model: AppModel, hub: TelemetryHub, @ViewBuilder content: () -> C) {
+        self.page = page; self.model = model; self.hub = hub
+        self.content = AnyView(content())
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -154,7 +198,7 @@ private struct WindowFrame: View {
                 .padding(.horizontal, 20)
                 .frame(height: 52)
                 Divider()
-                PageView(page: page, model: model, hub: hub)
+                if let content { content } else { PageView(page: page, model: model, hub: hub) }
             }
         }
     }
@@ -258,6 +302,76 @@ enum Fixture {
         }
         model.overlayOn = following
         return model
+    }
+}
+
+// MARK: - Fixture runs
+
+extension Fixture {
+    /// The temporary folder holding fixture run bundles (removed after rendering).
+    private static var runsTemp: URL?
+
+    private static func tempRoot() -> URL {
+        if let runsTemp { return runsTemp }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("metal-pt-snapshots-\(UUID().uuidString)")
+        runsTemp = url
+        return url
+    }
+
+    static func emptyRunsRoot() -> URL {
+        let url = tempRoot().appendingPathComponent("empty/runs")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Three finished runs written by the real bundle writer: two of the same game on different stacks (today), one
+    /// of another game (yesterday). Two minutes or three, 1 Hz rows and per-frame times.
+    static func makeRuns() -> URL {
+        let root = tempRoot().appendingPathComponent("runs")
+        let now = Date()
+        let cases: [(exe: String, stack: Stack, settings: String, label: String, ago: Double, seconds: Int,
+                     fps: Double, frames: Bool)] = [
+            ("HorizonZeroDawnRemastered.exe", Stack(runtime: "Protium", runtimeVersion: "0.3.1", translator: "FEX",
+                                                    graphics: ["DXMT"]),
+             "High, 1440p, FSR off", "Mountain path", 2 * 3600, 120, 58.1, true),
+            ("HorizonZeroDawnRemastered.exe", Stack(runtime: "CrossOver", runtimeVersion: "25.1",
+                                                    graphics: ["D3DMetal"]),
+             "High, 1440p, FSR off", "Mountain path", 2 * 3600 + 21 * 60, 120, 52.6, false),
+            ("Cyberpunk2077.exe", Stack(runtime: "CrossOver", runtimeVersion: "25.1", graphics: ["D3DMetal"]),
+             "Medium", "", 26 * 3600, 180, 41.0, true),
+        ]
+        for c in cases {
+            let start = now.addingTimeInterval(-c.ago)
+            let dir = RunBundle.availableDirectory(in: root, start: start, game: c.exe)
+            let info = RunInfo(appVersion: AppModel.appVersion,
+                               machine: .init(modelID: "Mac16,5", chip: "Apple M4 Max", gpuCores: 40, memoryGB: 48,
+                                              osVersion: "26.1", osBuild: "25B78"),
+                               game: .init(exe: c.exe), stack: c.stack,
+                               user: .init(label: c.label, gameSettings: c.settings), start: start,
+                               fpsSource: "log")
+            guard let w = try? RunBundleWriter(directory: dir, info: info) else { continue }
+            for i in 1...c.seconds {
+                let x = Double(i)
+                let fps = c.fps + 1.5 * sin(x / 6) + 0.6 * sin(x * 1.3)
+                try? w.append(sample: ["elapsed_s": "\(i)", "fps": String(format: "%.1f", fps),
+                                       "fps_app": c.exe, "smc_PSTR_w": String(format: "%.1f", 38 + sin(x / 9))])
+            }
+            if c.frames {
+                let interval = 1000 / c.fps
+                let n = Int(Double(c.seconds) * c.fps)
+                let frames = (0..<n).map { k in
+                    FrameTime(intervalMs: k % 90 == 0 ? interval * 1.6 : interval, presentDelayMs: 2)
+                }
+                try? w.append(frames: frames, endingAtMs: Double(c.seconds) * 1000)
+            }
+            try? w.finish { $0.end = start.addingTimeInterval(Double(c.seconds)) }
+        }
+        return root
+    }
+
+    static func removeRuns() {
+        if let runsTemp { try? FileManager.default.removeItem(at: runsTemp) }
+        runsTemp = nil
     }
 }
 

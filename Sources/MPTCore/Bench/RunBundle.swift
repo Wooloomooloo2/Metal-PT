@@ -33,7 +33,11 @@ public final class RunBundleWriter: @unchecked Sendable {
         try writeInfo()
     }
 
-    private func writeInfo() throws {
+    private func writeInfo() throws { try Self.writeInfo(info, to: directory) }
+
+    /// Writes `<directory>/run.json` (privacy-scrubbed, atomically). The one place run.json is written: the
+    /// recorder and later edits of the user fields (Runs page) both come through here.
+    public static func writeInfo(_ info: RunInfo, to directory: URL) throws {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

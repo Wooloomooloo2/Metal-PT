@@ -32,6 +32,9 @@ final class AppModel: ObservableObject {
     static let debugToggleRecording = "io.github.wooloomooloo2.metal-pt.debug.toggleRecording"
     /// Dev/test only, as `debugToggleRecording`: toggles the overlay and logs the panel's state.
     static let debugToggleOverlay = "io.github.wooloomooloo2.metal-pt.debug.toggleOverlay"
+    /// Dev/test only, as `debugToggleRecording`: sets the notes of the newest run to the notification's object
+    /// string (the Runs edit path without the sheet). `MPT_DEBUG_PAGE=runs` opens that page at launch.
+    static let debugEditRun = "io.github.wooloomooloo2.metal-pt.debug.editRun"
 
     enum RecordState: Equatable {
         case idle
@@ -59,8 +62,12 @@ final class AppModel: ObservableObject {
     }
     /// The sidebar selection (a "Run saved" notification switches it to Runs).
     @Published var page: Page? = .live
-    /// The run to show in Runs (set by a "Run saved" notification; the Runs page arrives in T11).
+    /// The run to show in Runs (set by a "Run saved" notification; the Runs page selects it).
     @Published var selectedRun: URL?
+    /// The compare project to show in Compare (set by Runs → "Compare selected…"; the Compare page arrives in T12).
+    @Published var selectedProject: URL?
+    /// The runs folder's index, for the Runs page.
+    let runs = RunsStore()
     @Published private(set) var recordState: RecordState = .idle
     /// Hotkeys that could not be registered (shown as warnings).
     @Published private(set) var hotkeyProblems: [String] = []
@@ -164,7 +171,14 @@ final class AppModel: ObservableObject {
                         self?.toggleOverlay()
                     }
                 })
-            Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay)")
+            debugObservers.append(center.addObserver(
+                forName: Notification.Name(Self.debugEditRun), object: nil, queue: .main) { [weak self] note in
+                    let notes = note.object as? String ?? "debug edit"
+                    MainActor.assumeIsolated { self?.debugEditNewestRun(notes: notes) }
+                })
+            if let p = env["MPT_DEBUG_PAGE"].flatMap(Page.init(rawValue:)) { page = p }
+            Self.log("debug: listening for \(Self.debugToggleRecording), \(Self.debugToggleOverlay), "
+                     + "\(Self.debugEditRun)")
         }
     }
 
@@ -250,6 +264,13 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Actions
+
+    /// Runs → "Compare selected…": saves a new compare project of `entries` and shows it in Compare.
+    func compare(_ entries: [RunEntry]) throws {
+        let url = try CompareProjects.create(from: entries, projectsRoot: folder("projects"))
+        selectedProject = url
+        page = .compare
+    }
 
     /// Hotkey / menu row.
     func toggleOverlay() {
@@ -339,6 +360,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func debugEditNewestRun(notes: String) {
+        guard let run = runs.entries.first else { Self.log("debug: no run to edit"); return }
+        Task {
+            do {
+                try await runs.update(run.id, settings: run.settings, notes: notes, label: run.label)
+                Self.log("debug: edited \(run.id) (notes \(notes.count) chars)")
+            } catch {
+                Self.log("debug: edit failed: \(error)")
+            }
+        }
+    }
+
     private func postStarted() {
         let status = hub.recording
         let snap = hub.latest
@@ -371,6 +404,7 @@ final class AppModel: ObservableObject {
         if let run = hub.lastRun, run != lastSeenRun {
             lastSeenRun = run
             noteRun(run)
+            runs.refresh(root: folder("runs"))
             if !quitDone { notifier?.post(.saved(run)) }
         }
         let state: RecordState

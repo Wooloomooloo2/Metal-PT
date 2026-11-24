@@ -31,6 +31,7 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("WebKit"),
             ]
         ),
         .testTarget(name: "MPTCoreTests", dependencies: ["MPTCore"]),

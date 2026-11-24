@@ -61,9 +61,7 @@ struct PageView: View {
     var body: some View {
         switch page {
         case .live: LivePage(model: model, hub: hub)
-        case .runs:
-            PlaceholderPage(symbol: page.symbol, title: "Runs",
-                            text: "Your recordings will be listed here, with each run's summary, notes and Submit.")
+        case .runs: RunsPage(model: model)
         case .compare:
             PlaceholderPage(symbol: page.symbol, title: "Compare",
                             text: "Saved comparisons of runs will appear here, each with its report.")
