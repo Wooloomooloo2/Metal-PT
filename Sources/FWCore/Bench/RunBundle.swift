@@ -36,16 +36,24 @@ public final class RunBundleWriter: @unchecked Sendable {
     private func writeInfo() throws {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try enc.encode(Privacy.scrub(info)).write(
             to: directory.appendingPathComponent("run.json"), options: .atomic)
     }
 
-    /// Writes one row; missing columns become empty cells. Written through immediately.
+    private static let stringColumns: Set<String> = ["fps_app", "thermal_state"]
+
+    /// Writes one row; missing columns become empty cells; free-text cells are privacy-scrubbed.
+    /// Written through immediately. Appends after `finish` are silently ignored (a signal handler may
+    /// finish while a tick is in flight).
     public func append(sample row: [String: String]) throws {
         lock.lock(); defer { lock.unlock() }
         guard !finished, let h = samples else { return }
-        try h.write(contentsOf: Data((CSV.line(SampleColumns.all.map { row[$0] ?? "" }) + "\n").utf8))
+        let cells = SampleColumns.all.map { col -> String in
+            let v = row[col] ?? ""
+            return Self.stringColumns.contains(col) ? Privacy.scrub(v) : v
+        }
+        try h.write(contentsOf: Data((CSV.line(cells) + "\n").utf8))
     }
 
     /// `endingAtMs` is the arrival time (ms since run start) of the last frame; earlier frames are
@@ -73,15 +81,20 @@ public final class RunBundleWriter: @unchecked Sendable {
         try frames?.write(contentsOf: Data(out.utf8))
     }
 
-    /// Idempotent: the second call does nothing.
+    /// Idempotent: the second call does nothing. Always attempts to close both files and write run.json,
+    /// then rethrows the first error.
     public func finish(updating: (inout RunInfo) -> Void) throws {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return }
         finished = true
         updating(&info)
-        try samples?.close(); samples = nil
-        try frames?.close(); frames = nil
-        try writeInfo()
+        var firstError: Error?
+        do { try samples?.close() } catch { firstError = error }
+        samples = nil
+        do { try frames?.close() } catch { firstError = firstError ?? error }
+        frames = nil
+        do { try writeInfo() } catch { firstError = firstError ?? error }
+        if let firstError { throw firstError }
     }
 }
 
@@ -138,6 +151,20 @@ public struct RunBundle {
         }
         var cut = String(out.prefix(40))
         while cut.hasSuffix("-") { cut.removeLast() }
-        return cut
+        return cut.isEmpty ? "game" : cut
+    }
+
+    /// A non-colliding bundle directory in `parent`: appends -2, -3, ... before `.fwrun` while the
+    /// target already holds a run.json.
+    public static func availableDirectory(in parent: URL, start: Date, game: String) -> URL {
+        let name = directoryName(start: start, game: game)
+        let base = String(name.dropLast(".fwrun".count))
+        var url = parent.appendingPathComponent(name)
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.appendingPathComponent("run.json").path) {
+            url = parent.appendingPathComponent("\(base)-\(n).fwrun")
+            n += 1
+        }
+        return url
     }
 }

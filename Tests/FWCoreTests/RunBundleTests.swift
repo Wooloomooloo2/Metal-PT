@@ -57,6 +57,8 @@ import Foundation
         #expect(SampleColumns.format(80.4, column: "battery_pct") == "80")
         #expect(SampleColumns.format(12.346, column: "gpu_w") == "12.35")
         #expect(SampleColumns.format(7.26, column: "elapsed_s") == "7.3")
+        #expect(SampleColumns.format(1234.0, column: "fps_pid") == "1234")
+        #expect(CSV.number(-0.001, digits: 2) == "0.00")
         #expect(SampleColumns.format(onAC: true) == "1")
         #expect(SampleColumns.timestamp(Date(timeIntervalSince1970: 0)) == "1970-01-01T00:00:00.000Z")
     }
@@ -114,5 +116,54 @@ import Foundation
         let b = try RunBundle.load(dir)
         #expect(b.info.end == Date(timeIntervalSince1970: 1_800_000_050))
         #expect(b.rows.isEmpty)
+    }
+
+    @Test func scrubsEveryStringFieldInWrittenRunJSON() throws {
+        let dir = tempDir().appendingPathComponent("x.fwrun")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let p = "/Users/someone/x"
+        var i = info()
+        i.game = .init(exe: p, title: p, storeAppID: p)
+        i.stack = Stack(runtime: p, runtimeVersion: p, wineArch: p, translator: p, graphics: [p])
+        i.settings.powerMode = p
+        i.user = .init(label: p, gameSettings: p, notes: p + " C:\\users\\steamuser\\Doc")
+        i.warnings = [p]
+        let w = try RunBundleWriter(directory: dir, info: i)
+        try w.finish { _ in }
+        let json = try String(contentsOf: dir.appendingPathComponent("run.json"), encoding: .utf8)
+        #expect(!json.contains("someone"))
+        #expect(!json.contains("steamuser"))
+        #expect(json.contains("~/x"))
+    }
+
+    @Test func hostScrubIsWholeWordAndSparesModelNames() {
+        let hosts = Privacy.hostVariants(of: ["Mark-Hall.local", "Mark's MacBook Pro", "Mac", "localhost"])
+        #expect(!hosts.contains("Mac") && !hosts.contains("localhost"))
+        let s = Privacy.scrub("Mark-Hall wrote Market on Mac15,6 MacBook Pro as Marks-MacBook-Pro", hosts: hosts)
+        #expect(s == "<host> wrote Market on Mac15,6 MacBook Pro as <host>")
+        #expect(Privacy.scrub("Mac15,6", hosts: ["Mac"]) == "Mac15,6")
+        #expect(Privacy.scrubPaths("D:\\Users\\Bob\\x and c:\\users\\al\\y") == "D:\\Users\\~\\x and c:\\Users\\~\\y")
+    }
+
+    @Test func samplesCSVScrubsFpsApp() throws {
+        let dir = tempDir().appendingPathComponent("x.fwrun")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let w = try RunBundleWriter(directory: dir, info: info())
+        try w.append(sample: ["fps_app": "/Users/someone/Games/x.exe"])
+        try w.finish { _ in }
+        let text = try String(contentsOf: dir.appendingPathComponent("samples.csv"), encoding: .utf8)
+        #expect(!text.contains("someone"))
+        #expect(text.contains("~/Games/x.exe"))
+    }
+
+    @Test func emptySlugFallsBackAndDirectoriesDoNotCollide() throws {
+        #expect(RunBundle.slug("™™") == "game")
+        let parent = tempDir()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let d = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = RunBundle.availableDirectory(in: parent, start: d, game: "g")
+        _ = try RunBundleWriter(directory: first, info: info())
+        let second = RunBundle.availableDirectory(in: parent, start: d, game: "g")
+        #expect(second.lastPathComponent == first.lastPathComponent.replacingOccurrences(of: ".fwrun", with: "-2.fwrun"))
     }
 }

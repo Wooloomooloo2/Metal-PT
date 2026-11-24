@@ -59,7 +59,10 @@ public enum CSV {
     /// Fixed-point with `.` decimal separator and no grouping, regardless of locale. nil/non-finite → "".
     public static func number(_ value: Double?, digits: Int) -> String {
         guard let value, value.isFinite else { return "" }
-        return String(format: "%.\(max(0, digits))f", locale: posix, value)
+        let s = String(format: "%.\(max(0, digits))f", locale: posix, value)
+        // Never emit "-0.00": a negative that rounds to zero is just zero.
+        if s.hasPrefix("-"), s.dropFirst().allSatisfy({ $0 == "0" || $0 == "." }) { return String(s.dropFirst()) }
+        return s
     }
 }
 
@@ -73,10 +76,16 @@ public enum SampleColumns {
         "on_ac", "thermal_state",
     ]
 
+    nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
     static func digits(for column: String) -> Int {
         switch column {
-        case "battery_pct", "fan0_rpm", "fan1_rpm": return 0
-        case "fps", "fps_pid", "elapsed_s": return 1
+        case "battery_pct", "fan0_rpm", "fan1_rpm", "fps_pid": return 0
+        case "fps", "elapsed_s": return 1
         case "mem_used_gb": return 2
         default:
             if column.hasSuffix("_pct") || column.hasSuffix("_c") { return 1 }
@@ -94,8 +103,6 @@ public enum SampleColumns {
 
     /// ISO-8601 UTC with milliseconds, for the `t` column.
     public static func timestamp(_ date: Date) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: date)
+        timestampFormatter.string(from: date)
     }
 }
