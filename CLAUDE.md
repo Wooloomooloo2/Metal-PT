@@ -64,13 +64,12 @@ M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md
 Metal-PT game-title/FPS-per-watt plan (`docs/superpowers/plans/2026-11-25-metal-pt-game-title-and-efficiency.md`) done pending
 final review: editable game title (`game.title`; `game.exe` stays the recorded app) and FPS/W as a headline metric.
 `SummaryReport.version` 4 and run-index `cacheVersion` 4 regenerate older summaries and caches lazily.
+Also committed (25af2c3): compare hang fix, same-game Add Runs, runs named by what differs + coloured, D3DMetal version in the stack (`docs/BACKLOG.md`).
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
-
-2026-11-25 (uncommitted, tests pass, `build/Metal-PT.app` built, not installed): compare hang fix, same-game Add
-Runs, runs named by what differs + coloured, D3DMetal version in the stack. See `docs/BACKLOG.md`.
 
 ## Resume here
 
+Manual check: title a real ARMSX2 run, then check the Runs row, run header, Compare and Submit.
 User's manual checks of the rebuilt app: a heavy GPU-bound game recording (verify the GPU clock mapping and record it
 `[M]` in hardware-baseline), the red menu-bar label and sounds, the not-reporting warning, notifications. Then a first
 GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the Metal-PT Helper plan (battery charge limit and

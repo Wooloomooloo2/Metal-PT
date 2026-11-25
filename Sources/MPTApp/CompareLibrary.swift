@@ -193,7 +193,8 @@ public final class CompareLibrary: @unchecked Sendable {
 
     /// `candidates` narrowed to `games`, unless `games` is empty (nothing known about the comparison's runs).
     public static func sameGame(_ candidates: [RunEntry], games: Set<String>) -> [RunEntry] {
-        games.isEmpty ? candidates : candidates.filter { games.contains($0.game) }
+        let keys = Set(games.map(CompareReport.gameKey))
+        return games.isEmpty ? candidates : candidates.filter { keys.contains(CompareReport.gameKey($0.game)) }
     }
 
     // MARK: - Private

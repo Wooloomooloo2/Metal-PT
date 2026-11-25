@@ -5,6 +5,8 @@ import Foundation
 /// from the exported (re-scrubbed) run.json and CSVs.
 public struct ExportPreview: Equatable, Sendable {
     public var game: String
+    /// The recorded app (`game.exe`), when the game has a title that differs from it; nil otherwise.
+    public var recordedApp: String?
     /// "Protium 0.3.1 · FEX · DXMT"; nil when the stack is unknown.
     public var stackLine: String?
     /// "Mac16,5 · Apple M4 Max 40-core GPU · 48 GB · macOS 26.1 (25B78)"
@@ -81,6 +83,7 @@ public enum RunExport {
         let json = (try? runJSON(bundle.info, includeNotes: includeNotes, hosts: hosts))?.count ?? 0
         return ExportPreview(
             game: info.game.titleText ?? info.game.exe,
+            recordedApp: info.game.titleText.flatMap { $0 != info.game.exe && !info.game.exe.isEmpty ? info.game.exe : nil },
             stackLine: SummaryReport.stackLine(info.stack),
             mac: macLine(info.machine),
             conditions: conditionsLine(info),

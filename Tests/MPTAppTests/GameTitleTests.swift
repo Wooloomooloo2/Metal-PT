@@ -146,6 +146,12 @@ import MPTCore
         #expect(CompareLibrary.sameGame([sotc, ico], games: ["Shadow of the Colossus"]).map(\.id) == ["a"])
     }
 
+    @Test func sameGameMatchingIgnoresCaseAndWhitespace() {
+        let upper = entry("a", game: "Ico", app: "ARMSX2", start: 2)
+        let lower = entry("b", game: " ico ", app: "ARMSX2", start: 1)
+        #expect(CompareLibrary.sameGame([upper, lower], games: ["ico"]).map(\.id) == ["a", "b"])
+    }
+
     @Test func olderCacheVersionIsRebuilt() throws {
         #expect(RunIndex.cacheVersion == 4)
         let root = tempRoot()
@@ -167,5 +173,18 @@ import MPTCore
         #expect(e.game == "Ico")
         #expect(e.app == "ARMSX2")
         #expect(try String(contentsOf: cache, encoding: .utf8).contains("\"version\":4"))
+    }
+}
+
+@Suite struct AppUnderTitleTests {
+    private func entry(game: String, app: String) -> RunEntry {
+        RunEntry(id: "x", game: game, app: app, stackLine: "", settings: "", label: "",
+                 start: Date(timeIntervalSince1970: 1), duration: 30, medianFPS: 60, low1: nil)
+    }
+
+    @Test func showsTheRecordedAppOnlyUnderADifferingTitle() {
+        #expect(entry(game: "Ico", app: "ARMSX2").appUnderTitle == "ARMSX2")
+        #expect(entry(game: "ARMSX2", app: "ARMSX2").appUnderTitle == nil)
+        #expect(entry(game: "Unknown game", app: "").appUnderTitle == nil)
     }
 }

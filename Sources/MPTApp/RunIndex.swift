@@ -9,6 +9,10 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     /// The recorded app: the executable without ".exe" ("ARMSX2"), empty when none was detected. Never edited; it
     /// stays the run's ID for comparisons when the user names the game behind an emulator or launcher.
     public var app: String
+    /// The recorded app when the game has a title that differs from it (an emulator under a game); else nil.
+    public var appUnderTitle: String? {
+        app.isEmpty || app.caseInsensitiveCompare(game) == .orderedSame ? nil : app
+    }
     /// "Protium 0.3 · FEX · DXMT"; empty when the stack is unknown.
     public var stackLine: String
     /// The user's game settings ("High, 1440p").

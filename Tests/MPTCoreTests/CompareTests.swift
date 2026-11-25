@@ -52,6 +52,14 @@ import Foundation
         #expect(same.isEmpty)
     }
 
+    @Test func sameGameWarningIgnoresCaseAndWhitespace() {
+        var a = info(game: "ARMSX2"), b = info(game: "ARMSX2")
+        a.game.title = "Ico"
+        b.game.title = "  ico "
+        let w = CompareReport.warnings([(a, RunSummary(bundle("a", a, fps: 60))), (b, RunSummary(bundle("b", b, fps: 60)))])
+        #expect(!w.contains { $0.hasPrefix("different games") })
+    }
+
     @Test func warnsOnDifferentGames() {
         let w = CompareReport.warnings([(info(game: "A.exe"), RunSummary(bundle("a", info(game: "A.exe"), fps: 60))),
                                         (info(game: "B.exe"), RunSummary(bundle("b", info(game: "B.exe"), fps: 60)))])

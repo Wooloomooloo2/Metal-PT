@@ -19,8 +19,10 @@ public enum CompareReport {
     }
 
     /// Fields a run's name is built from, most telling first ("game", "FPS source" never name a run).
-    static let namingFields = ["game settings", "label", "recorded app", "graphics", "runtime version", "runtime", "translator",
-                               "power mode", "AC/battery", "display", "macOS build", "machine"]
+    static let namingFields = [
+        "game settings", "label", "recorded app", "graphics", "runtime version", "runtime", "translator",
+        "power mode", "AC/battery", "display", "macOS build", "machine",
+    ]
 
     /// One name per run, from what differs between the runs: "High · D3DMetal 4.0b3 + MoltenVK". A run with an
     /// entry name keeps it; a run with nothing distinct (or a lone run) falls back to `label(_:_:)`.
@@ -57,6 +59,11 @@ public enum CompareReport {
     static func efficiencyPhrase(_ value: Double?, baseline: Double?) -> String? {
         guard let change = efficiencyChange(value, baseline: baseline) else { return nil }
         return change.hasPrefix("the same") ? "\(change) as the baseline" : "\(change) than the baseline"
+    }
+
+    /// What "the same game" compares: trimmed and case-folded ("Ico" and " ico " are one game).
+    public static func gameKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     /// The game's title, else its exe, else "unidentified".
@@ -149,11 +156,11 @@ public enum CompareReport {
     /// As `warnings(_:)`, with `names[i]` used for run `i` (the report passes "run <entry number> (<label>)").
     static func warnings(_ runs: [(RunInfo, RunSummary)], names: [String]) -> [String] {
         var out: [String] = []
-        func distinct(_ values: [String]) -> [String] {
+        func distinct(_ values: [String], key: (String) -> String = { $0 }) -> [String] {
             var seen = Set<String>()
-            return values.filter { seen.insert($0).inserted }
+            return values.filter { seen.insert(key($0)).inserted }
         }
-        let games = distinct(runs.map { gameName($0.0) })
+        let games = distinct(runs.map { gameName($0.0) }, key: gameKey)
         if games.count > 1 { out.append("different games: " + games.joined(separator: ", ")) }
         if Set(runs.compactMap { $0.0.settings.onACAtStart }).count > 1 { out.append(acBatteryWarning) }
 

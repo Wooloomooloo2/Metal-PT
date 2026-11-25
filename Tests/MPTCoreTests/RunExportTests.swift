@@ -183,6 +183,31 @@ import Testing
         #expect(c.lastPathComponent == "\(base)-3.mptrun.zip")
     }
 
+    @Test func exportScrubsTheTitleAndLeavesTheExeAsASeparateKey() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bundle = try makeBundle()
+        var info = bundle.info
+        info.game.title = "Ico at /Users/somebody/Games"
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        try enc.encode(info).write(to: bundle.url.appendingPathComponent("run.json"))
+        let zip = try RunExport.write(try RunBundle.load(bundle.url), includeNotes: false,
+                                      to: root.appendingPathComponent("exports"))
+        let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("run.json")))
+        let game = try #require((json as? [String: Any])?["game"] as? [String: Any])
+        #expect(game["title"] as? String == "Ico at ~/Games")
+        #expect(game["exe"] as? String == "hzd.exe")
+        let p = RunExport.preview(try RunBundle.load(bundle.url), includeNotes: false)
+        #expect(p.game == "Ico at /Users/somebody/Games".replacingOccurrences(of: "/Users/somebody", with: "~"))
+        #expect(p.recordedApp == "hzd.exe")
+    }
+
+    @Test func previewHasNoRecordedAppRowWithoutADifferingTitle() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(RunExport.preview(try makeBundle(), includeNotes: false).recordedApp == nil)
+    }
+
     @Test func previewDescribesTheRun() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let p = RunExport.preview(try makeBundle(), includeNotes: false)

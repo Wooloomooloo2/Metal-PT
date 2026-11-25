@@ -92,6 +92,7 @@ struct SubmitSheet: View {
     private func details(_ p: ExportPreview) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             row("Game", p.game)
+            if let app = p.recordedApp { row("Recorded app", app) }
             row("Stack", p.stackLine ?? "not detected", dim: p.stackLine == nil)
             row("Mac", p.mac)
             row("Conditions", p.conditions)

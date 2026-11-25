@@ -121,7 +121,7 @@ private struct CandidateRow: View {
                 .foregroundStyle(ticked ? Color.accentColor : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.game).font(.headline).lineLimit(1).truncationMode(.middle)
-                let sub = [entry.stackLine, entry.settings, entry.label].filter { !$0.isEmpty }
+                let sub = [entry.appUnderTitle ?? "", entry.stackLine, entry.settings, entry.label].filter { !$0.isEmpty }
                 Text(sub.isEmpty ? "Stack unknown" : sub.joined(separator: " · "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

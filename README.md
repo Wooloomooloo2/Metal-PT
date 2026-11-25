@@ -57,7 +57,8 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
 - **FPS per watt** (run summary, Compare, Runs, Live and the overlay): median FPS over mean system power for a run
   (mean FPS over the last 10 s live), so two runs at 60 fps drawing 34 W and 50 W tell apart. System power includes
   the display: compare FPS/W on the same Mac, brightness and power source. Runs with GPU-only power (no system power
-  key) get no FPS/W, and a run held at a frame cap says its figure is efficiency at that cap.
+  key) get no FPS/W (not comparable in the summary, Runs list and Live; Compare only sets GPU-only runs against other
+  GPU-only runs), and a run held at a frame cap says its figure is efficiency at that cap.
 - **Naming the game**: a Wine or launcher run is recorded under the app that ran it (the exe). In Edit, the
   "Game" field gives it the real title; the recorded app is kept so runs of the same game still compare.
 - **Runs**: every recording, newest first, with its summary. Add in-game settings and notes, show it in Finder,
