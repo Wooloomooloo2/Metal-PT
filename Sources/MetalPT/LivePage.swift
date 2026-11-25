@@ -40,7 +40,7 @@ struct LivePage: View {
                         + "Power, utilisation and temperatures below are live.",
                     action: nil)
             }
-            NumbersRow(snapshot: hub.latest, following: following)
+            NumbersRow(snapshot: hub.latest, history: hub.history, following: following)
             if following || hub.recording != nil {
                 LimitedByChip(history: hub.history)
             }
@@ -169,6 +169,7 @@ private struct EmptyStateCard: View {
 
 private struct NumbersRow: View {
     let snapshot: HubSnapshot?
+    let history: [HubSnapshot]
     let following: Bool
 
     var body: some View {
@@ -176,6 +177,11 @@ private struct NumbersRow: View {
         HStack(spacing: 10) {
             BigNumber(name: "FPS", value: following ? Fmt.int(snapshot?.fps) : "–", unit: nil,
                       color: ChartPalette.primary)
+            // Mean FPS / mean system W over the last 10 s, only while a game is followed.
+            BigNumber(name: "FPS/W", value: LiveEfficiency.text(following ? LiveEfficiency.fpsPerWatt(history: history) : nil),
+                      unit: nil, color: ChartPalette.third)
+                .help("Frames per watt: mean FPS over mean system power, last 10 s. System power includes the "
+                    + "display: compare on the same Mac, brightness and power source.")
             BigNumber(name: "System", value: Fmt.int(s.flatMap(Fmt.systemW)), unit: "W", color: ChartPalette.primary)
             BigNumber(name: "GPU busy", value: Fmt.int(s?.gpuBusyPct), unit: "%", color: ChartPalette.gpu)
             BigNumber(name: "Die", value: Fmt.int(s?.tempMaxC), unit: "°C", color: ChartPalette.fourth)

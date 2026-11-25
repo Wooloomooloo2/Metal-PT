@@ -22,11 +22,14 @@ import Testing
     @Test func detailLines() {
         let n = OverlayNumbers(fps: 58.2, systemW: 41, gpuPct: 92, cpuPPct: 31, cpuEPct: 18, dieC: 78,
                                fanRPM: [3080, 3100.4], stack: "Protium · FEX · DXMT", app: "Game")
-        #expect(n.detailLines == ["avg frame 17.2 ms", "System 41 W · GPU 92%", "CPU P 31% · E 18%",
+        #expect(n.detailLines == ["avg frame 17.2 ms", "System 41 W · GPU 92%", "FPS/W –", "CPU P 31% · E 18%",
                                   "Die 78 °C · fans 3100"])
+        var efficient = n
+        efficient.fpsPerWatt = 1.416
+        #expect(efficient.detailLines[2] == "FPS/W 1.42")
         #expect(n.stackLine == "Protium · FEX · DXMT")
         let none = OverlayNumbers()
-        #expect(none.detailLines == ["System – · GPU –", "CPU P – · E –", "Die –"])
+        #expect(none.detailLines == ["System – · GPU –", "FPS/W –", "CPU P – · E –", "Die –"])
         #expect(none.stackLine == "No game detected")
         #expect(OverlayNumbers(app: "Game").stackLine == "Detecting stack…")
     }

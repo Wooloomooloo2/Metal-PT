@@ -107,6 +107,8 @@ public struct LimiterAnalysis: Sendable {
     public let notes: [String]
     /// The class of each judged steady second (`isJudged`), in `summary.steadySeconds` order.
     public let perSecond: [Limiter]
+    /// The cap the frame-capped seconds sat at most often (60), when the verdict is mostly a frame cap.
+    public let capFPS: Double?
 
     public static let powerManagedNote = "power-managed clocks: GPU judged on busy % only"
 
@@ -308,7 +310,7 @@ public struct LimiterAnalysis: Sendable {
 
         guard let top = shares.first else {
             verdict = "Not enough steady seconds to tell what held it back"
-            primary = nil; partly = nil; evidence = []; suggestion = nil
+            primary = nil; partly = nil; evidence = []; suggestion = nil; capFPS = nil
             return
         }
         func members(_ l: Limiter) -> [Second] { zip(seconds, classes).filter { $0.1 == l }.map(\.0) }
@@ -321,6 +323,7 @@ public struct LimiterAnalysis: Sendable {
             partly = nil
             evidence = ev(top.0)
             suggestion = Self.suggestion(for: top.0, seconds: members(top.0), clocks: clocks, thresholds: t)
+            capFPS = top.0 == .frameCap ? Self.mostCommonCap(members(top.0), t) : nil
         } else {
             let second = shares[1]
             if top.0 == .unclear || second.0 == .unclear {
@@ -334,6 +337,7 @@ public struct LimiterAnalysis: Sendable {
             primary = nil
             evidence = ev(top.0) + ev(second.0)
             suggestion = nil
+            capFPS = nil
         }
     }
 

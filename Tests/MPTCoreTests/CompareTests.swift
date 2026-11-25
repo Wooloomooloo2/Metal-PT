@@ -337,9 +337,9 @@ import Foundation
                                      runs: [.init(bundle: "a.mptrun", name: "A"), .init(bundle: "b.mptrun", name: "B"),
                                             .init(bundle: "c.mptrun", name: "C")])
         let out = CompareReport.html(project: project, runs: [pair(a), pair(b), pair(c)])
-        #expect(out.contains("A: 40.0 fps median (baseline), 1 % low — (needs mpt run), 30.0 W · limited by GPU"))
+        #expect(out.contains("A: 40.0 fps median (baseline), 1 % low — (needs mpt run), 30.0 W, 1.33 FPS/W · limited by GPU"))
         #expect(out.contains("· limited by CPU (one thread)"))
-        #expect(out.contains("C: 45.0 fps median (+12.5 %), 1 % low — (needs mpt run), 30.0 W · no single limit"))
+        #expect(out.contains("C: 45.0 fps median (+12.5 %), 1 % low — (needs mpt run), 30.0 W, 1.50 FPS/W · no single limit"))
         #expect(out.contains("<tr><td>Limited by</td><td>GPU</td><td class=\"diff\">CPU (one thread)</td>"
             + "<td class=\"diff\">no single limit</td></tr>"))
     }
@@ -383,5 +383,42 @@ import Foundation
         let project = CompareProject(name: "p", baseline: 0, runs: entries)
         let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
         #expect(out.contains("<td>Recorded app</td>"))
+    }
+
+    // MARK: - FPS per watt
+
+    @Test func efficiencyChangeWording() {
+        #expect(CompareReport.efficiencyChange(1.572, baseline: 1.2) == "31 % more frames per watt")
+        #expect(CompareReport.efficiencyChange(0.9, baseline: 1.2) == "25 % fewer frames per watt")
+        #expect(CompareReport.efficiencyChange(1.201, baseline: 1.2) == "the same frames per watt")
+        #expect(CompareReport.efficiencyChange(nil, baseline: 1.2) == nil)
+        #expect(CompareReport.efficiencyChange(1.2, baseline: 0) == nil)
+    }
+
+    /// Two runs at 60 fps: the baseline at 50 W, the other at 38.17 W (1.20 vs 1.57 FPS/W).
+    @Test func whatDiffersStatesTheEfficiencyGain() {
+        let a = bundle("a.mptrun", info(stack: Stack(runtime: "CrossOver")), fps: 60, watts: 50)
+        let b = bundle("b.mptrun", info(stack: Stack(runtime: "Protium")), fps: 60, watts: 38.17)
+        let project = CompareProject(name: "p", baseline: 0, runs: entries([("a.mptrun", "Base"), ("b.mptrun", "Lean")]))
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(out.contains("Lean: 31 % more frames per watt than the baseline (1.57 vs 1.20 FPS/W)"))
+        // Each run line carries its FPS/W.
+        #expect(out.contains("Base: 60.0 fps median (baseline), 1 % low — (needs mpt run), 50.0 W, 1.20 FPS/W"))
+        #expect(out.contains("Lean: 60.0 fps median (0.0 %), 1 % low — (needs mpt run), 38.2 W, 1.57 FPS/W"))
+
+        let swapped = CompareProject(name: "p", baseline: 1, runs: project.runs)
+        let out2 = CompareReport.html(project: swapped, runs: [pair(a), pair(b)])
+        #expect(out2.contains("Base: 24 % fewer frames per watt than the baseline (1.20 vs 1.57 FPS/W)"))
+    }
+
+    @Test func noEfficiencySentenceWhenPowerMeasuredDifferently() {
+        let a = bundle("a.mptrun", info(), fps: 60, watts: 30)
+        let b = bundle("b.mptrun", info(), fps: 50, power: "gpu_w", watts: 5)
+        let project = CompareProject(name: "p", baseline: 0, runs: entries([("a.mptrun", "A"), ("b.mptrun", "B")]))
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(!out.contains("frames per watt"))
+        // The GPU-only run's line has no FPS/W (not comparable).
+        #expect(out.contains("5.0 W GPU-only<span"))
+        #expect(!out.contains("GPU-only, 10.00 FPS/W"))
     }
 }

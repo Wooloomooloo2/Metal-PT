@@ -207,4 +207,38 @@ import MPTCore
         }
         #expect(LiveLimiter.current(mem, topMHz: nil) == .limiter(.memory))
     }
+
+    // MARK: - Live FPS per watt (Review Focus 5)
+
+    private func power(_ t: Double, fps: Double?, watts: Double?) -> HubSnapshot {
+        HubSnapshot(time: t, sample: TelemetrySample(smcPower: watts.map { ["PSTR": $0] } ?? [:]), fps: fps,
+                    followedPID: 1, followedApp: "g", stack: nil)
+    }
+
+    @Test func liveFPSPerWattOverTheLastTenSeconds() throws {
+        // 30 s of 30 fps at 60 W, then 10 s of 60 fps at 30 W: only the last 10 s count.
+        let h = (0..<30).map { power(Double($0), fps: 30, watts: 60) }
+            + (30..<40).map { power(Double($0), fps: 60, watts: 30) }
+        let v = try #require(LiveEfficiency.fpsPerWatt(history: h))
+        #expect(abs(v - 2.0) < 1e-9)
+        #expect(LiveEfficiency.window == 10)
+        #expect(LiveEfficiency.text(v) == "2.00")
+        #expect(LiveEfficiency.text(nil) == "–")
+    }
+
+    @Test func liveFPSPerWattNeedsFPSAndSystemPower() {
+        #expect(LiveEfficiency.fpsPerWatt(history: []) == nil)
+        let noFPS = (0..<10).map { power(Double($0), fps: nil, watts: 30) }
+        #expect(LiveEfficiency.fpsPerWatt(history: noFPS) == nil)
+        let noPower = (0..<10).map { power(Double($0), fps: 60, watts: nil) }
+        #expect(LiveEfficiency.fpsPerWatt(history: noPower) == nil)
+        // No division by ~0 W.
+        let tiny = (0..<10).map { power(Double($0), fps: 60, watts: 0.4) }
+        #expect(LiveEfficiency.fpsPerWatt(history: tiny) == nil)
+        let nan = (0..<10).map { power(Double($0), fps: .nan, watts: 30) }
+        #expect(LiveEfficiency.fpsPerWatt(history: nan) == nil)
+        // FPS and power older than the window do not count.
+        let old = (0..<5).map { power(Double($0), fps: 60, watts: 30) } + [power(40, fps: nil, watts: nil)]
+        #expect(LiveEfficiency.fpsPerWatt(history: old) == nil)
+    }
 }

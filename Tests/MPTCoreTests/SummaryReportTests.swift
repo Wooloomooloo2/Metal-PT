@@ -38,7 +38,7 @@ import Foundation
         #expect(out.contains("Protium · FEX · DXMT"))
         #expect(out.contains("<meta name=\"mpt-run\" content=\"20270115-080000-game-exe.mptrun\">"))
         #expect(out.contains("<svg"))
-        #expect(out.contains("2.00 FPS/W"))
+        #expect(out.contains(">FPS per watt<"))
     }
 
     @Test func noNetworkReferences() {
@@ -93,7 +93,7 @@ import Foundation
     @Test func limiterSectionFollowsTiles() throws {
         let out = html(bundle(extra: gpuBound, gpuMaxMHz: 1578))
         let section = try #require(out.range(of: "What held it back"))
-        let tiles = try #require(out.range(of: "<div class=\"tiles\">"))
+        let tiles = try #require(out.range(of: "<div class=\"tiles\""))
         let charts = try #require(out.range(of: "Over time"))
         #expect(tiles.lowerBound < section.lowerBound && section.lowerBound < charts.lowerBound)
         #expect(out.contains("<p class=\"verdict\">Mostly GPU</p>"))
@@ -142,6 +142,71 @@ import Foundation
         #expect(html(empty).contains("<h1>Game.exe</h1>"))
         #expect(!html(empty).contains("Recorded app"))
         #expect(SummaryReport.version >= 3)   // older summaries say "Executable": rewritten when opened
+    }
+
+    // MARK: - FPS per watt (Review Focus 4)
+
+    /// The tile's eyebrow, value and sub-line, in that order, as `HTML.tile` writes them.
+    private func efficiencyTile(_ out: String) -> String? {
+        guard let r = out.range(of: "<div class=\"tile\"><div class=\"eyebrow\">FPS per watt</div>") else { return nil }
+        let rest = out[r.lowerBound...]
+        guard let end = rest.range(of: "</div></div>") else { return nil }
+        return String(rest[..<end.upperBound])
+    }
+
+    @Test func fpsPerWattTileComesSecondWithSystemPower() throws {
+        let out = html(bundle())
+        let tile = try #require(efficiencyTile(out))
+        #expect(tile.contains("<div class=\"k\">2.00</div>"))
+        #expect(tile.contains("at 30.0 W system power"))
+        // Second, right after Median FPS.
+        let median = try #require(out.range(of: ">Median FPS<"))
+        let perW = try #require(out.range(of: ">FPS per watt<"))
+        let fifth = try #require(out.range(of: ">5 % second<"))
+        #expect(median.upperBound < perW.lowerBound && perW.upperBound < fifth.lowerBound)
+        // The power tile keeps the watts, not a second FPS/W.
+        #expect(out.contains("30.0<small> W</small>"))
+        #expect(!out.contains("2.00 FPS/W"))
+    }
+
+    @Test func fpsPerWattTileWithoutPower() throws {
+        let b = bundle()
+        let stripped = RunBundle(url: b.url, info: b.info,
+                                 rows: b.rows.map { $0.filter { $0.key != "smc_PSTR_w" && $0.key != "gpu_w" } },
+                                 frames: nil, warnings: [])
+        let tile = try #require(efficiencyTile(html(stripped)))
+        #expect(tile.contains("<div class=\"k\">—</div>"))
+        #expect(tile.contains("no power readings"))
+    }
+
+    @Test func fpsPerWattTileWithGPUOnlyPower() throws {
+        let b = bundle()
+        let gpuOnly = RunBundle(url: b.url, info: b.info, rows: b.rows.map { $0.filter { $0.key != "smc_PSTR_w" } },
+                                frames: nil, warnings: [])
+        let tile = try #require(efficiencyTile(html(gpuOnly)))
+        #expect(tile.contains("<div class=\"k\">—</div>"))
+        #expect(tile.contains("not comparable (GPU-only power)"))
+    }
+
+    @Test func fpsPerWattTileAtAFrameCap() throws {
+        let out = html(bundle(extra: ["gpu_busy_pct": "60.0"]))
+        let tile = try #require(efficiencyTile(out))
+        #expect(tile.contains("<div class=\"k\">2.00</div>"))
+        #expect(tile.contains("at a 60 fps cap — efficiency at the cap"))
+    }
+
+    @Test func powerCaptionStatesTheDisplayCaveat() {
+        #expect(html(bundle()).contains(SummaryReport.efficiencyCaveat))
+        #expect(SummaryReport.efficiencyCaveat
+            == "System power includes the display; compare FPS/W on the same Mac, brightness and power source.")
+        #expect(SummaryReport.version >= 4)   // older summaries have no FPS per watt tile: rewritten when opened
+    }
+
+    @Test func limiterReportsTheCapItFound() {
+        let b = bundle(extra: ["gpu_busy_pct": "60.0"])
+        #expect(LimiterAnalysis(b, summary: RunSummary(b)).capFPS == 60)
+        let gpu = bundle(extra: ["gpu_busy_pct": "99.0"])
+        #expect(LimiterAnalysis(gpu, summary: RunSummary(gpu)).capFPS == nil)
     }
 }
 

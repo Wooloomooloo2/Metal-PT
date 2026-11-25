@@ -5,8 +5,9 @@ public enum SummaryReport {
     public static let fileName = "summary.html"
     /// The report's layout version, written as `<meta name="mpt-summary-version">`. Bump it when the report gains
     /// something an existing summary.html should show: the app rewrites summaries older than this when opened.
-    /// 2: "What held it back". 3: "Recorded app" (was "Executable") under an edited game title.
-    public static let version = 3
+    /// 2: "What held it back". 3: "Recorded app" (was "Executable") under an edited game title. 4: the "FPS per
+    /// watt" tile.
+    public static let version = 4
     static let versionMeta = "mpt-summary-version"
 
     /// The version a summary.html was written with; 1 for summaries from before the tag. A missing tag (also an
@@ -109,8 +110,9 @@ public enum SummaryReport {
             body += "</ul></aside>\n"
         }
 
-        body += tiles(info, summary)
-        body += limiterSection(LimiterAnalysis(bundle, summary: summary))
+        let limits = LimiterAnalysis(bundle, summary: summary)
+        body += tiles(info, summary, limits: limits)
+        body += limiterSection(limits)
         body += charts(bundle, summary)
         body += statsTable(summary)
 
@@ -136,6 +138,9 @@ public enum SummaryReport {
     /// Shown instead of the lows when frames.csv may mix several processes.
     static let mixedHint = "frame times mixed"
     static let gpuOnlyWarning = "power is GPU-only (IOReport), FPS/W not comparable across runs"
+    /// Under the power chart (and in the README): what FPS per watt from system power can be compared with.
+    public static let efficiencyCaveat = "System power includes the display; compare FPS/W on the same Mac, "
+        + "brightness and power source."
     /// docs/hardware-baseline.md E6: light Metal load read about 1.2 W; a heavy game read a plausible median 56 W.
     static let gpuCaption = "IOReport GPU energy can read low at light load; under heavy load it tracks the GPU "
         + "(hardware-baseline E6)"
@@ -170,13 +175,33 @@ public enum SummaryReport {
         return rows
     }
 
-    private static func tiles(_ info: RunInfo, _ s: RunSummary) -> String {
+    /// The "FPS per watt" tile: median FPS / mean system power over the steady seconds (`RunSummary.fpsPerWatt`).
+    /// GPU-only power gives no figure (not comparable); a run held at a frame cap says the figure is at that cap.
+    private static func efficiencyTile(_ s: RunSummary, limits: LimiterAnalysis) -> String {
+        let name = "FPS per watt"
+        guard let col = s.powerColumn, let watts = s.stats[col]?.mean else {
+            return HTML.tile(name, "—", "no power readings")
+        }
+        if col == "gpu_w" { return HTML.tile(name, "—", "not comparable (GPU-only power)") }
+        guard let perW = s.fpsPerWatt else { return HTML.tile(name, "—", "no FPS recorded") }
+        let detail: String
+        if limits.primary == .frameCap, let cap = limits.capFPS {
+            detail = "at a \(HTML.number(cap, digits: cap == cap.rounded() ? 0 : 1)) fps cap — efficiency at the cap"
+        } else {
+            detail = "at \(HTML.number(watts, digits: 1)) W system power"
+        }
+        return HTML.tile(name, HTML.number(perW, digits: 2), detail)
+    }
+
+    private static func tiles(_ info: RunInfo, _ s: RunSummary, limits: LimiterAnalysis) -> String {
         let noFPS = s.medianFPS == nil ? "no FPS recorded" : ""
         let lowHint = s.lowsMixed ? mixedHint : (info.fpsSource == "stderr" ? "" : "needs mpt run")
         let lowDetail = info.fpsSource == "stderr" && !s.lowsMixed ? "from per-frame times" : ""
-        var out = "<div class=\"tiles\">"
+        // Two rows of three: Median FPS and FPS per watt lead.
+        var out = "<div class=\"tiles\" style=\"--tiles:3\">"
         out += HTML.tile("Median FPS", HTML.number(s.medianFPS, digits: 1),
                     s.medianFPS == nil ? noFPS : "over \(s.steadySeconds.count) steady s")
+        out += efficiencyTile(s, limits: limits)
         out += HTML.tile("5 % second", HTML.number(s.p5FPS, digits: 1),
                     s.p5FPS == nil ? noFPS : "slowest 1 s in 20")
         out += HTML.tile("1 % low", HTML.number(s.low1, digits: 1), s.low1 == nil ? "" : lowDetail,
@@ -184,10 +209,9 @@ public enum SummaryReport {
         out += HTML.tile("0.1 % low", HTML.number(s.low01, digits: 1), s.low01 == nil ? "" : lowDetail,
                     hint: s.low01 == nil ? lowHint : "")
         if let col = s.powerColumn, let mean = s.stats[col]?.mean {
-            let perW = s.fpsPerWatt.map { "\(HTML.number($0, digits: 2)) FPS/W" } ?? "mean over steady seconds"
             let gpuOnly = col == "gpu_w"
             out += HTML.tile(gpuOnly ? "GPU power (IOReport)" : "System power",
-                        "\(HTML.number(mean, digits: 1))<small> W</small>", perW,
+                        "\(HTML.number(mean, digits: 1))<small> W</small>", "mean over steady seconds",
                         hint: gpuOnly ? "no system power key — FPS/W not comparable" : "")
         } else {
             out += HTML.tile("Power", "—", "no power readings")
@@ -286,9 +310,10 @@ public enum SummaryReport {
             out += "<span class=\"mono\">mpt hud on</span> and relaunch the game, or launch it with "
             out += "<span class=\"mono\">mpt run</span>.</p></div>\n"
         }
-        let gpu = column(rows, "gpu_w")
-        out += chart("Power", [("System", column(rows, "smc_PSTR_w")), ("GPU (IOReport)", gpu)],
-                     unit: "W", yMin: 0, caption: has(gpu) ? gpuCaption : "")
+        let gpu = column(rows, "gpu_w"), system = column(rows, "smc_PSTR_w")
+        let caption = [has(system) ? efficiencyCaveat : "", has(gpu) ? gpuCaption : ""].filter { !$0.isEmpty }
+        out += chart("Power", [("System", system), ("GPU (IOReport)", gpu)],
+                     unit: "W", yMin: 0, caption: caption.joined(separator: " "))
         out += chart("Utilisation", [("CPU P-cores", column(rows, "cpu_p_util_pct")),
                                      ("CPU E-cores", column(rows, "cpu_e_util_pct")),
                                      ("GPU busy", column(rows, "gpu_busy_pct"))], unit: "%", yMin: 0, yMax: 100)

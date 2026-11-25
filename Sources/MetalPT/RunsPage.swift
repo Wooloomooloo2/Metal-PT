@@ -256,11 +256,11 @@ private struct RunRow: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.red)
                 } else {
-                    HStack(spacing: 0) {
-                        Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
-                        Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
-                        Text(" fps · 1% \(RunFormat.low(entry.low1))")
-                    }
+                    // One text, so a long line wraps as a sentence rather than squeezing each piece.
+                    (Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
+                        + Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
+                        + Text(" fps · 1% \(RunFormat.low(entry.low1))")
+                        + Text(RunFormat.perWatt(entry.fpsPerWatt).map { " · \($0)\u{00A0}FPS/W" } ?? ""))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -330,6 +330,12 @@ enum RunFormat {
     static func fps(_ v: Double?) -> String {
         guard let v, v.isFinite else { return "—" }
         return String(format: "%.1f", v)
+    }
+
+    /// FPS per watt, two decimals; nil when unknown (the row leaves it out).
+    static func perWatt(_ v: Double?) -> String? {
+        guard let v, v.isFinite else { return nil }
+        return String(format: "%.2f", v)
     }
 
     /// 1 % low, whole frames; "—" when unknown.

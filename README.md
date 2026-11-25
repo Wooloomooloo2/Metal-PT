@@ -6,7 +6,8 @@ games on a Mac through CrossOver, Protium, Whisky and friends (with DXMT, D3DMet
 - **Live**: FPS, frame times, CPU/GPU load, power, temperatures and fans for the game you are playing, in the window,
   the menu bar or a small in-game overlay. Metal-PT also shows which stack the game runs on (runtime, translator,
   graphics layer).
-- **Record** a run with a hotkey, then get a summary (average FPS, lows, steady-state power and temperatures).
+- **Record** a run with a hotkey, then get a summary (average FPS, lows, FPS per watt, steady-state power and
+  temperatures).
 - **Compare** runs: CrossOver vs Protium, DXMT vs D3DMetal, one in-game setting vs another.
 - **Export** a run as one file for a future public performance database. You see exactly what it contains first.
 
@@ -53,6 +54,10 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
   A busy GPU well below its top clock is not counted as GPU-bound (the clock reading is not yet verified against a
   heavy game); in low power mode or on battery the GPU is judged on busy % only. It is a guide, not proof; each
   report shows the thresholds it used ("how this is decided").
+- **FPS per watt** (run summary, Compare, Runs, Live and the overlay): median FPS over mean system power for a run
+  (mean FPS over the last 10 s live), so two runs at 60 fps drawing 34 W and 50 W tell apart. System power includes
+  the display: compare FPS/W on the same Mac, brightness and power source. Runs with GPU-only power (no system power
+  key) get no FPS/W, and a run held at a frame cap says its figure is efficiency at that cap.
 - **Runs**: every recording, newest first, with its summary. Add in-game settings and notes, show it in Finder,
   or move it to the Trash.
 - **Compare**: tick runs in Runs and choose "Compare selected…", or add runs to a project in Compare. Pick a

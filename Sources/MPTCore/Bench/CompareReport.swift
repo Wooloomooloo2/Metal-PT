@@ -43,6 +43,15 @@ public enum CompareReport {
         return (pct > 0 ? "+" : "\u{2212}") + digits + " %"
     }
 
+    /// The FPS-per-watt change against the baseline, whole percent: "31 % more frames per watt", "24 % fewer
+    /// frames per watt", "the same frames per watt" (under 0.5 %); nil when either is unknown or the baseline ≤ 0.
+    public static func efficiencyChange(_ value: Double?, baseline: Double?) -> String? {
+        guard let value, let baseline, value.isFinite, baseline.isFinite, baseline > 0, value >= 0 else { return nil }
+        let pct = Int((abs(value / baseline - 1) * 100).rounded())
+        if pct == 0 { return "the same frames per watt" }
+        return "\(pct) % \(value > baseline ? "more" : "fewer") frames per watt"
+    }
+
     /// The game's title, else its exe, else "unidentified".
     static func gameName(_ info: RunInfo) -> String {
         let name = info.game.titleText ?? info.game.exe
@@ -273,7 +282,7 @@ public enum CompareReport {
         }
 
         guard let base else {
-            body += runLines(items, missing: missing, base: nil)
+            body += runLines(items, missing: missing, base: nil, efficient: [])
             body += "<p class=\"note\">No runs to compare: add some with <span class=\"mono\">mpt compare "
             body += "\(e(project.name)) add RUN…</span>.</p>\n</div>"
             return HTML.page(title: "\(project.name) · mpt compare", body: body)
@@ -293,9 +302,9 @@ public enum CompareReport {
         }
 
         body += tiles(items, base: base, efficient: efficient)
-        body += runLines(items, missing: missing, base: base)
+        body += runLines(items, missing: missing, base: base, efficient: efficient)
         body += barCharts(items, efficient: efficient, efficiencyNotes: efficiencyNotes)
-        body += differenceTable(items)
+        body += differenceTable(items, efficiency: efficiencyLines(efficient))
         body += "<footer>\(e(CompareProject.fileName(for: project.name))) · mpt compare</footer>\n</div>"
         return HTML.page(title: "\(project.name) · mpt compare", meta: [("mpt-compare", project.name)],
                          body: body)
@@ -339,14 +348,28 @@ public enum CompareReport {
         return out + "</div>\n"
     }
 
-    /// Every project entry under its own number (`<li value=N>`), missing ones included.
+    /// "Lean: 31 % more frames per watt than the baseline (1.57 vs 1.20 FPS/W)" for each run measured like the
+    /// baseline (`efficient` holds the baseline only when it was: the existing power-mismatch rule).
+    private static func efficiencyLines(_ efficient: [Item]) -> [String] {
+        guard let base = efficient.first(where: \.isBase), let b = base.summary.fpsPerWatt else { return [] }
+        return efficient.filter { !$0.isBase }.compactMap { it in
+            guard let v = it.summary.fpsPerWatt, let change = efficiencyChange(v, baseline: b) else { return nil }
+            return "\(it.label): \(change) than the baseline (\(HTML.number(v, digits: 2)) vs "
+                + "\(HTML.number(b, digits: 2)) FPS/W)"
+        }
+    }
+
+    /// Every project entry under its own number (`<li value=N>`), missing ones included. FPS/W is shown for the
+    /// runs in `efficient` (power measured like the reference run).
     private static func runLines(_ items: [Item], missing: [(number: Int, entry: CompareProject.Entry)],
-                                 base: Item?) -> String {
+                                 base: Item?, efficient: [Item]) -> String {
         var lines: [(Int, String)] = []
+        let comparable = Set(efficient.map(\.number))
         for it in items {
             let g = it.isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base?.summary.medianFPS)
+            let perW = comparable.contains(it.number) ? ", \(HTML.number(it.summary.fpsPerWatt, digits: 2)) FPS/W" : ""
             let line = "\(it.label): \(HTML.number(it.summary.medianFPS, digits: 1)) fps median (\(g)), "
-                + "1 % low \(lowText(it)), \(powerText(it))" + limiterSuffix(it.limits)
+                + "1 % low \(lowText(it)), \(powerText(it))\(perW)" + limiterSuffix(it.limits)
             lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(dot(it))\(HTML.escape(line))"
                 + "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"))
         }
@@ -406,7 +429,7 @@ public enum CompareReport {
         return out + "</section>\n"
     }
 
-    private static func differenceTable(_ items: [Item]) -> String {
+    private static func differenceTable(_ items: [Item], efficiency: [String]) -> String {
         let e = HTML.escape
         let infos = items.map(\.bundle.info)
         var diffs = differences(infos)
@@ -431,6 +454,10 @@ public enum CompareReport {
                 out += "</tr>"
             }
             out += "</tbody></table></div>"
+        }
+        if !efficiency.isEmpty {
+            out += "<p class=\"note\"><strong>Efficiency:</strong> "
+            out += efficiency.map(e).joined(separator: "; ") + ".</p>"
         }
         var same = shared(infos)
         if Set(limited).count == 1, let only = limited.first, only != dash { same.append((field: "limited by", value: only)) }

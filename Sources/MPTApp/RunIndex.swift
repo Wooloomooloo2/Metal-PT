@@ -19,6 +19,9 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     public var duration: Double
     public var medianFPS: Double?
     public var low1: Double?
+    /// Median FPS / mean system power over the steady seconds (`RunSummary.fpsPerWatt`); nil without system power
+    /// (GPU-only power is not comparable across runs).
+    public var fpsPerWatt: Double?
     /// run.json has an end time.
     public var finished: Bool
     /// Being recorded right now (unfinished and still being written, or the app's current recording): listed as
@@ -26,11 +29,12 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     public var inProgress: Bool
 
     public init(id: String, game: String, app: String? = nil, stackLine: String, settings: String, label: String,
-                start: Date, duration: Double, medianFPS: Double?, low1: Double?, finished: Bool = true,
-                inProgress: Bool = false) {
+                start: Date, duration: Double, medianFPS: Double?, low1: Double?, fpsPerWatt: Double? = nil,
+                finished: Bool = true, inProgress: Bool = false) {
         self.id = id; self.game = game; self.app = app ?? game
         self.stackLine = stackLine; self.settings = settings; self.label = label
         self.start = start; self.duration = duration; self.medianFPS = medianFPS; self.low1 = low1
+        self.fpsPerWatt = fpsPerWatt
         self.finished = finished; self.inProgress = inProgress
     }
 
@@ -119,7 +123,8 @@ public final class RunIndex: @unchecked Sendable {
     public typealias Trash = @Sendable (URL) throws -> Void
 
     public static let cacheFileName = ".index.json"
-    static let cacheVersion = 3
+    /// 3: `RunEntry.app`. 4: `RunEntry.fpsPerWatt` (a version-3 cache was written by builds before it).
+    static let cacheVersion = 4
     /// Seconds since samples.csv was last written for an unfinished run to still count as being recorded (the
     /// recorder appends once a second).
     public static let activeWindow: TimeInterval = 10
@@ -314,7 +319,9 @@ public final class RunIndex: @unchecked Sendable {
                              stackLine: SummaryReport.stackLine(info.stack) ?? "",
                              settings: info.user.gameSettings, label: info.user.label, start: info.start,
                              duration: max(0, duration), medianFPS: summary.medianFPS,
-                             low1: reuseLow ? previous?.entry?.low1 : summary.low1, finished: info.end != nil)
+                             low1: reuseLow ? previous?.entry?.low1 : summary.low1,
+                             fpsPerWatt: summary.powerColumn == "smc_PSTR_w" ? summary.fpsPerWatt : nil,
+                             finished: info.end != nil)
         return Record(mtime: mtime, size: size, entry: entry, finished: info.end != nil)
     }
 

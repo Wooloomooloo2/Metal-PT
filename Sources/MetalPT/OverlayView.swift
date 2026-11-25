@@ -62,6 +62,8 @@ struct OverlayNumbers: Equatable {
     /// nil when no game is followed or no frames yet.
     var fps: Double?
     var systemW: Double?
+    /// Mean FPS / mean system W over the last 10 s (`LiveEfficiency`); nil when not following or unknown.
+    var fpsPerWatt: Double?
     var gpuPct: Double?
     var cpuPPct: Double?
     var cpuEPct: Double?
@@ -70,12 +72,13 @@ struct OverlayNumbers: Equatable {
     var stack: String?
     var app: String?
 
-    init(recordingElapsed: Double? = nil, fps: Double? = nil, systemW: Double? = nil,
+    init(recordingElapsed: Double? = nil, fps: Double? = nil, systemW: Double? = nil, fpsPerWatt: Double? = nil,
          gpuPct: Double? = nil, cpuPPct: Double? = nil, cpuEPct: Double? = nil, dieC: Double? = nil,
          fanRPM: [Double] = [], stack: String? = nil, app: String? = nil) {
         self.recordingElapsed = recordingElapsed
         self.fps = fps
         self.systemW = systemW
+        self.fpsPerWatt = fpsPerWatt
         self.gpuPct = gpuPct
         self.cpuPPct = cpuPPct
         self.cpuEPct = cpuEPct
@@ -93,7 +96,9 @@ struct OverlayNumbers: Equatable {
         let following = snap?.followedPID != nil
         self.init(recordingElapsed: recording ? (hub.recording?.elapsed ?? 0) : nil,
                   fps: following ? snap?.fps : nil,
-                  systemW: s.flatMap(Fmt.systemW), gpuPct: s?.gpuBusyPct,
+                  systemW: s.flatMap(Fmt.systemW),
+                  fpsPerWatt: following ? LiveEfficiency.fpsPerWatt(history: hub.history) : nil,
+                  gpuPct: s?.gpuBusyPct,
                   cpuPPct: s?.cpuPUtilPct, cpuEPct: s?.cpuEUtilPct, dieC: s?.tempMaxC,
                   fanRPM: s?.fanRPM ?? [],
                   stack: following ? Fmt.stack(snap?.stack) : nil,
@@ -122,6 +127,7 @@ struct OverlayNumbers: Equatable {
         var lines: [String] = []
         if let f = Self.known(fps), f > 0 { lines.append(String(format: "avg frame %.1f ms", 1000 / f)) }
         lines.append(Self.pair("System", systemW, "W", "GPU", gpuPct, "%"))
+        lines.append("FPS/W \(LiveEfficiency.text(fpsPerWatt))")
         lines.append(Self.pair("CPU P", cpuPPct, "%", "E", cpuEPct, "%"))
         var thermal = "Die \(Self.known(dieC).map { "\(Fmt.int($0)) °C" } ?? "–")"
         if let fan = fanRPM.filter(\.isFinite).max() { thermal += " · fans \(Fmt.int(fan))" }

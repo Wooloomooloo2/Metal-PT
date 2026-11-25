@@ -381,4 +381,33 @@ import MPTCore
         try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
         #expect(throws: (any Error).self) { try index.summary(dir: dir.lastPathComponent) }
     }
+
+    // MARK: - FPS per watt
+
+    @discardableResult
+    private func makePowerRun(in root: URL, game: String, start: Double, column: String) throws -> URL {
+        let startDate = Date(timeIntervalSince1970: start)
+        let dir = RunBundle.availableDirectory(in: root, start: startDate, game: game)
+        let info = RunInfo(appVersion: "0.2", machine: .init(modelID: "Mac15,6", chip: "Apple M3 Pro", gpuCores: 14,
+                                                             memoryGB: 36, osVersion: "15.1", osBuild: "24B83"),
+                           game: .init(exe: game), start: startDate, fpsSource: "log")
+        let w = try RunBundleWriter(directory: dir, info: info)
+        for i in 1...30 { try w.append(sample: ["elapsed_s": "\(i)", "fps": "60", "fps_app": game, column: "30.00"]) }
+        try w.finish { $0.end = startDate.addingTimeInterval(30) }
+        return dir
+    }
+
+    @Test func entryCarriesFPSPerWattOnlyForSystemPower() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makePowerRun(in: root, game: "sys.exe", start: 1_800_000_000, column: "smc_PSTR_w")
+        try makePowerRun(in: root, game: "gpu.exe", start: 1_800_000_100, column: "gpu_w")
+        try makeRun(in: root, game: "none.exe", start: 1_800_000_200)
+        let byGame = Dictionary(uniqueKeysWithValues: RunIndex(root: root).entries().map { ($0.app, $0) })
+        #expect(byGame["sys"]?.fpsPerWatt == 2.0)
+        #expect(byGame["gpu"].map { $0.fpsPerWatt == nil } == true)
+        #expect(byGame["none"].map { $0.fpsPerWatt == nil } == true)
+        // Entries gained a field: caches of the previous shape are rebuilt.
+        #expect(RunIndex.cacheVersion == 4)
+    }
 }
