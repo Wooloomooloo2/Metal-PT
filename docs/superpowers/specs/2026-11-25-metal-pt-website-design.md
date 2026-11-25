@@ -108,8 +108,10 @@ Windows/Linux data; pulling game names or art from Steam.
 2. Required: `run.json`, `samples.csv`, `summary.json`, all four `graphics` fields, a game title or exe, `fpsSource`
    ≠ `none`, ≥ 60 steady seconds with FPS.
 3. Recompute from `samples.csv` over `[steadyStartS, steadyEndS]`: median of `fps`; mean of `smc_PSTR_w`; FPS/W.
-   Must match `summary.json` within 0.5 fps and 2 % (FPS/W). Same definitions as `RunSummary` — shared golden fixture
-   runs (from `Tests/`) prove both sides agree.
+   Must match `summary.json` within 0.5 fps and 2 % (FPS/W). The site ports `RunSummary`'s row selection exactly (`Sources/MPTCore/Bench/RunSummary.swift`:
+   the steady window when `steadyStartS > 0`, else its fallback — most common `fps_app`, 10 s trim, rows above 2× the
+   median dropped) and its power fallback (`smc_PSTR_w`, else `gpu_w` → `powerSource: gpuOnly`). FPS/W is checked for
+   both sources; only `system` feeds aggregates. Shared golden fixture runs (from `Tests/`) prove both sides agree.
 4. Sanity: fps 1–1000; system power 2–400 W; elapsed time increases; sample rows ≈ 1 Hz (gaps ≤ 5 s).
 6. **Video link** (user: "restrict it to YouTube videos initially"): accepted forms `youtube.com/watch?v=ID`,
    `youtu.be/ID`, `youtube.com/shorts/ID`, `youtube.com/live/ID` (`www.`/`m.` allowed, https only); the 11-character ID
