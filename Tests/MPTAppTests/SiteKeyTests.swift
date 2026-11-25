@@ -46,4 +46,35 @@ import MPTCore
     @Test func lostKeyNoteText() {
         #expect(SiteKey.lostKeyNote == "This Mac's publishing key was replaced, so runs published before can no longer be removed from this Mac.")
     }
+
+    @Test func unreadableFileThrowsAndIsUntouched() throws {
+        let dir = tempDir()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.appendingPathComponent("site-key").path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        _ = try SiteKey.loadOrCreate(in: dir, backend: SoftwareKeyBackend())
+        let file = dir.appendingPathComponent("site-key")
+        let before = try Data(contentsOf: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        #expect(throws: (any Error).self) { try SiteKey.loadOrCreate(in: dir, backend: SoftwareKeyBackend()) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        #expect(try Data(contentsOf: file) == before)
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(names == ["site-key"])
+    }
+
+    @Test func corruptFileIsKeptAsReplacedBackup() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let bad = Data([2, 9, 9, 9])
+        try bad.write(to: dir.appendingPathComponent("site-key"))
+        let k = try SiteKey.loadOrCreate(in: dir, backend: SoftwareKeyBackend())
+        #expect(k.wasReplaced)
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let backups = names.filter { $0.hasPrefix("site-key.replaced-") }
+        #expect(backups.count == 1)
+        #expect(try Data(contentsOf: dir.appendingPathComponent(backups[0])) == bad)
+        #expect(!names.contains { $0.contains(".tmp-") })
+    }
 }

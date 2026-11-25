@@ -68,17 +68,35 @@ public final class SiteKey: RunSigner {
         let fm = FileManager.default
         let file = folder.appendingPathComponent("site-key")
         var existed = false
-        if let data = try? Data(contentsOf: file) {
+        if fm.fileExists(atPath: file.path) {
             existed = true
+            // Unreadable is not corrupt: throw and leave the file alone.
+            let data = try Data(contentsOf: file)
             if data.count > 1, data[data.startIndex] == backend.kind,
-               let h = try? backend.restore(data.dropFirst().withUnsafeBytes { Data($0) }) {
+               let h = try? backend.restore(Data(data.dropFirst())) {
                 return SiteKey(h, wasReplaced: false)
             }
+            // Judged corrupt or unusable: keep it (never delete) so a wrongly judged key can be recovered.
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyyMMdd-HHmmss"
+            var backup = folder.appendingPathComponent("site-key.replaced-\(f.string(from: Date()))")
+            var n = 1
+            while fm.fileExists(atPath: backup.path) {
+                n += 1
+                backup = folder.appendingPathComponent("site-key.replaced-\(f.string(from: Date()))-\(n)")
+            }
+            try fm.moveItem(at: file, to: backup)
         }
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let h = try backend.create()
-        try (Data([backend.kind]) + h.stored).write(to: file, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        // 0600 from creation, then an atomic rename: the private key is never world-readable.
+        let tmp = folder.appendingPathComponent("site-key.tmp-\(UUID().uuidString)")
+        guard fm.createFile(atPath: tmp.path, contents: Data([backend.kind]) + h.stored,
+                            attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do { try fm.moveItem(at: tmp, to: file) } catch { try? fm.removeItem(at: tmp); throw error }
         return SiteKey(h, wasReplaced: existed)
     }
 }
