@@ -2,13 +2,35 @@ import MPTApp
 import MPTCore
 import SwiftUI
 
+/// What Add Runs shows and adds (pure, so the rules are tested): the search narrows what is listed, never what is ticked.
+enum AddRunsSelection {
+    /// `scope` narrowed by the search (`RunEntry.matches`, as the Runs page); a blank search keeps everything.
+    static func visible(_ scope: [RunEntry], filter: String) -> [RunEntry] { scope.filter { $0.matches(filter) } }
+
+    /// The ticked runs that are still in `scope` (a search never unticks a run).
+    static func keep(_ ticked: Set<String>, in scope: [RunEntry]) -> Set<String> {
+        ticked.intersection(scope.map(\.id))
+    }
+
+    /// The runs to add: ticked ones (listed or hidden by the search) plus `extra`, oldest first.
+    static func ids(_ scope: [RunEntry], ticked: Set<String>, extra: String?) -> [String] {
+        scope.filter { ticked.contains($0.id) || $0.id == extra }
+            .sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
+            .map(\.id)
+    }
+
+    /// "Make it the baseline" is offered when exactly one run is ticked.
+    static func canChooseBaseline(ticked: Set<String>) -> Bool { ticked.count == 1 }
+}
+
 /// "Add Runs…": the finished runs not yet in the comparison (from the Runs index), ticked to add, oldest first.
 /// Runs of the comparison's own game(s) only, unless "Show other games" is on.
 struct AddRunsSheet: View {
     let detail: ProjectDetail
     @ObservedObject var store: ProjectsStore
     @ObservedObject var runs: RunsStore
-    let onAdd: ([String]) -> Void
+    /// The folder names to add (oldest first), and the one among them to make the baseline (nil: unchanged).
+    let onAdd: ([String], String?) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var ticked: Set<String>
     /// Worked out when the sheet opens and when the runs index or the project changes, not on every redraw.
@@ -16,37 +38,51 @@ struct AddRunsSheet: View {
     /// The comparison's games (empty: unknown, everything is shown).
     @State private var games: Set<String> = []
     @State private var allGames = false
+    @State private var filter: String
+    @State private var makeBaseline: Bool
 
-    /// `ticked` given: snapshots.
+    /// `ticked`, `filter` and `makeBaseline` given: snapshots.
     init(detail: ProjectDetail, store: ProjectsStore, runs: RunsStore, ticked: Set<String> = [],
-         candidates: [RunEntry] = [], onAdd: @escaping ([String]) -> Void) {
+         candidates: [RunEntry] = [], filter: String = "", makeBaseline: Bool = false,
+         onAdd: @escaping ([String], String?) -> Void) {
         self.detail = detail
         self.store = store
         self.runs = runs
         self.onAdd = onAdd
         _ticked = State(initialValue: ticked)
         _candidates = State(initialValue: candidates)
+        _filter = State(initialValue: filter)
+        _makeBaseline = State(initialValue: makeBaseline)
     }
 
     private func updateCandidates() {
         candidates = store.candidates(detail.id, from: runs.entries)
         games = store.games(detail.id, from: runs.entries)
-        ticked.formIntersection(shown.map(\.id))
+        ticked = AddRunsSelection.keep(ticked, in: shown)
     }
 
+    /// The runs in scope (same game unless "Show other games"); `visible` is what the search leaves of them.
     private var shown: [RunEntry] { allGames ? candidates : CompareLibrary.sameGame(candidates, games: games) }
     private var hiddenCount: Int { candidates.count - CompareLibrary.sameGame(candidates, games: games).count }
+    private var visible: [RunEntry] { AddRunsSelection.visible(shown, filter: filter) }
     private var gameName: String { games.count == 1 ? games.first! : "these games" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Add runs").font(.title3.weight(.semibold))
-                Text("To “\(detail.name)”. Finished runs not already in it, newest first.")
+                Text("To “\(detail.name)”. Finished runs not already in it. Right-click a run to add it as the baseline.")
                     .foregroundStyle(.secondary)
             }
+            SnapshotSafeTextField("Search: game, app, stack, settings, label", text: $filter)
             Group {
-                if shown.isEmpty {
+                if visible.isEmpty && !shown.isEmpty {
+                    Text("No runs match “\(filter.trimmingCharacters(in: .whitespaces))”.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .padding(.horizontal, 20)
+                } else if shown.isEmpty {
                     Text(!runs.loaded ? "Loading runs…"
                          : candidates.isEmpty ? "Every finished run is already in this comparison."
                          : "No other runs of \(gameName). Turn on Show other games to add a run of another game.")
@@ -57,10 +93,13 @@ struct AddRunsSheet: View {
                 } else {
                     SnapshotSafeScroll {
                         LazyVStack(spacing: 0) {
-                            ForEach(shown) { entry in
+                            ForEach(visible) { entry in
                                 CandidateRow(entry: entry, ticked: ticked.contains(entry.id))
                                     .contentShape(Rectangle())
                                     .onTapGesture { toggle(entry.id) }
+                                    .contextMenu {
+                                        Button("Add as baseline") { add(extra: entry.id, baseline: entry.id) }
+                                    }
                                 Divider().padding(.leading, 34)
                             }
                         }
@@ -70,21 +109,21 @@ struct AddRunsSheet: View {
             }
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1)))
+            if AddRunsSelection.canChooseBaseline(ticked: ticked) {
+                Toggle("Make it the baseline", isOn: $makeBaseline)
+                    .help("Compare the other runs against this one instead of the oldest")
+            }
             HStack {
                 if hiddenCount > 0 || allGames {
                     Toggle("Show other games\(hiddenCount > 0 ? " (\(hiddenCount))" : "")", isOn: $allGames)
-                        .onChange(of: allGames) { ticked.formIntersection(shown.map(\.id)) }
+                        .onChange(of: allGames) { ticked = AddRunsSelection.keep(ticked, in: shown) }
                 }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(addTitle) {
-                    // Oldest first, as "Compare selected…" orders a new project.
-                    let ids = shown.filter { ticked.contains($0.id) }
-                        .sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
-                        .map(\.id)
-                    onAdd(ids)
-                    dismiss()
+                    add(extra: nil, baseline: makeBaseline && AddRunsSelection.canChooseBaseline(ticked: ticked)
+                        ? ticked.first : nil)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(ticked.isEmpty)
@@ -103,6 +142,13 @@ struct AddRunsSheet: View {
         case 1: "Add 1 Run"
         default: "Add \(ticked.count) Runs"
         }
+    }
+
+    /// Oldest first, as "Compare selected…" orders a new project. `extra`: a run added although not ticked (the row's
+    /// "Add as baseline").
+    private func add(extra: String?, baseline: String?) {
+        onAdd(AddRunsSelection.ids(shown, ticked: ticked, extra: extra), baseline)
+        dismiss()
     }
 
     private func toggle(_ id: String) {
@@ -127,7 +173,7 @@ private struct CandidateRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 HStack(spacing: 0) {
-                    Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
+                    Text("\(RunFormat.shortDate(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
                     Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
                     Text(" fps · 1% \(RunFormat.low(entry.low1))")
                 }

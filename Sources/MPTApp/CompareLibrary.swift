@@ -33,10 +33,12 @@ public struct ProjectDetail: Identifiable, Sendable, Equatable {
         /// Why the run did not load (trashed, unreadable); nil when it loaded.
         public var missing: String?
         public var isBaseline: Bool
+        /// When the run started; nil when it did not load.
+        public var start: Date?
 
-        public init(index: Int, label: String, bundle: String, missing: String?, isBaseline: Bool) {
+        public init(index: Int, label: String, bundle: String, missing: String?, isBaseline: Bool, start: Date? = nil) {
             self.index = index; self.label = label; self.bundle = bundle; self.missing = missing
-            self.isBaseline = isBaseline
+            self.isBaseline = isBaseline; self.start = start
         }
     }
 
@@ -52,10 +54,12 @@ public struct ProjectDetail: Identifiable, Sendable, Equatable {
 
 public enum CompareLibraryError: Error, Equatable, CustomStringConvertible, LocalizedError {
     case emptyName
+    case baselineNotAdded(String)
 
     public var description: String {
         switch self {
         case .emptyName: "a comparison needs a name"
+        case .baselineNotAdded(let run): "the baseline run \(run) is not among the runs being added"
         }
     }
 
@@ -116,11 +120,22 @@ public final class CompareLibrary: @unchecked Sendable {
     }
 
     /// Adds runs by folder name in the runs folder; refuses (adding none) if any is already in the project.
-    public func add(_ id: String, bundles: [String]) throws {
+    /// `baseline`: one of `bundles`; the project's baseline becomes that run in the same edit (one save, so a failure
+    /// leaves both the runs and the baseline as they were).
+    public func add(_ id: String, bundles: [String], baseline: String? = nil) throws {
         try edit(id) { p in
+            var entries: [String: String] = [:]
             for b in bundles {
-                try p.add(bundle: CompareProject.entryBundle(for: runsRoot.appendingPathComponent(b, isDirectory: true),
-                                                             runsRoot: runsRoot))
+                let entry = CompareProject.entryBundle(for: runsRoot.appendingPathComponent(b, isDirectory: true),
+                                                       runsRoot: runsRoot)
+                entries[b] = entry
+                try p.add(bundle: entry)
+            }
+            if let baseline {
+                guard let entry = entries[baseline], let index = p.runs.firstIndex(where: { $0.bundle == entry }) else {
+                    throw CompareLibraryError.baselineNotAdded(baseline)
+                }
+                try p.setBaseline(index)
             }
         }
     }
@@ -248,7 +263,7 @@ public final class CompareLibrary: @unchecked Sendable {
             do {
                 let info = try loaded[i].get()
                 return .init(index: i, label: names[i] ?? CompareReport.label(entry, info), bundle: entry.bundle,
-                             missing: nil, isBaseline: i == project.baseline)
+                             missing: nil, isBaseline: i == project.baseline, start: info.start)
             } catch {
                 return .init(index: i, label: entry.name.isEmpty ? (entry.bundle as NSString).lastPathComponent : entry.name,
                              bundle: entry.bundle, missing: CompareProject.loadProblem(url, error),

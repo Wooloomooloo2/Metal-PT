@@ -83,8 +83,9 @@ final class ProjectsStore: ObservableObject {
         return library.games(detail, in: entries)
     }
 
-    func add(_ id: String, bundles: [String]) async throws {
-        try await edit(id) { try $0.add(id, bundles: bundles) }
+    /// `baseline`: one of `bundles`, made the baseline in the same edit.
+    func add(_ id: String, bundles: [String], baseline: String? = nil) async throws {
+        try await edit(id) { try $0.add(id, bundles: bundles, baseline: baseline) }
     }
 
     /// True when the removed run was the baseline (run 1 is now).

@@ -64,7 +64,9 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
 - **Runs**: every recording, newest first, with its summary. Add in-game settings and notes, show it in Finder,
   or move it to the Trash.
 - **Compare**: tick runs in Runs and choose "Compare selected…", or add runs to a project in Compare. Pick a
-  baseline; the report shows each run against it.
+  baseline; the report shows each run against it. "Add Runs…" has a search (game, app, stack, settings, label), so an
+  old run is easy to find; right-click it and choose "Add as baseline" (or tick one run and "Make it the
+  baseline"). The Baseline menu shows each run's date.
 - **Export**: on a run, "Submit…" shows exactly what would be sent, then "Export file…" writes one
   `<run>.mptrun.zip` to the `exports` folder. The website that will take these files does not exist yet.
 - Files live in `~/Documents/Metal-PT/` (`runs/`, `projects/`, `exports/`); Settings can move the data folder.

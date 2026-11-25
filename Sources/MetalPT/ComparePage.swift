@@ -51,8 +51,8 @@ struct ComparePage: View {
             selectRequestedProject()
         }
         .sheet(item: $adding) { detail in
-            AddRunsSheet(detail: detail, store: store, runs: model.runs) { ids in
-                edit("Could not add the runs") { try await store.add(detail.id, bundles: ids) }
+            AddRunsSheet(detail: detail, store: store, runs: model.runs) { ids, baseline in
+                edit("Could not add the runs") { try await store.add(detail.id, bundles: ids, baseline: baseline) }
             }
             .onAppear {
                 if model.live { model.runs.refresh(root: model.folder("runs")) }
@@ -314,7 +314,7 @@ private struct CompareDetailView: View {
                              help: "The run the others are compared against") {
                 ForEach(runs) { run in
                     Button { onBaseline(run.index) } label: {
-                        if run.isBaseline { Label(Self.title(run), systemImage: "checkmark") } else { Text(Self.title(run)) }
+                        if run.isBaseline { Label(Self.dated(run), systemImage: "checkmark") } else { Text(Self.dated(run)) }
                     }
                     .disabled(run.isBaseline)
                 }
@@ -336,6 +336,12 @@ private struct CompareDetailView: View {
         }
         .controlSize(.small)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// `title` and the run's date: "2 · CrossOver D3DMetal · 12 Aug 2025".
+    static func dated(_ run: ProjectDetail.Run, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let start = run.start else { return title(run) }
+        return title(run) + " · " + RunFormat.shortDate(start, now: now, calendar: calendar)
     }
 
     /// "2 · CrossOver D3DMetal", "3 · old (missing)": the CLI's numbering.

@@ -318,6 +318,21 @@ enum RunFormat {
         return d.formatted(date: .abbreviated, time: .shortened)
     }
 
+    /// "Today 9:50", "12 Aug" (this year), "12 Aug 2025" (earlier years): compact, for lists of old runs. Time and
+    /// day order follow the calendar's locale.
+    static func shortDate(_ d: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        func string(_ template: String) -> String {
+            let f = DateFormatter()
+            f.calendar = calendar
+            f.timeZone = calendar.timeZone
+            f.locale = calendar.locale ?? .current
+            f.setLocalizedDateFormatFromTemplate(template)
+            return f.string(from: d)
+        }
+        if calendar.isDate(d, inSameDayAs: now) { return "Today \(string("jm"))" }
+        return calendar.isDate(d, equalTo: now, toGranularity: .year) ? string("dMMM") : string("dMMMy")
+    }
+
     /// "2:00", "1:02:03".
     static func duration(_ s: Double) -> String {
         let t = max(0, Int(s.rounded()))

@@ -217,7 +217,13 @@ enum Snapshots {
             list.append(Shot(name: "compare-add", size: nil, width: 520,
                              view: AnyView(AddRunsSheet(detail: detail, store: model.projects, runs: model.runs,
                                                         ticked: Set(candidates.prefix(1).map(\.id)),
-                                                        candidates: candidates, onAdd: { _ in }))))
+                                                        candidates: candidates, makeBaseline: true,
+                                                        onAdd: { _, _ in }))))
+            list.append(Shot(name: "compare-add-search", size: nil, width: 520,
+                             view: AnyView(AddRunsSheet(detail: detail, store: model.projects, runs: model.runs,
+                                                        ticked: Set(candidates.prefix(1).map(\.id)),
+                                                        candidates: candidates, filter: "CrossOver",
+                                                        onAdd: { _, _ in }))))
         }
         list.append(Shot(name: "compare-rename", size: nil, width: 420,
                          view: AnyView(RenameProjectSheet(

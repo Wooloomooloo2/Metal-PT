@@ -224,4 +224,71 @@ import MPTCore
         // Nothing known about the comparison's runs: everything is offered.
         #expect(CompareLibrary.sameGame(candidates, games: []).count == 2)
     }
+
+    @Test func addWithBaselineSetsThatRunInTheSameEdit() throws {
+        let s = setup()
+        defer { try? FileManager.default.removeItem(at: s.root) }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "CrossOver")
+        let b = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_100, runtime: "Protium")
+        let c = try makeRun(in: s.runs, game: "re9.exe", start: 1_800_000_200, runtime: "Whisky")
+        let file = s.projects.appendingPathComponent("p.json")
+        try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent)]).save(to: file)
+        let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs)
+
+        // A run of another game as the baseline: added, baseline is its index, the report still warns.
+        try lib.add("p.json", bundles: [b.lastPathComponent, c.lastPathComponent], baseline: c.lastPathComponent)
+        let p = try CompareProject.load(file)
+        #expect(p.runs.map(\.bundle) == [a, b, c].map(\.lastPathComponent))
+        #expect(p.baseline == 2)
+        let page = try html(s, "p.json")
+        #expect(page.contains("Whisky"))
+        #expect(page.contains("different games") || page.contains("games"))
+
+        // Without a baseline it stays where it was.
+        let d = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_300, runtime: "DXMT")
+        try lib.add("p.json", bundles: [d.lastPathComponent])
+        #expect(try CompareProject.load(file).baseline == 2)
+    }
+
+    @Test func addWithBaselineOutsideTheAddedRunsRefusesAll() throws {
+        let s = setup()
+        defer { try? FileManager.default.removeItem(at: s.root) }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "CrossOver")
+        let b = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_100, runtime: "Protium")
+        let file = s.projects.appendingPathComponent("p.json")
+        try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent)]).save(to: file)
+        let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs)
+        #expect(throws: (any Error).self) { try lib.add("p.json", bundles: [b.lastPathComponent], baseline: "nope.mptrun") }
+        #expect(try CompareProject.load(file).runs.count == 1)
+    }
+
+    @Test func addWithBaselineThatCannotSaveChangesNothing() throws {
+        let s = setup()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: s.projects.path)
+            try? FileManager.default.removeItem(at: s.root)
+        }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "CrossOver")
+        let b = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_100, runtime: "Protium")
+        let file = s.projects.appendingPathComponent("p.json")
+        try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent)]).save(to: file)
+        let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: s.projects.path)
+        #expect(throws: (any Error).self) {
+            try lib.add("p.json", bundles: [b.lastPathComponent], baseline: b.lastPathComponent)
+        }
+        let p = try CompareProject.load(file)
+        #expect(p.runs.count == 1 && p.baseline == 0)
+    }
+
+    @Test func detailRunsCarryTheirStartDate() throws {
+        let s = setup()
+        defer { try? FileManager.default.removeItem(at: s.root) }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "CrossOver")
+        try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent), .init(bundle: "gone.mptrun")])
+            .save(to: s.projects.appendingPathComponent("p.json"))
+        let d = try CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs).detail("p.json")
+        #expect(d.runs[0].start == Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(d.runs[1].start == nil)
+    }
 }
