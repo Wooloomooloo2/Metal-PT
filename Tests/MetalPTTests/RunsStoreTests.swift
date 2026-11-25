@@ -91,19 +91,31 @@ import MPTCore
         // "a" is hidden by the search but still ticked: kept, and added.
         let kept = AddRunsSelection.keep(["a", "b"], in: scope)
         #expect(kept == ["a", "b"])
-        #expect(AddRunsSelection.ids(scope, ticked: kept, extra: nil) == ["a", "b"])
+        #expect(AddRunsSelection.ids(scope, ticked: kept) == ["a", "b"])
     }
 
-    @Test func rowBaselineAddsThatRunEvenFromAnotherGame() {
-        let a = entry("a", game: "hzd"), c = entry("c", game: "re9")
-        let ids = AddRunsSelection.ids([a, c], ticked: ["a"], extra: "c")
-        #expect(ids == ["a", "c"])
+    @Test func rowBaselineActsOnlyOnTheClickedRun() {
+        let request = AddRunsSelection.baselineOnly("c")
+        #expect(request.ids == ["c"] && request.baseline == "c")
+    }
+
+    @Test func rowTextLeavesOutAnUnknownLow() {
+        var e = entry("a", game: "hzd")
+        e.low1 = nil
+        #expect(CandidateRow.statsText(e) == "60.0 fps")
+        e.low1 = 48; e.fpsPerWatt = 1.5
+        #expect(CandidateRow.statsText(e) == "60.0 fps \u{00B7} 1% 48 \u{00B7} 1.50\u{00A0}FPS/W")
     }
 
     @Test func idsAreOldestFirst() {
         var old = entry("old", game: "hzd"); old.start = Date(timeIntervalSince1970: 100)
         var new = entry("new", game: "hzd"); new.start = Date(timeIntervalSince1970: 200)
-        #expect(AddRunsSelection.ids([new, old], ticked: ["new", "old"], extra: nil) == ["old", "new"])
+        #expect(AddRunsSelection.ids([new, old], ticked: ["new", "old"]) == ["old", "new"])
+    }
+
+    @Test func tickChangeResetsMakeBaseline() {
+        #expect(!AddRunsSelection.makeBaseline(true, ticked: ["a", "b"], previous: ["a"]))
+        #expect(AddRunsSelection.makeBaseline(true, ticked: ["a"], previous: ["a"]))
     }
 
     @Test func checkboxOnlyWithExactlyOneTicked() {

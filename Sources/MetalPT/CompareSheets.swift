@@ -12,11 +12,19 @@ enum AddRunsSelection {
         ticked.intersection(scope.map(\.id))
     }
 
-    /// The runs to add: ticked ones (listed or hidden by the search) plus `extra`, oldest first.
-    static func ids(_ scope: [RunEntry], ticked: Set<String>, extra: String?) -> [String] {
-        scope.filter { ticked.contains($0.id) || $0.id == extra }
+    /// The runs to add: the ticked ones (listed or hidden by the search), oldest first.
+    static func ids(_ scope: [RunEntry], ticked: Set<String>) -> [String] {
+        scope.filter { ticked.contains($0.id) }
             .sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
             .map(\.id)
+    }
+
+    /// The row's "Add as baseline": that run alone, ticks ignored.
+    static func baselineOnly(_ id: String) -> (ids: [String], baseline: String?) { ([id], id) }
+
+    /// "Make it the baseline" is cleared whenever the ticked set changes.
+    static func makeBaseline(_ on: Bool, ticked: Set<String>, previous: Set<String>) -> Bool {
+        on && ticked == previous
     }
 
     /// "Make it the baseline" is offered when exactly one run is ticked.
@@ -71,7 +79,7 @@ struct AddRunsSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Add runs").font(.title3.weight(.semibold))
-                Text("To “\(detail.name)”. Finished runs not already in it. Right-click a run to add it as the baseline.")
+                Text("To “\(detail.name)”. Finished runs not already in it. Right-click a run to add just that run as the baseline.")
                     .foregroundStyle(.secondary)
             }
             SnapshotSafeTextField("Search: game, app, stack, settings, label", text: $filter)
@@ -98,7 +106,11 @@ struct AddRunsSheet: View {
                                     .contentShape(Rectangle())
                                     .onTapGesture { toggle(entry.id) }
                                     .contextMenu {
-                                        Button("Add as baseline") { add(extra: entry.id, baseline: entry.id) }
+                                        Button("Add as baseline") {
+                                            let r = AddRunsSelection.baselineOnly(entry.id)
+                                            onAdd(r.ids, r.baseline)
+                                            dismiss()
+                                        }
                                     }
                                 Divider().padding(.leading, 34)
                             }
@@ -122,7 +134,7 @@ struct AddRunsSheet: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(addTitle) {
-                    add(extra: nil, baseline: makeBaseline && AddRunsSelection.canChooseBaseline(ticked: ticked)
+                    add(baseline: makeBaseline && AddRunsSelection.canChooseBaseline(ticked: ticked)
                         ? ticked.first : nil)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -131,6 +143,9 @@ struct AddRunsSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .onChange(of: ticked) { old, new in
+            makeBaseline = AddRunsSelection.makeBaseline(makeBaseline, ticked: new, previous: old)
+        }
         .onAppear(perform: updateCandidates)
         .onChange(of: runs.entries) { updateCandidates() }
         .onChange(of: store.details[detail.id]) { updateCandidates() }
@@ -144,10 +159,9 @@ struct AddRunsSheet: View {
         }
     }
 
-    /// Oldest first, as "Compare selected…" orders a new project. `extra`: a run added although not ticked (the row's
-    /// "Add as baseline").
-    private func add(extra: String?, baseline: String?) {
-        onAdd(AddRunsSelection.ids(shown, ticked: ticked, extra: extra), baseline)
+    /// Oldest first, as "Compare selected…" orders a new project.
+    private func add(baseline: String?) {
+        onAdd(AddRunsSelection.ids(shown, ticked: ticked), baseline)
         dismiss()
     }
 
@@ -156,9 +170,14 @@ struct AddRunsSheet: View {
     }
 }
 
-private struct CandidateRow: View {
+struct CandidateRow: View {
     let entry: RunEntry
     let ticked: Bool
+
+    /// "52.5 fps · 1% 48 · 1.50 FPS/W", leaving out what is unknown.
+    nonisolated static func statsText(_ e: RunEntry) -> String {
+        RunFormat.fps(e.medianFPS) + RunFormat.statSuffix(low1: e.low1, fpsPerWatt: e.fpsPerWatt)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -172,11 +191,9 @@ private struct CandidateRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                HStack(spacing: 0) {
-                    Text("\(RunFormat.shortDate(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
-                    Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
-                    Text(" fps · 1% \(RunFormat.low(entry.low1))")
-                }
+                (Text("\(RunFormat.shortDate(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
+                    + Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
+                    + Text(RunFormat.statSuffix(low1: entry.low1, fpsPerWatt: entry.fpsPerWatt)))
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)

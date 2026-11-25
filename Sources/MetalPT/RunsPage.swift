@@ -305,6 +305,28 @@ private struct RunsEmptyState: View {
 
 // MARK: - Formatting
 
+/// `DateFormatter`s are costly to make and the lists format many dates: one per template, calendar identifier,
+/// locale and time zone.
+private enum ShortDateFormatters {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: DateFormatter] = [:]
+
+    static func formatter(_ template: String, _ calendar: Calendar) -> DateFormatter {
+        let locale = calendar.locale ?? .current
+        let key = "\(template)|\(calendar.identifier)|\(locale.identifier)|\(calendar.timeZone.identifier)"
+        return lock.withLock {
+            if let f = cache[key] { return f }
+            let f = DateFormatter()
+            f.calendar = calendar
+            f.timeZone = calendar.timeZone
+            f.locale = locale
+            f.setLocalizedDateFormatFromTemplate(template)
+            cache[key] = f
+            return f
+        }
+    }
+}
+
 enum RunFormat {
     /// "Today 14:02", "Yesterday 19:40", "22 Nov 19:40" (locale order), with the year when not this year.
     static func date(_ d: Date, now: Date = Date()) -> String {
@@ -322,12 +344,7 @@ enum RunFormat {
     /// day order follow the calendar's locale.
     static func shortDate(_ d: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         func string(_ template: String) -> String {
-            let f = DateFormatter()
-            f.calendar = calendar
-            f.timeZone = calendar.timeZone
-            f.locale = calendar.locale ?? .current
-            f.setLocalizedDateFormatFromTemplate(template)
-            return f.string(from: d)
+            ShortDateFormatters.formatter(template, calendar).string(from: d)
         }
         if calendar.isDate(d, inSameDayAs: now) { return "Today \(string("jm"))" }
         return calendar.isDate(d, equalTo: now, toGranularity: .year) ? string("dMMM") : string("dMMMy")

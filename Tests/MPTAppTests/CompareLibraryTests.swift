@@ -242,7 +242,7 @@ import MPTCore
         #expect(p.baseline == 2)
         let page = try html(s, "p.json")
         #expect(page.contains("Whisky"))
-        #expect(page.contains("different games") || page.contains("games"))
+        #expect(page.contains("different games"))
 
         // Without a baseline it stays where it was.
         let d = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_300, runtime: "DXMT")
@@ -258,7 +258,9 @@ import MPTCore
         let file = s.projects.appendingPathComponent("p.json")
         try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent)]).save(to: file)
         let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs)
-        #expect(throws: (any Error).self) { try lib.add("p.json", bundles: [b.lastPathComponent], baseline: "nope.mptrun") }
+        #expect(throws: CompareLibraryError.baselineNotAdded("nope.mptrun")) {
+            try lib.add("p.json", bundles: [b.lastPathComponent], baseline: "nope.mptrun")
+        }
         #expect(try CompareProject.load(file).runs.count == 1)
     }
 
