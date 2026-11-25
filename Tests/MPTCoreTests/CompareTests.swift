@@ -391,6 +391,8 @@ import Foundation
         #expect(CompareReport.efficiencyChange(1.572, baseline: 1.2) == "31 % more frames per watt")
         #expect(CompareReport.efficiencyChange(0.9, baseline: 1.2) == "25 % fewer frames per watt")
         #expect(CompareReport.efficiencyChange(1.201, baseline: 1.2) == "the same frames per watt")
+        #expect(CompareReport.efficiencyPhrase(1.201, baseline: 1.2) == "the same frames per watt as the baseline")
+        #expect(CompareReport.efficiencyPhrase(1.572, baseline: 1.2) == "31 % more frames per watt than the baseline")
         #expect(CompareReport.efficiencyChange(nil, baseline: 1.2) == nil)
         #expect(CompareReport.efficiencyChange(1.2, baseline: 0) == nil)
     }

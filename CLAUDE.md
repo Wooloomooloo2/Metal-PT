@@ -61,6 +61,9 @@ memory-pressure columns, "What held it back" (rulings L1/L3: clock threshold fro
 power/battery), recording feedback, single instance + reopen, not-reporting-frames warning. Open `[?]`: P n -> MHz
 mapping unverified until a heavy GPU-bound game run with `gpu_mhz` shows ~1578 MHz and "Mostly GPU".
 M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`) is paused (E2-E5, E7 pending).
+Metal-PT game-title/FPS-per-watt plan (`docs/superpowers/plans/2026-11-25-metal-pt-game-title-and-efficiency.md`) done pending
+final review: editable game title (`game.title`; `game.exe` stays the recorded app) and FPS/W as a headline metric.
+`SummaryReport.version` 4 and run-index `cacheVersion` 4 regenerate older summaries and caches lazily.
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
 2026-11-25 (uncommitted, tests pass, `build/Metal-PT.app` built, not installed): compare hang fix, same-game Add

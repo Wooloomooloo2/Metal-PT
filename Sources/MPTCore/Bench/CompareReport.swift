@@ -52,6 +52,13 @@ public enum CompareReport {
         return "\(pct) % \(value > baseline ? "more" : "fewer") frames per watt"
     }
 
+    /// `efficiencyChange` with its comparison: "31 % more frames per watt than the baseline", "the same frames per
+    /// watt as the baseline".
+    static func efficiencyPhrase(_ value: Double?, baseline: Double?) -> String? {
+        guard let change = efficiencyChange(value, baseline: baseline) else { return nil }
+        return change.hasPrefix("the same") ? "\(change) as the baseline" : "\(change) than the baseline"
+    }
+
     /// The game's title, else its exe, else "unidentified".
     static func gameName(_ info: RunInfo) -> String {
         let name = info.game.titleText ?? info.game.exe
@@ -353,8 +360,8 @@ public enum CompareReport {
     private static func efficiencyLines(_ efficient: [Item]) -> [String] {
         guard let base = efficient.first(where: \.isBase), let b = base.summary.fpsPerWatt else { return [] }
         return efficient.filter { !$0.isBase }.compactMap { it in
-            guard let v = it.summary.fpsPerWatt, let change = efficiencyChange(v, baseline: b) else { return nil }
-            return "\(it.label): \(change) than the baseline (\(HTML.number(v, digits: 2)) vs "
+            guard let v = it.summary.fpsPerWatt, let change = efficiencyPhrase(v, baseline: b) else { return nil }
+            return "\(it.label): \(change) (\(HTML.number(v, digits: 2)) vs "
                 + "\(HTML.number(b, digits: 2)) FPS/W)"
         }
     }

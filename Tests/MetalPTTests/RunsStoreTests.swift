@@ -41,3 +41,12 @@ import MPTCore
         #expect(store.entry(id)?.settings == "a")
     }
 }
+
+@Suite struct RunFormatStatTests {
+    @Test func statSuffixOmitsMissingParts() {
+        #expect(RunFormat.statSuffix(low1: 48, fpsPerWatt: 1.5) == " fps \u{00B7} 1% 48 \u{00B7} 1.50\u{00A0}FPS/W")
+        #expect(RunFormat.statSuffix(low1: nil, fpsPerWatt: 1.5) == " fps \u{00B7} 1.50\u{00A0}FPS/W")
+        #expect(RunFormat.statSuffix(low1: 48, fpsPerWatt: nil) == " fps \u{00B7} 1% 48")
+        #expect(RunFormat.statSuffix(low1: nil, fpsPerWatt: nil) == " fps")
+    }
+}

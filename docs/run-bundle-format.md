@@ -36,7 +36,7 @@ or null. A reader must treat any missing optional key as unknown.
 | `machine.osVersion` | string | macOS version, e.g. `26.6`. |
 | `machine.osBuild` | string | macOS build, e.g. `25G...`. |
 | `game.exe` | string | Executable name (Windows exe for Wine games, from argv[0]); empty if the game process was never identified. |
-| `game.title` | string? | Human title, when known. |
+| `game.title` | string? | Human title; the user can edit it (Edit sheet, "Game"), so it may differ from the recorded app. `game.exe` is never edited: it stays the recorded app and is what comparisons and the folder slug use. |
 | `game.storeAppID` | string? | Store id (Steam etc.), when known. |
 | `stack.runtime` | string? | `Protium`, `CrossOver`, `Whisky`, `Kegworks`, `GPTK`, `Wine (unknown)` (a Wine build no named runtime claims), `native`; null when detection failed |
 | `stack.runtimeVersion` | string? | Runtime version when its bundle exposes one. |

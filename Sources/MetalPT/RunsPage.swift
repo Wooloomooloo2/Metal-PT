@@ -259,8 +259,7 @@ private struct RunRow: View {
                     // One text, so a long line wraps as a sentence rather than squeezing each piece.
                     (Text("\(RunFormat.date(entry.start)) · \(RunFormat.duration(entry.duration)) · ")
                         + Text(RunFormat.fps(entry.medianFPS)).fontWeight(.semibold)
-                        + Text(" fps · 1% \(RunFormat.low(entry.low1))")
-                        + Text(RunFormat.perWatt(entry.fpsPerWatt).map { " · \($0)\u{00A0}FPS/W" } ?? ""))
+                        + Text(RunFormat.statSuffix(low1: entry.low1, fpsPerWatt: entry.fpsPerWatt)))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -336,6 +335,14 @@ enum RunFormat {
     static func perWatt(_ v: Double?) -> String? {
         guard let v, v.isFinite else { return nil }
         return String(format: "%.2f", v)
+    }
+
+    /// " fps · 1% 48 · 1.50 FPS/W", leaving out a part (and its separator) that is unknown.
+    static func statSuffix(low1: Double?, fpsPerWatt: Double?) -> String {
+        var s = " fps"
+        if let v = low1, v.isFinite { s += " \u{00B7} 1% \(low(v))" }
+        if let w = perWatt(fpsPerWatt) { s += " \u{00B7} \(w)\u{00A0}FPS/W" }
+        return s
     }
 
     /// 1 % low, whole frames; "—" when unknown.
