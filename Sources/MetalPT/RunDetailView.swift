@@ -52,7 +52,7 @@ struct RunDetailView: View {
                         gameTitle
                         stack(entry.stackLine)
                     }
-                    let sub = [entry.settings, entry.label, RunFormat.date(entry.start)].filter { !$0.isEmpty }
+                    let sub = [entry.graphics?.line ?? "", entry.settings, entry.label, RunFormat.date(entry.start)].filter { !$0.isEmpty }
                     Text(sub.joined(separator: " · "))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)

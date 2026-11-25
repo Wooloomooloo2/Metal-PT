@@ -17,6 +17,8 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     public var stackLine: String
     /// The user's game settings ("High, 1440p").
     public var settings: String
+    /// The in-game graphics settings the user entered, if any.
+    public var graphics: RunInfo.Graphics?
     public var label: String
     public var start: Date
     /// Seconds: end − start, else the last sample's elapsed time.
@@ -34,11 +36,11 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
 
     public init(id: String, game: String, app: String? = nil, stackLine: String, settings: String, label: String,
                 start: Date, duration: Double, medianFPS: Double?, low1: Double?, fpsPerWatt: Double? = nil,
-                finished: Bool = true, inProgress: Bool = false) {
+                finished: Bool = true, inProgress: Bool = false, graphics: RunInfo.Graphics? = nil) {
         self.id = id; self.game = game; self.app = app ?? game
         self.stackLine = stackLine; self.settings = settings; self.label = label
         self.start = start; self.duration = duration; self.medianFPS = medianFPS; self.low1 = low1
-        self.fpsPerWatt = fpsPerWatt
+        self.fpsPerWatt = fpsPerWatt; self.graphics = graphics
         self.finished = finished; self.inProgress = inProgress
     }
 
@@ -97,11 +99,13 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
 public enum RunIndexError: LocalizedError, CustomStringConvertible {
     case newerFormat(Int)
     case inProgress
+    case notYouTube
 
     public var description: String {
         switch self {
         case .newerFormat(let s): "this run was saved by a newer Metal-PT (format \(s)); edit it there"
         case .inProgress: "this run is still being recorded; try again once it has stopped"
+        case .notYouTube: "only YouTube links (youtube.com, youtu.be) can be saved"
         }
     }
 
@@ -128,7 +132,8 @@ public final class RunIndex: @unchecked Sendable {
 
     public static let cacheFileName = ".index.json"
     /// 3: `RunEntry.app`. 4: `RunEntry.fpsPerWatt` (a version-3 cache was written by builds before it).
-    static let cacheVersion = 4
+    /// 5: `RunEntry.graphics`.
+    static let cacheVersion = 5
     /// Seconds since samples.csv was last written for an unfinished run to still count as being recorded (the
     /// recorder appends once a second).
     public static let activeWindow: TimeInterval = 10
@@ -225,7 +230,22 @@ public final class RunIndex: @unchecked Sendable {
     /// refreshes the run's entry. The folder name does not change. Refuses a run in progress.
     /// `title`: the game's name (`normalizedTitle`: empty or the recorded app's name clears it); nil leaves it.
     /// `game.exe` is never changed.
-    public func update(dir: String, settings: String, notes: String, label: String, title: String? = nil) throws {
+    /// `graphics` and `videoURL` are doubly optional: outer nil leaves the field, `.some(nil)` clears it, a value sets
+    /// it. A video link (or an empty one, which clears) must parse as YouTube, else `RunIndexError.notYouTube` and
+    /// nothing is written; it is stored in canonical form.
+    public func update(dir: String, settings: String, notes: String, label: String, title: String? = nil,
+                       graphics: RunInfo.Graphics?? = nil, videoURL: String?? = nil) throws {
+        var video: String??
+        if let videoURL {
+            let text = (videoURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                video = .some(nil)
+            } else if let id = YouTubeLink.videoID(from: text) {
+                video = .some(YouTubeLink.canonicalURL(id: id))
+            } else {
+                throw RunIndexError.notYouTube
+            }
+        }
         try lock.withLock {
             let url = root.appendingPathComponent(dir)
             var info = try infoLoader(url)
@@ -235,6 +255,8 @@ public final class RunIndex: @unchecked Sendable {
             info.user.notes = notes
             info.user.label = label
             if let title { info.game.title = RunEntry.normalizedTitle(title, exe: info.game.exe) }
+            if let graphics { info.graphics = graphics }
+            if let video { info.user.videoURL = video }
             try RunBundleWriter.writeInfo(info, to: url)
             try SummaryReport.write(bundleAt: url)
             refreshLocked()
@@ -325,7 +347,7 @@ public final class RunIndex: @unchecked Sendable {
                              duration: max(0, duration), medianFPS: summary.medianFPS,
                              low1: reuseLow ? previous?.entry?.low1 : summary.low1,
                              fpsPerWatt: summary.powerColumn == "smc_PSTR_w" ? summary.fpsPerWatt : nil,
-                             finished: info.end != nil)
+                             finished: info.end != nil, graphics: info.graphics)
         return Record(mtime: mtime, size: size, entry: entry, finished: info.end != nil)
     }
 

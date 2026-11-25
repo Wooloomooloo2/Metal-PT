@@ -6,7 +6,8 @@ import Foundation
     private func bundle(label: String = "", stack: Stack = Stack(), frames: [TimedFrame]? = nil,
                         fpsSource: String = "log", warnings: [String] = [],
                         extra: [String: String] = [:], gpuMaxMHz: Int? = nil,
-                        exe: String = "Game.exe", title: String? = nil) -> RunBundle {
+                        exe: String = "Game.exe", title: String? = nil,
+                        graphics: RunInfo.Graphics? = nil) -> RunBundle {
         var info = RunInfo(appVersion: "0.1", machine: .init(modelID: "Mac15,6", chip: "M3 Pro", memoryGB: 36,
                                                              osVersion: "15.1", osBuild: "24B83",
                                                              gpuMaxMHz: gpuMaxMHz),
@@ -14,6 +15,7 @@ import Foundation
                            start: Date(timeIntervalSince1970: 1_800_000_000),
                            end: Date(timeIntervalSince1970: 1_800_000_050), fpsSource: fpsSource, warnings: warnings)
         info.user.label = label
+        info.graphics = graphics
         let rows: [[String: String]] = (0..<50).map { i in
             ["elapsed_s": "\(i)", "fps": i < 3 ? "" : "60.0", "fps_app": "Game.exe", "gpu_w": "10.00",
              "smc_PSTR_w": "30.00", "cpu_p_util_pct": "40.0", "temp_max_c": "70.0", "fan0_rpm": "2000"]
@@ -200,6 +202,14 @@ import Foundation
         #expect(SummaryReport.efficiencyCaveat
             == "System power includes the display; compare FPS/W on the same Mac, brightness and power source.")
         #expect(SummaryReport.version >= 4)   // older summaries have no FPS per watt tile: rewritten when opened
+    }
+
+    @Test func graphicsRowShowsOnlyWhenSet() {
+        #expect(!html(bundle()).contains(">Graphics<"))
+        let b = bundle(graphics: .init(preset: .high, width: 2560, height: 1440, upscaler: .metalfx,
+                                       upscalerMode: .quality, frameGeneration: false))
+        #expect(html(b).contains("High · 2560×1440 · MetalFX Quality · FG off"))
+        #expect(SummaryReport.version >= 5)
     }
 
     @Test func limiterReportsTheCapItFound() {

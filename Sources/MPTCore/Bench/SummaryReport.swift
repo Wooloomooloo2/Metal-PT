@@ -6,8 +6,8 @@ public enum SummaryReport {
     /// The report's layout version, written as `<meta name="mpt-summary-version">`. Bump it when the report gains
     /// something an existing summary.html should show: the app rewrites summaries older than this when opened.
     /// 2: "What held it back". 3: "Recorded app" (was "Executable") under an edited game title. 4: the "FPS per
-    /// watt" tile.
-    public static let version = 4
+    /// watt" tile. 5: the "Graphics" row.
+    public static let version = 5
     static let versionMeta = "mpt-summary-version"
 
     /// The version a summary.html was written with; 1 for summaries from before the tag. A missing tag (also an
@@ -171,6 +171,7 @@ public enum SummaryReport {
         if let ac = info.settings.onACAtStart { power.append(ac ? "on AC" : "on battery") }
         rows.append(("Power", power.isEmpty ? "unknown" : power.joined(separator: " · ")))
         if let display = displayText(info.settings) { rows.append(("Display", display)) }
+        if let g = info.graphics?.line, !g.isEmpty { rows.append(("Graphics", g)) }
         rows.append(("FPS source", fpsSourceText(info.fpsSource)))
         return rows
     }

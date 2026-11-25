@@ -408,6 +408,67 @@ import MPTCore
         #expect(byGame["gpu"].map { $0.fpsPerWatt == nil } == true)
         #expect(byGame["none"].map { $0.fpsPerWatt == nil } == true)
         // Entries gained a field: caches of the previous shape are rebuilt.
-        #expect(RunIndex.cacheVersion == 4)
+        #expect(RunIndex.cacheVersion == 5)
+    }
+
+    @Test func updateSetsAndClearsGraphicsAndVideoWithoutTouchingTheExe() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "ARMSX2", start: 1_800_000_000)
+        let name = dir.lastPathComponent
+        let index = RunIndex(root: root)
+        #expect(try #require(index.entries().first).graphics == nil)
+
+        let g = RunInfo.Graphics(preset: .high, width: 2560, height: 1440, upscaler: .metalfx,
+                                 upscalerMode: .quality, frameGeneration: false)
+        try index.update(dir: name, settings: "High", notes: "n", label: "lbl", graphics: .some(g),
+                         videoURL: .some("https://youtu.be/dQw4w9WgXcQ"))
+        var info = try RunBundle.loadInfo(dir)
+        #expect(info.graphics == g)
+        #expect(info.user.videoURL == "https://www.youtube.com/watch?v=dQw4w9WgXcQ")   // stored canonical
+        #expect(info.game.exe == "ARMSX2")
+        #expect(try #require(index.entries().first).graphics == g)
+
+        // Outer nil leaves both alone.
+        try index.update(dir: name, settings: "Low", notes: "n", label: "lbl")
+        info = try RunBundle.loadInfo(dir)
+        #expect(info.graphics == g)
+        #expect(info.user.videoURL != nil)
+
+        // A link that is not YouTube is refused and nothing changes.
+        #expect(throws: RunIndexError.self) {
+            try index.update(dir: name, settings: "Low", notes: "n", label: "lbl",
+                             videoURL: .some("https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ"))
+        }
+        #expect(try RunBundle.loadInfo(dir).user.videoURL != nil)
+
+        // Inner nil (or an empty link) clears.
+        try index.update(dir: name, settings: "Low", notes: "n", label: "lbl", graphics: .some(nil),
+                         videoURL: .some(nil))
+        info = try RunBundle.loadInfo(dir)
+        #expect(info.graphics == nil)
+        #expect(info.user.videoURL == nil)
+        #expect(info.game.exe == "ARMSX2")
+        #expect(try #require(index.entries().first).graphics == nil)
+        try index.update(dir: name, settings: "Low", notes: "n", label: "lbl", videoURL: .some("https://youtu.be/dQw4w9WgXcQ"))
+        try index.update(dir: name, settings: "Low", notes: "n", label: "lbl", videoURL: .some("  "))
+        #expect(try RunBundle.loadInfo(dir).user.videoURL == nil)
+    }
+
+    @Test func version4CacheIsRebuiltForGraphics() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "g.exe", start: 1_800_000_000)
+        var info = try RunBundle.loadInfo(dir)
+        info.graphics = .init(preset: .low, width: 1920, height: 1080, upscaler: .off, frameGeneration: false)
+        try RunBundleWriter.writeInfo(info, to: dir)
+        // A cache written by the previous (version 4) shape, without graphics.
+        let index = RunIndex(root: root)
+        _ = index.entries()
+        let url = root.appendingPathComponent(".index.json")
+        let text = try String(contentsOf: url, encoding: .utf8)
+            .replacingOccurrences(of: "\"version\":5", with: "\"version\":4")
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        #expect(try #require(RunIndex(root: root).entries().first).graphics?.preset == .low)
     }
 }

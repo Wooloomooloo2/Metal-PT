@@ -155,12 +155,21 @@ enum Snapshots {
                  view: AnyView(WindowFrame(page: .runs, model: empty, hub: empty.hub))),
         ]
         if let first = withRuns.runs.entries.first {
+            var graded = first
+            graded.graphics = .init(preset: .high, width: 2560, height: 1440, upscaler: .metalfx,
+                                    upscalerMode: .quality, frameGeneration: false)
             list.append(Shot(name: "runs-edit", size: nil, width: 480,
                              view: AnyView(EditNotesSheet(
-                                entry: first, store: withRuns.runs,
+                                entry: graded, store: withRuns.runs,
                                 fields: .init(label: first.label, gameSettings: first.settings,
                                               notes: "Mountain path loop from the Mother's Heart save.\n"
-                                                + "Fans audible after ~90 s.")))))
+                                                + "Fans audible after ~90 s.",
+                                              videoURL: "https://youtu.be/dQw4w9WgXcQ")))))
+            list.append(Shot(name: "runs-edit-bad-video", size: nil, width: 480,
+                             view: AnyView(EditNotesSheet(
+                                entry: first, store: withRuns.runs,
+                                fields: .init(label: first.label, gameSettings: first.settings, notes: "",
+                                              videoURL: "https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ")))))
             // Submit with the notes left out, and ticked in.
             if let url = withRuns.runs.url(of: first.id), var info = try? RunBundle.load(url, frames: false).info {
                 info.user.notes = "Mountain path loop from the Mother's Heart save."

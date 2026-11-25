@@ -95,6 +95,7 @@ public enum Privacy {
         r.user.label = t(r.user.label)
         r.user.gameSettings = t(r.user.gameSettings)
         r.user.notes = t(r.user.notes)
+        r.user.videoURL = r.user.videoURL.map(t)
         r.fpsSource = scrubPaths(r.fpsSource)
         r.warnings = r.warnings.map(t)
         return r

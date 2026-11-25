@@ -59,10 +59,12 @@ final class RunsStore: ObservableObject {
 
     /// Saves the user fields (and the game title, unless nil: see `RunIndex.update`), regenerates the summary and
     /// refreshes the list.
-    func update(_ id: String, settings: String, notes: String, label: String, title: String? = nil) async throws {
+    func update(_ id: String, settings: String, notes: String, label: String, title: String? = nil,
+                graphics: RunInfo.Graphics?? = nil, videoURL: String?? = nil) async throws {
         guard let index else { throw CocoaError(.fileNoSuchFile) }
         let list = try await Task.detached {
-            try index.update(dir: id, settings: settings, notes: notes, label: label, title: title)
+            try index.update(dir: id, settings: settings, notes: notes, label: label, title: title,
+                             graphics: graphics, videoURL: videoURL)
             return index.entries()
         }.value
         entries = list
