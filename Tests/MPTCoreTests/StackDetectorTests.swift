@@ -22,6 +22,25 @@ import Foundation
         #expect(s.graphics == ["DXMT", "KosmicKrisp", "vkd3d"])
     }
 
+    @Test func gptk4D3D12CoreIsNotVkd3d() {
+        let co = "/Applications/CrossOver Preview.app/Contents/SharedSupport/CrossOver/lib/apple_gptk"
+        let paths = ["\(co)/external/D3DMetal.framework/Versions/A/D3DMetal",
+                     "\(co)/wine/x86_64-windows/d3d12core.dll", "/usr/libexec/rosetta/runtime"]
+        let s = StackDetector.fingerprint(mappedPaths: paths)
+        #expect(s.graphics == ["D3DMetal"])
+        #expect(StackDetector.frameworkPath("D3DMetal", in: paths) == "\(co)/external/D3DMetal.framework")
+        var v = s
+        v.graphicsVersions = ["D3DMetal": "4.0b3"]
+        #expect(v.graphicsText == "D3DMetal 4.0b3")
+        #expect(SummaryReport.stackLine(v) == "CrossOver · Rosetta · D3DMetal 4.0b3")
+    }
+
+    @Test func oldRunsWithoutGraphicsVersionsDecode() throws {
+        let s = try JSONDecoder().decode(Stack.self, from: Data(#"{"graphics":["D3DMetal"],"runtime":"CrossOver"}"#.utf8))
+        #expect(s.graphicsVersions == nil)
+        #expect(s.graphicsText == "D3DMetal")
+    }
+
     @Test func crossOverD3DMetal() {
         let s = StackDetector.fingerprint(mappedPaths: [
             "\(crossOver)/lib64/apple_gptk/external/D3DMetal.framework/D3DMetal",

@@ -35,7 +35,12 @@ enum CompareCommands {
             guard rest.count == 1 else { throw UsageError("unexpected argument '\(rest[1])'") }
             return try list(projects)
         }
-        let url = projects.appendingPathComponent(CompareProject.fileName(for: name))
+        var url = projects.appendingPathComponent(CompareProject.fileName(for: name))
+        let legacy = projects.appendingPathComponent(CompareProject.legacyFileName(for: name))
+        if !FileManager.default.fileExists(atPath: url.path), legacy != url,
+           FileManager.default.fileExists(atPath: legacy.path), (try? CompareProject.load(legacy))?.name == name {
+            url = legacy   // saved before file names kept their end
+        }
         let exists = FileManager.default.fileExists(atPath: url.path)
         var project = exists ? try CompareProject.load(url) : CompareProject(name: name)
         let runsRoot = try RecordCommands.runsRoot(out, create: false)
@@ -114,12 +119,16 @@ enum CompareCommands {
     static func show(_ project: CompareProject, runsRoot: URL) {
         print(project.name)
         guard !project.runs.isEmpty else { print("  no runs yet"); return }
+        let bundles = project.runs.map { try? RunBundle.load(CompareProject.bundleURL($0, runsRoot: runsRoot), frames: false) }
+        // Named by what differs between the loaded runs, as the report names them.
+        let loaded = project.runs.indices.filter { bundles[$0] != nil }
+        let names = Dictionary(uniqueKeysWithValues: zip(loaded, CompareReport.labels(loaded.map { project.runs[$0] },
+                                                                                      loaded.map { bundles[$0]!.info })))
         for (i, entry) in project.runs.enumerated() {
-            let url = CompareProject.bundleURL(entry, runsRoot: runsRoot)
             let mark = i == project.baseline ? "*" : " "
-            if let b = try? RunBundle.load(url, frames: false) {
+            if let b = bundles[i] {
                 let fps = HTML.number(RunSummary(b).medianFPS, digits: 1)
-                print("\(mark)\(i + 1)  \(CompareReport.label(entry, b.info))  \(fps) fps  \(entry.bundle)")
+                print("\(mark)\(i + 1)  \(names[i] ?? CompareReport.label(entry, b.info))  \(fps) fps  \(entry.bundle)")
             } else {
                 print("\(mark)\(i + 1)  \(entry.name.isEmpty ? "-" : entry.name)  missing  \(entry.bundle)")
             }

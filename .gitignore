@@ -5,3 +5,4 @@ xcuserdata/
 .DS_Store
 .superpowers/
 build/
+.cloudflare/

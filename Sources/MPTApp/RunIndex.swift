@@ -304,16 +304,15 @@ public enum CompareProjects {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd"
         let base = "\(games.count == 1 ? games.first! : "Runs") comparison \(f.string(from: date))"
-        var name = base
-        var n = 2
-        while FileManager.default.fileExists(
-            atPath: projectsRoot.appendingPathComponent(CompareProject.fileName(for: name)).path) {
-            name = "\(base) \(n)"
-            n += 1
+        // Bounded: an unbounded search spun the main thread forever when every variant mapped to one taken file.
+        for n in 1...CompareProject.maxNameTries {
+            let name = n == 1 ? base : "\(base) \(n)"
+            let url = projectsRoot.appendingPathComponent(CompareProject.fileName(for: name))
+            guard !FileManager.default.fileExists(atPath: url.path) else { continue }
+            let project = CompareProject(name: name, baseline: 0, runs: ordered.map { .init(bundle: $0.id) })
+            try project.save(to: url)
+            return url
         }
-        let project = CompareProject(name: name, baseline: 0, runs: ordered.map { .init(bundle: $0.id) })
-        let url = projectsRoot.appendingPathComponent(CompareProject.fileName(for: name))
-        try project.save(to: url)
-        return url
+        throw CompareProjectError.noFreeName(base)
     }
 }

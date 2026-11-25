@@ -204,4 +204,24 @@ import MPTCore
         let candidates = lib.candidates(try lib.detail("p.json"), from: entries)
         #expect(candidates.map(\.id) == [c.lastPathComponent])
     }
+
+    @Test func addRunsOffersTheComparisonsGameFirst() throws {
+        let s = setup()
+        defer { try? FileManager.default.removeItem(at: s.root) }
+        let a = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_000, runtime: "CrossOver")
+        let b = try makeRun(in: s.runs, game: "hzd.exe", start: 1_800_000_100, runtime: "CrossOver")
+        let c = try makeRun(in: s.runs, game: "re9.exe", start: 1_800_000_200, runtime: "CrossOver")
+        try CompareProject(name: "P", runs: [.init(bundle: a.lastPathComponent), .init(bundle: "gone.mptrun")])
+            .save(to: s.projects.appendingPathComponent("p.json"))
+        let lib = CompareLibrary(projectsRoot: s.projects, runsRoot: s.runs)
+        let entries = RunIndex(root: s.runs).entries()
+        let detail = try lib.detail("p.json")
+        let games = lib.games(detail, in: entries)
+        #expect(games == ["hzd"])
+        let candidates = lib.candidates(detail, from: entries)
+        #expect(Set(candidates.map(\.id)) == [b.lastPathComponent, c.lastPathComponent])
+        #expect(CompareLibrary.sameGame(candidates, games: games).map(\.id) == [b.lastPathComponent])
+        // Nothing known about the comparison's runs: everything is offered.
+        #expect(CompareLibrary.sameGame(candidates, games: []).count == 2)
+    }
 }

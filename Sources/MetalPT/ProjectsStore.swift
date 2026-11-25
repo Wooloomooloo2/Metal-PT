@@ -78,6 +78,11 @@ final class ProjectsStore: ObservableObject {
         return library.candidates(detail, from: entries)
     }
 
+    func games(_ id: String, from entries: [RunEntry]) -> Set<String> {
+        guard let library, let detail = details[id] else { return [] }
+        return library.games(detail, in: entries)
+    }
+
     func add(_ id: String, bundles: [String]) async throws {
         try await edit(id) { try $0.add(id, bundles: bundles) }
     }

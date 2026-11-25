@@ -11,9 +11,18 @@ public struct Stack: Codable, Equatable, Sendable {
     public var translator: String?
     /// e.g. ["DXMT", "vkd3d", "KosmicKrisp"], in table order
     public var graphics: [String]
+    /// Versions of graphics layers that report one, by name ("D3DMetal": "4.0b3", the GPTK version). nil in runs
+    /// recorded before 2026-11-25.
+    public var graphicsVersions: [String: String]?
+
+    /// The graphics layers with their versions: "D3DMetal 4.0b3 + MoltenVK".
+    public var graphicsText: String {
+        graphics.map { g in graphicsVersions?[g].map { "\(g) \($0)" } ?? g }.joined(separator: " + ")
+    }
 
     public init(runtime: String? = nil, runtimeVersion: String? = nil, wineArch: String? = nil,
-                translator: String? = nil, graphics: [String] = []) {
+                translator: String? = nil, graphics: [String] = [], graphicsVersions: [String: String]? = nil) {
+        self.graphicsVersions = graphicsVersions
         self.runtime = runtime
         self.runtimeVersion = runtimeVersion
         self.wineArch = wineArch
@@ -63,8 +72,17 @@ public enum StackDetector {
         ("DXVK", { $0.contains("/dxvk/") }),
         ("MoltenVK", { $0.contains("libMoltenVK") }),
         ("KosmicKrisp", { $0.contains("libvulkan_kosmickrisp") }),
-        ("vkd3d", { $0.contains("libvkd3d") || $0.contains("d3d12core.dll") }),
+        // GPTK 4 ships its own d3d12core.dll next to D3DMetal (`…/apple_gptk/wine/…`): that one is not vkd3d.
+        ("vkd3d", { $0.contains("libvkd3d") || ($0.contains("d3d12core.dll") && !$0.contains("apple_gptk")) }),
     ]
+
+    /// The `…/D3DMetal.framework` folder the process mapped (CrossOver keeps one per GPTK version:
+    /// `lib/apple_gptk`, `lib/apple_gptk3`, older builds `lib64/apple_gptk`), if any (pure).
+    public static func frameworkPath(_ name: String, in mappedPaths: [String]) -> String? {
+        let marker = "/\(name).framework/"
+        for p in mappedPaths { if let r = p.range(of: marker) { return String(p[..<r.upperBound].dropLast()) } }
+        return nil
+    }
 
     public static func fingerprint(mappedPaths: [String]) -> Stack {
         var stack = Stack()
@@ -89,6 +107,12 @@ public enum StackDetector {
         if let app = appBundlePath(in: paths),
            let plist = NSDictionary(contentsOfFile: app + "/Contents/Info.plist") {
             stack.runtimeVersion = plist["CFBundleShortVersionString"] as? String
+        }
+        if stack.graphics.contains("D3DMetal"), let fw = frameworkPath("D3DMetal", in: paths),
+           let v = (NSDictionary(contentsOfFile: fw + "/Resources/Info.plist")
+                    ?? NSDictionary(contentsOfFile: fw + "/Versions/A/Resources/Info.plist"))?["CFBundleShortVersionString"] as? String,
+           !v.isEmpty {
+            stack.graphicsVersions = ["D3DMetal": v]
         }
         return stack
     }

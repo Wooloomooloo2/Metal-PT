@@ -166,7 +166,8 @@ public struct RunBundle: Sendable {
         return "\(f.string(from: start))-\(slug(game)).mptrun"
     }
 
-    static func slug(_ text: String) -> String {
+    /// Lowercase letters and digits, runs of anything else as one "-", cut to `limit` characters (nil: no cut).
+    static func slug(_ text: String, limit: Int? = 40) -> String {
         var out = ""
         var pendingDash = false
         for s in text.lowercased().unicodeScalars {
@@ -176,7 +177,7 @@ public struct RunBundle: Sendable {
                 out.unicodeScalars.append(s)
             } else { pendingDash = true }
         }
-        var cut = String(out.prefix(40))
+        var cut = limit.map { String(out.prefix($0)) } ?? out
         while cut.hasSuffix("-") { cut.removeLast() }
         return cut.isEmpty ? "game" : cut
     }

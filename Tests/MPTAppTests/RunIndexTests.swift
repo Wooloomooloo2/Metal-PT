@@ -322,6 +322,20 @@ import MPTCore
         #expect(p1.baseline == 0)
     }
 
+    /// A long game name once made every " 2", " 3"… map to the same cut file name: the search never ended.
+    @Test func compareProjectWithLongGameNameDoesNotSpin() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runs = root.appendingPathComponent("runs")
+        let projects = root.appendingPathComponent("projects")
+        try makeRun(in: runs, game: "HorizonZeroDawnRemastered.exe", start: 1_800_000_000)
+        let entries = RunIndex(root: runs).entries()
+        let date = Date(timeIntervalSince1970: 1_800_000_200)
+        let urls = try (1...3).map { _ in try CompareProjects.create(from: entries, projectsRoot: projects, date: date) }
+        #expect(Set(urls).count == 3)
+        #expect(try CompareProject.load(urls[2]).name.hasSuffix(" 3"))
+    }
+
     @Test func summaryIsRewrittenWhenOlderThanThisVersion() throws {
         let root = tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -134,6 +134,7 @@ public enum HTML {
         .legend span { display: inline-flex; align-items: center; gap: 6px; }
         .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
         .sw.box { width: 11px; height: 11px; border-radius: 2px; border: 1px solid var(--axis); background: var(--shade); }
+        .sw.run { border: 0; margin-right: 6px; vertical-align: -1px; }
         .tbl { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
           padding: 4px 8px; }
         table { border-collapse: collapse; font-size: 0.84rem; width: 100%; }

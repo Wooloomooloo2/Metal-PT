@@ -86,6 +86,39 @@ import Foundation
         #expect(CompareReport.gain(50, baseline: 0) == "—")
     }
 
+    @Test func runsAreNamedByWhatDiffers() {
+        func gptk(_ v: String, _ preset: String) -> RunInfo {
+            var i = info(stack: Stack(runtime: "CrossOver", graphics: ["D3DMetal", "MoltenVK"],
+                                      graphicsVersions: ["D3DMetal": v]))
+            i.user.gameSettings = preset
+            return i
+        }
+        let infos = [gptk("3.0", "Medium"), gptk("3.0", "High"), gptk("4.0b3", "Medium"), gptk("4.0b3", "High")]
+        let entries = (1...4).map { CompareProject.Entry(bundle: "r\($0).mptrun") }
+        #expect(CompareReport.labels(entries, infos) == [
+            "Medium · D3DMetal 3.0 + MoltenVK", "High · D3DMetal 3.0 + MoltenVK",
+            "Medium · D3DMetal 4.0b3 + MoltenVK", "High · D3DMetal 4.0b3 + MoltenVK",
+        ])
+        // An entry name wins; a lone run (nothing differs) keeps the stack label.
+        var named = entries
+        named[1].name = "Mine"
+        #expect(CompareReport.labels(named, infos)[1] == "Mine")
+        #expect(CompareReport.labels([entries[0]], [infos[0]]) == ["CrossOver D3DMetal 3.0 + MoltenVK"])
+    }
+
+    @Test func longProjectNamesKeepTheirEnd() {
+        let base = "HorizonZeroDawnRemastered comparison 2026-11-25"
+        #expect(CompareProject.fileName(for: base) == "horizonzerodawnremastered-comparison-2026-11-25.json")
+        #expect(CompareProject.fileName(for: base) != CompareProject.fileName(for: base + " 2"))
+        let long = "The Elder Scrolls V Skyrim Special Edition Anniversary comparison 2026-11-25"
+        let names = Set((1...20).map { CompareProject.fileName(for: $0 == 1 ? long : "\(long) \($0)") })
+        #expect(names.count == 20)
+        #expect(names.allSatisfy { $0.count <= 64 + 5 && $0.hasSuffix(".json") && !$0.contains("--") })
+        #expect(CompareProject.fileName(for: long + " 2").hasSuffix("comparison-2026-11-25-2.json"))
+        // The old rule, still found by `mpt compare NAME`.
+        #expect(CompareProject.legacyFileName(for: base) == "horizonzerodawnremastered-comparison-202.json")
+    }
+
     @Test func projectRoundTrip() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -116,7 +149,12 @@ import Foundation
         #expect(out.contains("Test &lt;proj&gt;"))
         #expect(out.contains("&lt;b&gt;&amp;"))
         #expect(!out.contains("<b>&"))
-        #expect(out.contains("CrossOver D3DMetal: 54.1 fps median (\u{2212}9.8 %), 1 % low —, 61.2 W"))
+        // Named by what differs (label, graphics, runtime); no frame times with per-second FPS.
+        #expect(out.contains("&lt;b&gt;&amp; · D3DMetal · CrossOver: 54.1 fps median (\u{2212}9.8 %), "
+            + "1 % low — (needs mpt run), 61.2 W"))
+        // Each run has its own colour, in the bars and the run list.
+        #expect(out.contains("fill=\"var(--s1)\"") && out.contains("fill=\"var(--s2)\""))
+        #expect(out.contains("class=\"sw box run\" style=\"background:var(--s2)\""))
         #expect(out.contains("class=\"diff\""))
         #expect(out.contains("Same in every run:"))
         #expect(!out.lowercased().contains("<script"))
@@ -299,9 +337,9 @@ import Foundation
                                      runs: [.init(bundle: "a.mptrun", name: "A"), .init(bundle: "b.mptrun", name: "B"),
                                             .init(bundle: "c.mptrun", name: "C")])
         let out = CompareReport.html(project: project, runs: [pair(a), pair(b), pair(c)])
-        #expect(out.contains("A: 40.0 fps median (baseline), 1 % low —, 30.0 W · limited by GPU"))
+        #expect(out.contains("A: 40.0 fps median (baseline), 1 % low — (needs mpt run), 30.0 W · limited by GPU"))
         #expect(out.contains("· limited by CPU (one thread)"))
-        #expect(out.contains("C: 45.0 fps median (+12.5 %), 1 % low —, 30.0 W · no single limit"))
+        #expect(out.contains("C: 45.0 fps median (+12.5 %), 1 % low — (needs mpt run), 30.0 W · no single limit"))
         #expect(out.contains("<tr><td>Limited by</td><td>GPU</td><td class=\"diff\">CPU (one thread)</td>"
             + "<td class=\"diff\">no single limit</td></tr>"))
     }

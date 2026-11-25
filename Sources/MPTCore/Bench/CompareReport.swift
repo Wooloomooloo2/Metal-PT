@@ -13,9 +13,25 @@ public enum CompareReport {
     /// The entry's name, else "<runtime> <graphics>" from the stack, else the bundle folder name.
     public static func label(_ entry: CompareProject.Entry, _ info: RunInfo) -> String {
         if !entry.name.isEmpty { return entry.name }
-        let parts = [info.stack.runtime ?? "", info.stack.graphics.joined(separator: " + ")].filter { !$0.isEmpty }
+        let parts = [info.stack.runtime ?? "", info.stack.graphicsText].filter { !$0.isEmpty }
         if !parts.isEmpty { return parts.joined(separator: " ") }
         return (entry.bundle as NSString).lastPathComponent
+    }
+
+    /// Fields a run's name is built from, most telling first ("game", "FPS source" never name a run).
+    static let namingFields = ["game settings", "label", "graphics", "runtime version", "runtime", "translator",
+                               "power mode", "AC/battery", "display", "macOS build", "machine"]
+
+    /// One name per run, from what differs between the runs: "High · D3DMetal 4.0b3 + MoltenVK". A run with an
+    /// entry name keeps it; a run with nothing distinct (or a lone run) falls back to `label(_:_:)`.
+    public static func labels(_ entries: [CompareProject.Entry], _ infos: [RunInfo]) -> [String] {
+        let diffs = Dictionary(differences(infos).map { ($0.field, $0.values) }, uniquingKeysWith: { a, _ in a })
+        return zip(entries, infos).enumerated().map { k, pair in
+            let (entry, info) = pair
+            if !entry.name.isEmpty { return entry.name }
+            let parts = namingFields.compactMap { diffs[$0]?[k] }.filter { $0 != dash }
+            return parts.isEmpty ? label(entry, info) : parts.joined(separator: " · ")
+        }
     }
 
     /// Signed change against the baseline, one decimal, real minus sign: "+10.0 %", "−9.8 %", "0.0 %".
@@ -70,7 +86,7 @@ public enum CompareReport {
             ("runtime", v(i.stack.runtime)),
             ("runtime version", v(i.stack.runtimeVersion)),
             ("translator", v(i.stack.translator)),
-            ("graphics", v(i.stack.graphics.joined(separator: " + "))),
+            ("graphics", v(i.stack.graphicsText)),
             ("game settings", v(i.user.gameSettings)),
             ("label", v(i.user.label)),
             ("power mode", v(i.settings.powerMode)),
@@ -142,8 +158,10 @@ public enum CompareReport {
         let entry: CompareProject.Entry
         let bundle: RunBundle
         let summary: RunSummary
-        let label: String
+        var label: String
         var isBase = false
+        /// The run's colour in every chart, the run list and the table (by position, `HTML.seriesColor`).
+        var color = HTML.seriesColor(0)
         /// What held the run back (computed once per report).
         let limits: LimiterAnalysis
         var power: Double? { summary.powerColumn.flatMap { summary.stats[$0]?.mean } }
@@ -196,6 +214,12 @@ public enum CompareReport {
             items.append(Item(number: project.runs.count + extra + 1,
                               entry: entry, bundle: runs[i].0, summary: runs[i].1, label: label(entry, runs[i].0.info),
                               limits: LimiterAnalysis(runs[i].0, summary: runs[i].1)))
+        }
+
+        let names = labels(items.map(\.entry), items.map(\.bundle.info))
+        for k in items.indices {
+            items[k].label = names[k]
+            items[k].color = HTML.seriesColor(k)
         }
 
         var warns: [String] = []
@@ -272,8 +296,13 @@ public enum CompareReport {
     }
 
     /// "—" with a reason when frame times may mix several processes.
-    private static func lowText(_ s: RunSummary) -> String {
-        s.lowsMixed ? "\(dash) (\(SummaryReport.mixedHint))" : HTML.number(s.low1, digits: 1)
+    /// "—" with a reason when frame times may mix several processes, or when the run has per-second FPS only (the
+    /// system log gives no frame times: a 1 % low needs a run launched with `mpt run`).
+    private static func lowText(_ it: Item) -> String {
+        let s = it.summary
+        if s.lowsMixed { return "\(dash) (\(SummaryReport.mixedHint))" }
+        if s.low1 == nil, it.bundle.info.fpsSource != "stderr" { return "\(dash) (needs mpt run)" }
+        return HTML.number(s.low1, digits: 1)
     }
 
     private static func powerText(_ it: Item) -> String {
@@ -311,8 +340,8 @@ public enum CompareReport {
         for it in items {
             let g = it.isBase ? "baseline" : gain(it.summary.medianFPS, baseline: base?.summary.medianFPS)
             let line = "\(it.label): \(HTML.number(it.summary.medianFPS, digits: 1)) fps median (\(g)), "
-                + "1 % low \(lowText(it.summary)), \(powerText(it))" + limiterSuffix(it.limits)
-            lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(HTML.escape(line))"
+                + "1 % low \(lowText(it)), \(powerText(it))" + limiterSuffix(it.limits)
+            lines.append((it.number, "<li value=\"\(it.number)\"\(it.isBase ? " class=\"base\"" : "")>\(dot(it))\(HTML.escape(line))"
                 + "<span class=\"key\">\(HTML.escape(it.bundle.url.lastPathComponent))</span></li>"))
         }
         for m in missing {
@@ -328,6 +357,11 @@ public enum CompareReport {
         return out + "</ol></section>\n"
     }
 
+    /// The run's colour swatch, before its name in the run list and the table header.
+    private static func dot(_ it: Item) -> String {
+        "<i class=\"sw box run\" style=\"background:\(it.color)\" aria-hidden=\"true\"></i>"
+    }
+
     /// Bar labels sit in a fixed column; long names are cut (the hover title keeps the full name).
     private static func short(_ s: String) -> String { s.count > 26 ? String(s.prefix(25)) + "…" : s }
 
@@ -338,9 +372,9 @@ public enum CompareReport {
         var out = "<section><div class=\"section-head\"><div class=\"eyebrow\">Side by side</div></div>\n"
         out += "<div class=\"chart\"><h3>Median FPS</h3>"
         out += HTML.bars(items.map { it in
-            (label: short(it.label), value: it.summary.medianFPS,
-             note: join(baseNote(it), "1 % low \(lowText(it.summary))"))
-        }, unit: "fps")
+            (label: short("\(it.number) · \(it.label)"), value: it.summary.medianFPS,
+             note: join(baseNote(it), "1 % low \(lowText(it))"))
+        }, unit: "fps", colors: items.map(\.color))
         out += "</div>\n"
 
         if items.contains(where: { $0.power != nil }) {
@@ -348,8 +382,8 @@ public enum CompareReport {
             out += HTML.bars(items.map { it in
                 let kind = it.summary.powerColumn == "gpu_w" ? "GPU only (IOReport)"
                     : it.summary.powerColumn == nil ? "" : "system"
-                return (label: short(it.label), value: it.power, note: join(baseNote(it), kind))
-            }, unit: "W")
+                return (label: short("\(it.number) · \(it.label)"), value: it.power, note: join(baseNote(it), kind))
+            }, unit: "W", colors: items.map(\.color))
             if items.contains(where: { $0.summary.powerColumn == "gpu_w" }) {
                 out += "<p class=\"note\">\(HTML.escape(SummaryReport.gpuCaption))</p>"
             }
@@ -358,8 +392,8 @@ public enum CompareReport {
 
         if !efficient.isEmpty {
             out += "<div class=\"chart\"><h3>FPS per watt</h3>"
-            out += HTML.bars(efficient.map { (label: short($0.label), value: $0.summary.fpsPerWatt, note: baseNote($0)) },
-                             unit: "FPS/W", digits: 2)
+            out += HTML.bars(efficient.map { (label: short("\($0.number) · \($0.label)"), value: $0.summary.fpsPerWatt, note: baseNote($0)) },
+                             unit: "FPS/W", digits: 2, colors: efficient.map(\.color))
             for note in efficiencyNotes { out += "<p class=\"note\">\(HTML.escape(note))</p>" }
             out += "</div>\n"
         }
@@ -380,7 +414,7 @@ public enum CompareReport {
             out += "<p class=\"note\">Highlighted cells differ from the baseline.</p></div>"
             out += "<div class=\"tbl text\"><table><thead><tr><th></th>"
             for (n, it) in items.enumerated() {
-                out += "<th>\(it.number) · \(e(it.label))\(n == baseIndex ? " <span class=\"key\">baseline</span>" : "")</th>"
+                out += "<th>\(dot(it))\(it.number) · \(e(it.label))\(n == baseIndex ? " <span class=\"key\">baseline</span>" : "")</th>"
             }
             out += "</tr></thead><tbody>"
             for d in diffs {

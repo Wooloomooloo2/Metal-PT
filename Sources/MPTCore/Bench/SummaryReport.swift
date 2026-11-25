@@ -41,7 +41,7 @@ public enum SummaryReport {
         var parts: [String] = []
         if let r = s.runtime { parts.append(r + (s.runtimeVersion.map { " \($0)" } ?? "")) }
         if let t = s.translator { parts.append(t) }
-        if !s.graphics.isEmpty { parts.append(s.graphics.joined(separator: " + ")) }
+        if !s.graphics.isEmpty { parts.append(s.graphicsText) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

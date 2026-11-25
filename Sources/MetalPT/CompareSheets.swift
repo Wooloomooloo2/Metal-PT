@@ -3,6 +3,7 @@ import MPTCore
 import SwiftUI
 
 /// "Add Runs…": the finished runs not yet in the comparison (from the Runs index), ticked to add, oldest first.
+/// Runs of the comparison's own game(s) only, unless "Show other games" is on.
 struct AddRunsSheet: View {
     let detail: ProjectDetail
     @ObservedObject var store: ProjectsStore
@@ -12,6 +13,9 @@ struct AddRunsSheet: View {
     @State private var ticked: Set<String>
     /// Worked out when the sheet opens and when the runs index or the project changes, not on every redraw.
     @State private var candidates: [RunEntry]
+    /// The comparison's games (empty: unknown, everything is shown).
+    @State private var games: Set<String> = []
+    @State private var allGames = false
 
     /// `ticked` given: snapshots.
     init(detail: ProjectDetail, store: ProjectsStore, runs: RunsStore, ticked: Set<String> = [],
@@ -26,8 +30,13 @@ struct AddRunsSheet: View {
 
     private func updateCandidates() {
         candidates = store.candidates(detail.id, from: runs.entries)
-        ticked.formIntersection(candidates.map(\.id))
+        games = store.games(detail.id, from: runs.entries)
+        ticked.formIntersection(shown.map(\.id))
     }
+
+    private var shown: [RunEntry] { allGames ? candidates : CompareLibrary.sameGame(candidates, games: games) }
+    private var hiddenCount: Int { candidates.count - CompareLibrary.sameGame(candidates, games: games).count }
+    private var gameName: String { games.count == 1 ? games.first! : "these games" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -37,14 +46,18 @@ struct AddRunsSheet: View {
                     .foregroundStyle(.secondary)
             }
             Group {
-                if candidates.isEmpty {
-                    Text(runs.loaded ? "Every finished run is already in this comparison." : "Loading runs…")
+                if shown.isEmpty {
+                    Text(!runs.loaded ? "Loading runs…"
+                         : candidates.isEmpty ? "Every finished run is already in this comparison."
+                         : "No other runs of \(gameName). Turn on Show other games to add a run of another game.")
+                        .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 120)
+                        .padding(.horizontal, 20)
                 } else {
                     SnapshotSafeScroll {
                         LazyVStack(spacing: 0) {
-                            ForEach(candidates) { entry in
+                            ForEach(shown) { entry in
                                 CandidateRow(entry: entry, ticked: ticked.contains(entry.id))
                                     .contentShape(Rectangle())
                                     .onTapGesture { toggle(entry.id) }
@@ -58,12 +71,16 @@ struct AddRunsSheet: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1)))
             HStack {
+                if hiddenCount > 0 || allGames {
+                    Toggle("Show other games\(hiddenCount > 0 ? " (\(hiddenCount))" : "")", isOn: $allGames)
+                        .onChange(of: allGames) { ticked.formIntersection(shown.map(\.id)) }
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(addTitle) {
                     // Oldest first, as "Compare selected…" orders a new project.
-                    let ids = candidates.filter { ticked.contains($0.id) }
+                    let ids = shown.filter { ticked.contains($0.id) }
                         .sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
                         .map(\.id)
                     onAdd(ids)

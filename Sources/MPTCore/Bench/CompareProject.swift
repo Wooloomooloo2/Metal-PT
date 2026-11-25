@@ -20,8 +20,25 @@ public struct CompareProject: Codable, Sendable {
         self.name = name; self.baseline = baseline; self.runs = runs
     }
 
-    /// `<slug>.json`, with the same slug rule as run bundles.
-    public static func fileName(for name: String) -> String { RunBundle.slug(name) + ".json" }
+    /// `<slug>.json`, with the run-bundle slug rule but without its 40-character cut, which made names differing only
+    /// at the end ("… comparison 2026-11-25" and "… 2") share a file. A slug over 64 characters keeps its first 40
+    /// and its last 23 ("comparison-2026-11-25-2"), so the date and the number always survive.
+    public static func fileName(for name: String) -> String {
+        let full = RunBundle.slug(name, limit: nil)
+        guard full.count > 64 else { return full + ".json" }
+        var head = String(full.prefix(40))
+        while head.hasSuffix("-") { head.removeLast() }
+        var tail = String(full.suffix(23))
+        while tail.hasPrefix("-") { tail.removeFirst() }
+        return head + "-" + tail + ".json"
+    }
+
+    /// How many numbered names ("… 2", "… 3") a new project tries before giving up.
+    public static let maxNameTries = 999
+
+    /// The file name used before 2026-11-25 (slug cut at 40 characters); `mpt compare NAME` still finds projects
+    /// saved under it.
+    public static func legacyFileName(for name: String) -> String { RunBundle.slug(name) + ".json" }
 
     public static func load(_ url: URL) throws -> CompareProject {
         try JSONDecoder().decode(CompareProject.self, from: Data(contentsOf: url))
@@ -137,6 +154,8 @@ public enum CompareProjectError: Error, Equatable, CustomStringConvertible, Loca
     case fileHoldsOther(file: String, project: String)
     /// A 1-based run number outside 1…count.
     case runNumber(Int, count: Int)
+    /// Every numbered variant of the name is taken.
+    case noFreeName(String)
 
     public var description: String {
         switch self {
@@ -144,6 +163,7 @@ public enum CompareProjectError: Error, Equatable, CustomStringConvertible, Loca
         case .fileHoldsOther(let file, let project): "project file \(file) already holds project '\(project)'"
         case .runNumber(let n, let count):
             count == 0 ? "no run \(n) (the project has no runs)" : "no run \(n) (the project has runs 1 to \(count))"
+        case .noFreeName(let base): "no free project name for '\(base)' (tried up to \(CompareProject.maxNameTries))"
         }
     }
 

@@ -182,6 +182,20 @@ public final class CompareLibrary: @unchecked Sendable {
         }
     }
 
+    /// The comparison's games: those of its runs that `entries` lists (a missing run says nothing). Add Runs offers
+    /// runs of these games first.
+    public func games(_ detail: ProjectDetail, in entries: [RunEntry]) -> Set<String> {
+        func key(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
+        let inProject = Set(detail.runs.map { key(CompareProject.bundleURL(.init(bundle: $0.bundle), runsRoot: runsRoot)) })
+        return Set(entries.filter { inProject.contains(key(runsRoot.appendingPathComponent($0.id, isDirectory: true))) }
+            .map(\.game))
+    }
+
+    /// `candidates` narrowed to `games`, unless `games` is empty (nothing known about the comparison's runs).
+    public static func sameGame(_ candidates: [RunEntry], games: Set<String>) -> [RunEntry] {
+        games.isEmpty ? candidates : candidates.filter { games.contains($0.game) }
+    }
+
     // MARK: - Private
 
     private func edit(_ id: String, _ change: (inout CompareProject) throws -> Void) throws {
@@ -221,12 +235,19 @@ public final class CompareLibrary: @unchecked Sendable {
     }
 
     private func detail(_ id: String, _ project: CompareProject) -> ProjectDetail {
+        let loaded = project.runs.map { entry in
+            Result { try infoLoader(CompareProject.bundleURL(entry, runsRoot: runsRoot)) }
+        }
+        // Names from what differs between the loaded runs, as the report names them.
+        let ok = project.runs.indices.compactMap { i in (try? loaded[i].get()).map { (i, $0) } }
+        let names = Dictionary(uniqueKeysWithValues: zip(ok.map(\.0),
+                                                         CompareReport.labels(ok.map { project.runs[$0.0] }, ok.map(\.1))))
         let runs = project.runs.enumerated().map { i, entry -> ProjectDetail.Run in
             let url = CompareProject.bundleURL(entry, runsRoot: runsRoot)
             do {
-                let info = try infoLoader(url)
-                return .init(index: i, label: CompareReport.label(entry, info), bundle: entry.bundle, missing: nil,
-                             isBaseline: i == project.baseline)
+                let info = try loaded[i].get()
+                return .init(index: i, label: names[i] ?? CompareReport.label(entry, info), bundle: entry.bundle,
+                             missing: nil, isBaseline: i == project.baseline)
             } catch {
                 return .init(index: i, label: entry.name.isEmpty ? (entry.bundle as NSString).lastPathComponent : entry.name,
                              bundle: entry.bundle, missing: CompareProject.loadProblem(url, error),

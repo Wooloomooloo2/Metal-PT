@@ -63,6 +63,9 @@ mapping unverified until a heavy GPU-bound game run with `gpu_mhz` shows ~1578 M
 M0 hardware baseline (`docs/superpowers/plans/2026-10-07-m0-hardware-baseline.md`) is paused (E2-E5, E7 pending).
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
+2026-11-25 (uncommitted, tests pass, `build/Metal-PT.app` built, not installed): compare hang fix, same-game Add
+Runs, runs named by what differs + coloured, D3DMetal version in the stack. See `docs/BACKLOG.md`.
+
 ## Resume here
 
 User's manual checks of the rebuilt app: a heavy GPU-bound game recording (verify the GPU clock mapping and record it
