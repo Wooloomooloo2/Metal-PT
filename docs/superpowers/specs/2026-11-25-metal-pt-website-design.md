@@ -88,12 +88,12 @@ Windows/Linux data; pulling game names or art from Steam.
   Free plan's 10 ms CPU per request, §J): parts `bundle` (the existing `.mptrun.zip`, streamed to R2 unopened with
   R2's own SHA-256 check), and `run.json`, `samples.csv`, `summary.json` (copies of the zip's files, parsed by the
   Worker). Headers: `MPT-Key` (public key), `MPT-Timestamp` (ISO-8601, ±10 min of server time), `MPT-Signature`
-  (DER ECDSA over SHA-256 of `"metal-pt-run\n" + sha256(bundle) + "\n" + sha256(run.json) + "\n" +
+  (base64url of the raw 64-byte r‖s ECDSA P-256 signature — the form WebCrypto verifies — ECDSA-SHA256 over the UTF-8 message `"metal-pt-run\n" + sha256(bundle) + "\n" + sha256(run.json) + "\n" +
   sha256(samples.csv) + "\n" + sha256(summary.json) + "\n" + timestamp`). The Worker hashes the three small parts
   itself; the bundle's hash is enforced by R2 on write. That the small parts equal the zip's copies is vouched for by
   the signature, not re-checked. Replies `201 { id, url }`, or `4xx { code, message }` with a message the app shows
   as is.
-- `PATCH /api/v1/runs/:id` — signed like DELETE (`"metal-pt-patch\n" + id + "\n" + sha256(body) + "\n" + timestamp`);
+- `PATCH /api/v1/runs/:id` — signed like POST (raw r‖s) (`"metal-pt-patch\n" + id + "\n" + sha256(body) + "\n" + timestamp`);
   body `{ "videoURL": string|null }`; only the publishing key. (Only the video link is editable after publishing.)
 - `DELETE /api/v1/runs/:id` — same signature scheme over `"metal-pt-delete\n" + id + "\n" + timestamp`; only the key
   that published it. Removes the run from pages and stats; the stored zip is deleted.
