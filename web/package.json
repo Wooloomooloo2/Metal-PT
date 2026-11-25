@@ -1,0 +1,25 @@
+{
+  "name": "metal-pt-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cf dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "migrate:staging": "cf d1 migrations apply 3c0451a9-1b96-446d-94f8-005aa3f606db --dir migrations",
+    "deploy:staging": "cf deploy --mode staging"
+  },
+  "dependencies": {
+    "hono": "4.13.17"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "2.0.0-beta.v.14",
+    "@cloudflare/vitest-plugin": "1.7.0",
+    "@cloudflare/workers-types": "5.20261110.1",
+    "cf": "0.15.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.7",
+    "vitest": "4.1.12"
+  }
+}

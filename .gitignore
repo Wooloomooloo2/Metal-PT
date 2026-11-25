@@ -6,3 +6,6 @@ xcuserdata/
 .superpowers/
 build/
 .cloudflare/
+web/node_modules/
+web/.wrangler/
+web/.cf/
