@@ -82,7 +82,7 @@ struct RunsPage: View {
             HStack(spacing: 6) {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    SnapshotSafeTextField("Filter: game, stack, settings, label", text: $filter, plain: true)
+                    SnapshotSafeTextField("Filter: game, app, stack, settings, label", text: $filter, plain: true)
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 5)
@@ -236,7 +236,10 @@ private struct RunRow: View {
             .opacity(entry.inProgress ? 0.35 : 1)
             .help(entry.inProgress ? "Still recording" : ticked ? "Untick (leave out of the comparison)" : "Tick to compare")
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.game)
+                // A title the user gave, with the recorded app after it in secondary text.
+                (Text(entry.game)
+                    + Text(entry.title != nil && !entry.app.isEmpty ? "  \(entry.app)" : "")
+                        .font(.subheadline).foregroundStyle(.secondary))
                     .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.middle)

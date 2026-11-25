@@ -180,6 +180,18 @@ enum Snapshots {
                 }
             }
         }
+        // A run of an emulator, named after the game: list row, header and the edit sheet's Game field.
+        let titled = Fixture.model(.loggingOff)
+        titled.runs.showFixture(root: Fixture.makeTitledRuns())
+        list.append(Shot(name: "runs-titled", size: windowSize, width: windowSize.width,
+                         view: AnyView(WindowFrame(page: .runs, model: titled, hub: titled.hub))))
+        if let sotc = titled.runs.entries.first {
+            list.append(Shot(name: "runs-edit-title", size: nil, width: 480,
+                             view: AnyView(EditNotesSheet(
+                                entry: sotc, store: titled.runs,
+                                fields: .init(label: sotc.label, gameSettings: sotc.settings,
+                                              notes: "Forbidden lands, first colossus.")))))
+        }
         return list
     }
 
@@ -471,9 +483,7 @@ extension Fixture {
     /// `recording`: a separate folder whose newest run is still being written (no end, samples just now).
     static func makeRuns(recording: Bool = false, folder: String? = nil) -> URL {
         let root = tempRoot().appendingPathComponent(folder ?? (recording ? "recording/runs" : "runs"))
-        let now = Date()
-        let cases: [(exe: String, stack: Stack, settings: String, label: String, ago: Double, seconds: Int,
-                     fps: Double, frames: Bool)] = [
+        let cases: [RunCase] = [
             ("HorizonZeroDawnRemastered.exe", Stack(runtime: "Protium", runtimeVersion: "0.3.1", translator: "FEX",
                                                     graphics: ["DXMT"]),
              "High, 1440p, FSR off", "Mountain path", 2 * 3600, 120, 58.1, true),
@@ -483,13 +493,33 @@ extension Fixture {
             ("Cyberpunk2077.exe", Stack(runtime: "CrossOver", runtimeVersion: "25.1", graphics: ["D3DMetal"]),
              "Medium", "", 26 * 3600, 180, 41.0, true),
         ]
+        write(cases, in: root, recording: recording)
+        return root
+    }
+
+    typealias RunCase = (exe: String, stack: Stack, settings: String, label: String, ago: Double, seconds: Int,
+                         fps: Double, frames: Bool)
+
+    /// Runs recorded from a PS2 emulator, named by the user: "Shadow of the Colossus" (newest) and "Ico" on ARMSX2,
+    /// so the edit sheet has an earlier title to suggest.
+    static func makeTitledRuns() -> URL {
+        let root = tempRoot().appendingPathComponent("titled/runs")
+        let stack = Stack(runtime: "Native")
+        write([("ARMSX2", stack, "3× native, 60 fps patch", "Agro ride", 3600, 120, 59.4, true),
+               ("ARMSX2", stack, "3× native", "", 30 * 3600, 120, 60.0, true)],
+              titles: ["Shadow of the Colossus", "Ico"], in: root, recording: false)
+        return root
+    }
+
+    private static func write(_ cases: [RunCase], titles: [String?] = [], in root: URL, recording: Bool) {
+        let now = Date()
         for (n, c) in cases.enumerated() {
             let start = now.addingTimeInterval(-c.ago)
             let dir = RunBundle.availableDirectory(in: root, start: start, game: c.exe)
             let info = RunInfo(appVersion: AppModel.appVersion,
                                machine: .init(modelID: "Mac16,5", chip: "Apple M4 Max", gpuCores: 40, memoryGB: 48,
                                               osVersion: "26.1", osBuild: "25B78"),
-                               game: .init(exe: c.exe), stack: c.stack,
+                               game: .init(exe: c.exe, title: n < titles.count ? titles[n] : nil), stack: c.stack,
                                user: .init(label: c.label, gameSettings: c.settings), start: start,
                                fpsSource: "log")
             guard let w = try? RunBundleWriter(directory: dir, info: info) else { continue }
@@ -510,7 +540,6 @@ extension Fixture {
             if recording && n == 0 { continue }   // left open: in progress
             try? w.finish { $0.end = start.addingTimeInterval(Double(c.seconds)) }
         }
-        return root
     }
 
     /// The Compare fixture's project shown in the detail.

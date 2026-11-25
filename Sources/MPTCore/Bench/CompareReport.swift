@@ -19,7 +19,7 @@ public enum CompareReport {
     }
 
     /// Fields a run's name is built from, most telling first ("game", "FPS source" never name a run).
-    static let namingFields = ["game settings", "label", "graphics", "runtime version", "runtime", "translator",
+    static let namingFields = ["game settings", "label", "recorded app", "graphics", "runtime version", "runtime", "translator",
                                "power mode", "AC/battery", "display", "macOS build", "machine"]
 
     /// One name per run, from what differs between the runs: "High · D3DMetal 4.0b3 + MoltenVK". A run with an
@@ -45,7 +45,7 @@ public enum CompareReport {
 
     /// The game's title, else its exe, else "unidentified".
     static func gameName(_ info: RunInfo) -> String {
-        let name = info.game.title ?? info.game.exe
+        let name = info.game.titleText ?? info.game.exe
         return name.isEmpty ? "unidentified" : name
     }
 
@@ -82,7 +82,10 @@ public enum CompareReport {
         if m.memoryGB > 0 { machine.append("\(m.memoryGB) GB") }
         let build = m.osBuild.isEmpty ? m.osVersion : "\(m.osVersion) (\(m.osBuild))"
         return [
-            ("game", v(i.game.title ?? i.game.exe)),
+            ("game", v(i.game.titleText ?? i.game.exe)),
+            // The app the run was recorded from (an emulator or launcher under a title). Dropped by `columns`
+            // where it only repeats the game.
+            ("recorded app", v(i.game.exe)),
             ("runtime", v(i.stack.runtime)),
             ("runtime version", v(i.stack.runtimeVersion)),
             ("translator", v(i.stack.translator)),
@@ -114,7 +117,10 @@ public enum CompareReport {
     private static func columns(_ infos: [RunInfo]) -> [(field: String, values: [String])] {
         let all = infos.map(fields)
         guard let names = all.first?.map(\.field) else { return [] }
-        return names.enumerated().map { k, name in (name, all.map { $0[k].value }) }
+        let cols = names.enumerated().map { k, name in (field: name, values: all.map { $0[k].value }) }
+        // Untitled runs: the game is the recorded app; one row says it.
+        let game = cols.first { $0.field == "game" }?.values
+        return cols.filter { $0.field != "recorded app" || $0.values != game }
     }
 
     // MARK: - Warnings

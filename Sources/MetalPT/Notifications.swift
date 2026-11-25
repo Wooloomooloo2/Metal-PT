@@ -32,7 +32,7 @@ struct RecordingNotice: Equatable {
         dec.dateDecodingStrategy = .iso8601
         if let data = try? Data(contentsOf: directory.appendingPathComponent("run.json")),
            let info = try? dec.decode(RunInfo.self, from: data) {
-            let name = info.game.title ?? info.game.exe
+            let name = info.game.titleText ?? info.game.exe
             if !name.isEmpty { return name }
         }
         return directory.deletingPathExtension().lastPathComponent

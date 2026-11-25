@@ -80,7 +80,7 @@ public enum RunExport {
         let notes = info.user.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let json = (try? runJSON(bundle.info, includeNotes: includeNotes, hosts: hosts))?.count ?? 0
         return ExportPreview(
-            game: info.game.title.flatMap { $0.isEmpty ? nil : $0 } ?? info.game.exe,
+            game: info.game.titleText ?? info.game.exe,
             stackLine: SummaryReport.stackLine(info.stack),
             mac: macLine(info.machine),
             conditions: conditionsLine(info),

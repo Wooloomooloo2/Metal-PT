@@ -354,4 +354,34 @@ import Foundation
         #expect(out.contains("Limited by: GPU"))
         #expect(CompareReport.limitedBy(LimiterAnalysis(a, summary: RunSummary(a))) == "GPU")
     }
+
+    @Test func recordedAppDiffersOnlyWhenRunsWereRecordedFromDifferentApps() {
+        func run(_ exe: String, _ title: String?) -> RunInfo {
+            var i = info(game: exe)
+            i.game.title = title
+            return i
+        }
+        // Same game on two emulators: a "recorded app" row, and the apps name the runs.
+        let two = [run("ARMSX2", "Shadow of the Colossus"), run("PCSX2", "Shadow of the Colossus")]
+        #expect(CompareReport.differences(two).map(\.field) == ["recorded app"])
+        #expect(CompareReport.differences(two)[0].values == ["ARMSX2", "PCSX2"])
+        let entries = [CompareProject.Entry(bundle: "a.mptrun"), CompareProject.Entry(bundle: "b.mptrun")]
+        #expect(CompareReport.labels(entries, two) == ["ARMSX2", "PCSX2"])
+        // Two games on one emulator: only the game differs; the app is shared.
+        let games = [run("ARMSX2", "Shadow of the Colossus"), run("ARMSX2", "Ico")]
+        #expect(CompareReport.differences(games).map(\.field) == ["game"])
+        #expect(CompareReport.shared(games).contains { $0.field == "recorded app" && $0.value == "ARMSX2" })
+        // Untitled runs: the game row is the exe; no second row repeats it.
+        let plain = [run("a.exe", nil), run("b.exe", nil)]
+        #expect(CompareReport.differences(plain).map(\.field) == ["game"])
+        #expect(!CompareReport.shared([run("a.exe", nil), run("a.exe", nil)]).contains { $0.field == "recorded app" })
+        // An empty title from elsewhere counts as none.
+        #expect(CompareReport.differences([run("a.exe", ""), run("a.exe", nil)]).isEmpty)
+        // The report shows the row.
+        let a = bundle("a.mptrun", two[0], fps: 60)
+        let b = bundle("b.mptrun", two[1], fps: 50)
+        let project = CompareProject(name: "p", baseline: 0, runs: entries)
+        let out = CompareReport.html(project: project, runs: [pair(a), pair(b)])
+        #expect(out.contains("<td>Recorded app</td>"))
+    }
 }

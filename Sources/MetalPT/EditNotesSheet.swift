@@ -2,11 +2,17 @@ import MPTApp
 import MPTCore
 import SwiftUI
 
-/// "Edit Settings/Notes…": the run's user fields. Saving rewrites run.json (privacy-scrubbed) and its summary.
+/// "Edit Settings/Notes…": the game's name and the run's user fields. Saving rewrites run.json (privacy-scrubbed)
+/// and its summary. The game field names the game behind an emulator or launcher; the recorded app (`game.exe`) is
+/// shown, never edited.
 struct EditNotesSheet: View {
     let entry: RunEntry
     @ObservedObject var store: RunsStore
     @Environment(\.dismiss) private var dismiss
+    /// The title, else the recorded app's name; saved empty or as the app's name, it clears the title.
+    @State private var game: String
+    /// Titles of other runs of the same app (worked out when the sheet opens).
+    private let suggestions: [String]
     @State private var settings: String
     @State private var label: String
     @State private var notes: String
@@ -19,6 +25,8 @@ struct EditNotesSheet: View {
     init(entry: RunEntry, store: RunsStore, fields: RunInfo.UserFields? = nil) {
         self.entry = entry
         self.store = store
+        _game = State(initialValue: entry.title ?? entry.app)
+        suggestions = store.titleSuggestions(forApp: entry.app).filter { $0 != entry.title }
         _settings = State(initialValue: fields?.gameSettings ?? entry.settings)
         _label = State(initialValue: fields?.label ?? entry.label)
         _notes = State(initialValue: fields?.notes ?? "")
@@ -28,9 +36,18 @@ struct EditNotesSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Edit settings and notes").font(.title3.weight(.semibold))
+                Text("Edit game, settings and notes").font(.title3.weight(.semibold))
                 Text("\(entry.game) · \(RunFormat.date(entry.start))")
                     .foregroundStyle(.secondary)
+            }
+            field("Game", hint: entry.app.isEmpty ? "No app was detected for this run"
+                                                  : "Recorded app: \(entry.app) — kept for comparisons") {
+                HStack(spacing: 8) {
+                    SnapshotSafeTextField(entry.app.isEmpty ? "The game's name" : entry.app, text: $game)
+                    if !suggestions.isEmpty {
+                        SuggestionsMenu(suggestions: suggestions, app: entry.app) { game = $0 }
+                    }
+                }
             }
             field("Game settings", hint: "Quality preset, resolution, upscaler — what you set in the game") {
                 SnapshotSafeTextField("High, 1440p, FSR off", text: $settings)
@@ -46,7 +63,7 @@ struct EditNotesSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.15)))
             }
             Label {
-                Text("Settings and label are part of the run: they go with submissions and comparisons. "
+                Text("Game, settings and label are part of the run: they go with submissions and comparisons. "
                      + "Notes stay on this Mac unless you choose to include them when you submit.")
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
@@ -111,14 +128,50 @@ struct EditNotesSheet: View {
         let s = settings.trimmingCharacters(in: .whitespacesAndNewlines)
         let l = label.trimmingCharacters(in: .whitespacesAndNewlines)
         let n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let g = game   // trimmed, capped and cleared (empty or the app's name) by the index
         Task {
             do {
-                try await store.update(entry.id, settings: s, notes: n, label: l)
+                try await store.update(entry.id, settings: s, notes: n, label: l, title: g)
                 dismiss()
             } catch {
                 problem = "Could not save: \(error.localizedDescription)"
                 saving = false
             }
         }
+    }
+}
+
+/// "Earlier titles": the titles given to other runs of the same app. Picking one fills the field; nothing is applied
+/// by itself.
+private struct SuggestionsMenu: View {
+    let suggestions: [String]
+    let app: String
+    let pick: (String) -> Void
+    @Environment(\.rendersSnapshot) private var snapshot
+
+    var body: some View {
+        if snapshot {
+            label   // `Menu` does not render in `ImageRenderer`
+        } else {
+            Menu {
+                ForEach(suggestions, id: \.self) { t in Button(t) { pick(t) } }
+            } label: {
+                label
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Titles used on other \(app) runs")
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 3) {
+            Text("Earlier titles")
+            Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+        }
+        .foregroundStyle(Color.accentColor)
+        .fixedSize()
     }
 }

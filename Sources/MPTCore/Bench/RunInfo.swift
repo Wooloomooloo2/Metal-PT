@@ -27,6 +27,8 @@ public struct RunInfo: Codable, Sendable {
         public init(exe: String, title: String? = nil, storeAppID: String? = nil) {
             self.exe = exe; self.title = title; self.storeAppID = storeAppID
         }
+        /// The title, nil when absent or empty (an empty title names nothing).
+        public var titleText: String? { (title ?? "").isEmpty ? nil : title }
     }
     public struct Settings: Codable, Sendable {
         public var powerMode: String?

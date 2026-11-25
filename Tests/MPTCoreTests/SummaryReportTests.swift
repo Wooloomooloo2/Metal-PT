@@ -5,11 +5,12 @@ import Foundation
 @Suite struct SummaryReportTests {
     private func bundle(label: String = "", stack: Stack = Stack(), frames: [TimedFrame]? = nil,
                         fpsSource: String = "log", warnings: [String] = [],
-                        extra: [String: String] = [:], gpuMaxMHz: Int? = nil) -> RunBundle {
+                        extra: [String: String] = [:], gpuMaxMHz: Int? = nil,
+                        exe: String = "Game.exe", title: String? = nil) -> RunBundle {
         var info = RunInfo(appVersion: "0.1", machine: .init(modelID: "Mac15,6", chip: "M3 Pro", memoryGB: 36,
                                                              osVersion: "15.1", osBuild: "24B83",
                                                              gpuMaxMHz: gpuMaxMHz),
-                           game: .init(exe: "Game.exe"), stack: stack,
+                           game: .init(exe: exe, title: title), stack: stack,
                            start: Date(timeIntervalSince1970: 1_800_000_000),
                            end: Date(timeIntervalSince1970: 1_800_000_050), fpsSource: fpsSource, warnings: warnings)
         info.user.label = label
@@ -126,6 +127,21 @@ import Foundation
         #expect(SummaryReport.version >= 2)
         #expect(SummaryReport.fileVersion(of: out) == SummaryReport.version)
         #expect(SummaryReport.fileVersion(of: "<html><head><meta name=\"mpt-run\" content=\"x\"></head>") == 1)
+    }
+
+    @Test func titledRunNamesTheRecordedApp() {
+        let out = html(bundle(exe: "ARMSX2", title: "Shadow of the Colossus"))
+        #expect(out.contains("<h1>Shadow of the Colossus</h1>"))
+        #expect(out.contains("<dt>Recorded app</dt><dd>ARMSX2</dd>"))
+        #expect(!out.contains("Executable"))
+        // Untitled (or an empty title from elsewhere): the exe is the name and no row repeats it.
+        let plain = html(bundle())
+        #expect(plain.contains("<h1>Game.exe</h1>"))
+        #expect(!plain.contains("Recorded app"))
+        let empty = bundle(title: "")
+        #expect(html(empty).contains("<h1>Game.exe</h1>"))
+        #expect(!html(empty).contains("Recorded app"))
+        #expect(SummaryReport.version >= 3)   // older summaries say "Executable": rewritten when opened
     }
 }
 

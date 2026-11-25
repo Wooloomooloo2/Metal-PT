@@ -46,6 +46,9 @@ final class RunsStore: ObservableObject {
 
     func entry(_ id: String) -> RunEntry? { entries.first { $0.id == id } }
 
+    /// Titles given to other runs of the recorded app, newest first (the edit sheet's suggestions).
+    func titleSuggestions(forApp app: String) -> [String] { RunEntry.titleSuggestions(entries, forApp: app) }
+
     func url(of id: String) -> URL? { root?.appendingPathComponent(id, isDirectory: true) }
 
     /// The run's stored user fields (notes are not in the index).
@@ -54,11 +57,12 @@ final class RunsStore: ObservableObject {
         return try await Task.detached { try index.userFields(dir: id) }.value
     }
 
-    /// Saves the user fields, regenerates the summary and refreshes the list.
-    func update(_ id: String, settings: String, notes: String, label: String) async throws {
+    /// Saves the user fields (and the game title, unless nil: see `RunIndex.update`), regenerates the summary and
+    /// refreshes the list.
+    func update(_ id: String, settings: String, notes: String, label: String, title: String? = nil) async throws {
         guard let index else { throw CocoaError(.fileNoSuchFile) }
         let list = try await Task.detached {
-            try index.update(dir: id, settings: settings, notes: notes, label: label)
+            try index.update(dir: id, settings: settings, notes: notes, label: label, title: title)
             return index.entries()
         }.value
         entries = list

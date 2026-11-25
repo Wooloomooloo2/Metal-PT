@@ -13,16 +13,44 @@ struct RunDetailView: View {
     let onEdit: () -> Void
     let onSubmit: () -> Void
 
+    /// The recorded app, when the user named the game ("ARMSX2" under "Shadow of the Colossus").
+    private var titledApp: String? { entry.title != nil && !entry.app.isEmpty ? entry.app : nil }
+
+    private var gameTitle: some View {
+        Text(entry.game)
+            .font(.title3.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    @ViewBuilder
+    private func stack(_ line: String) -> some View {
+        if !line.isEmpty { Text(line).foregroundStyle(.secondary).lineLimit(1) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.game)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if !entry.stackLine.isEmpty {
-                        Text(entry.stackLine).foregroundStyle(.secondary).lineLimit(1)
+                    if let app = titledApp {
+                        // "Shadow of the Colossus · ARMSX2" when it fits; else the app leads the stack line, so the
+                        // title is not cut to make room for it.
+                        ViewThatFits(in: .horizontal) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                (Text(entry.game) + Text(" · \(app)").foregroundStyle(.secondary))
+                                    .font(.title3.weight(.semibold))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                stack(entry.stackLine)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                gameTitle
+                                stack([app, entry.stackLine].filter { !$0.isEmpty }.joined(separator: " · "))
+                            }
+                        }
+                    } else {
+                        gameTitle
+                        stack(entry.stackLine)
                     }
                     let sub = [entry.settings, entry.label, RunFormat.date(entry.start)].filter { !$0.isEmpty }
                     Text(sub.joined(separator: " · "))

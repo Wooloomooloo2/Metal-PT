@@ -5,8 +5,8 @@ public enum SummaryReport {
     public static let fileName = "summary.html"
     /// The report's layout version, written as `<meta name="mpt-summary-version">`. Bump it when the report gains
     /// something an existing summary.html should show: the app rewrites summaries older than this when opened.
-    /// 2: "What held it back".
-    public static let version = 2
+    /// 2: "What held it back". 3: "Recorded app" (was "Executable") under an edited game title.
+    public static let version = 3
     static let versionMeta = "mpt-summary-version"
 
     /// The version a summary.html was written with; 1 for summaries from before the tag. A missing tag (also an
@@ -88,7 +88,7 @@ public enum SummaryReport {
     public static func html(_ bundle: RunBundle, _ summary: RunSummary) -> String {
         let info = bundle.info
         let e = HTML.escape
-        let game = info.game.title ?? (info.game.exe.isEmpty ? "Unknown game" : info.game.exe)
+        let game = info.game.titleText ?? (info.game.exe.isEmpty ? "Unknown game" : info.game.exe)
 
         var body = "<div class=\"wrap\">\n<header>\n"
         body += "<div class=\"eyebrow\">mpt run · \(e(startText(info.start)))</div>\n"
@@ -150,7 +150,7 @@ public enum SummaryReport {
     private static func metaRows(_ bundle: RunBundle, _ summary: RunSummary, game: String) -> [(String, String)] {
         let info = bundle.info
         var rows: [(String, String)] = []
-        if info.game.title != nil, !info.game.exe.isEmpty { rows.append(("Executable", info.game.exe)) }
+        if info.game.titleText != nil, !info.game.exe.isEmpty { rows.append(("Recorded app", info.game.exe)) }
         rows.append(("Stack", stackLine(info.stack) ?? "not detected"))
         var duration = info.end.map { HTML.duration($0.timeIntervalSince(info.start)) } ?? "unfinished"
         duration += " · \(summary.steadySeconds.count) s steady"

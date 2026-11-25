@@ -4,8 +4,11 @@ import MPTCore
 /// One run as the Runs list shows it. `id` is the bundle's folder name (`…​.mptrun`), stable across edits.
 public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     public var id: String
-    /// The game title, else its executable without ".exe".
+    /// The game title, else the recorded app (`app`), else "Unknown game".
     public var game: String
+    /// The recorded app: the executable without ".exe" ("ARMSX2"), empty when none was detected. Never edited; it
+    /// stays the run's ID for comparisons when the user names the game behind an emulator or launcher.
+    public var app: String
     /// "Protium 0.3 · FEX · DXMT"; empty when the stack is unknown.
     public var stackLine: String
     /// The user's game settings ("High, 1440p").
@@ -22,25 +25,64 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     /// "Recording…", not editable, deletable or summarised. Worked out at each scan, never cached.
     public var inProgress: Bool
 
-    public init(id: String, game: String, stackLine: String, settings: String, label: String, start: Date,
-                duration: Double, medianFPS: Double?, low1: Double?, finished: Bool = true, inProgress: Bool = false) {
-        self.id = id; self.game = game; self.stackLine = stackLine; self.settings = settings; self.label = label
+    public init(id: String, game: String, app: String? = nil, stackLine: String, settings: String, label: String,
+                start: Date, duration: Double, medianFPS: Double?, low1: Double?, finished: Bool = true,
+                inProgress: Bool = false) {
+        self.id = id; self.game = game; self.app = app ?? game
+        self.stackLine = stackLine; self.settings = settings; self.label = label
         self.start = start; self.duration = duration; self.medianFPS = medianFPS; self.low1 = low1
         self.finished = finished; self.inProgress = inProgress
     }
 
-    /// Case-insensitive match on game, stack, settings and label; an empty filter matches everything.
+    public static let unknownGame = "Unknown game"
+    /// Longest title kept (longer ones are cut).
+    public static let maxTitleLength = 120
+
+    /// The user's name for the game, when it is not just the recorded app's.
+    public var title: String? {
+        if app.isEmpty { return game == Self.unknownGame ? nil : game }
+        return game == app ? nil : game
+    }
+
+    /// Case-insensitive match on game, recorded app, stack, settings and label; an empty filter matches everything.
     public func matches(_ filter: String) -> Bool {
         let f = filter.trimmingCharacters(in: .whitespaces)
         guard !f.isEmpty else { return true }
-        return [game, stackLine, settings, label].contains { $0.localizedCaseInsensitiveContains(f) }
+        return [game, app, stackLine, settings, label].contains { $0.localizedCaseInsensitiveContains(f) }
     }
 
     static func displayGame(_ info: RunInfo) -> String {
-        if let t = info.game.title, !t.isEmpty { return t }
-        var exe = info.game.exe
+        if let t = info.game.titleText { return t }
+        let app = displayApp(info.game.exe)
+        return app.isEmpty ? unknownGame : app
+    }
+
+    /// The executable without ".exe".
+    static func displayApp(_ exe: String) -> String {
+        var exe = exe
         if exe.lowercased().hasSuffix(".exe") { exe.removeLast(4) }
-        return exe.isEmpty ? "Unknown game" : exe
+        return exe
+    }
+
+    /// The title to store for what the user typed: trimmed and cut to `maxTitleLength`; nil (no title) when empty
+    /// or the recorded app's own name (with or without ".exe", any case).
+    public static func normalizedTitle(_ text: String, exe: String) -> String? {
+        let t = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxTitleLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        let same = [exe, displayApp(exe)].contains { !$0.isEmpty && $0.caseInsensitiveCompare(t) == .orderedSame }
+        return same ? nil : t
+    }
+
+    /// Titles given to other runs of the recorded app `app`, newest first, each once (ignoring case); none for an
+    /// unknown app. Offered in the edit sheet, never applied by themselves. `entries`: newest first.
+    public static func titleSuggestions(_ entries: [RunEntry], forApp app: String) -> [String] {
+        guard !app.isEmpty else { return [] }
+        var seen = Set<String>()
+        return entries.compactMap { e -> String? in
+            guard e.app == app, let t = e.title, seen.insert(t.lowercased()).inserted else { return nil }
+            return t
+        }
     }
 }
 
@@ -77,7 +119,7 @@ public final class RunIndex: @unchecked Sendable {
     public typealias Trash = @Sendable (URL) throws -> Void
 
     public static let cacheFileName = ".index.json"
-    static let cacheVersion = 2
+    static let cacheVersion = 3
     /// Seconds since samples.csv was last written for an unfinished run to still count as being recorded (the
     /// recorder appends once a second).
     public static let activeWindow: TimeInterval = 10
@@ -172,7 +214,9 @@ public final class RunIndex: @unchecked Sendable {
 
     /// Rewrites the run's user fields (privacy-scrubbed, by the bundle writer), regenerates summary.html and
     /// refreshes the run's entry. The folder name does not change. Refuses a run in progress.
-    public func update(dir: String, settings: String, notes: String, label: String) throws {
+    /// `title`: the game's name (`normalizedTitle`: empty or the recorded app's name clears it); nil leaves it.
+    /// `game.exe` is never changed.
+    public func update(dir: String, settings: String, notes: String, label: String, title: String? = nil) throws {
         try lock.withLock {
             let url = root.appendingPathComponent(dir)
             var info = try infoLoader(url)
@@ -181,6 +225,7 @@ public final class RunIndex: @unchecked Sendable {
             info.user.gameSettings = settings
             info.user.notes = notes
             info.user.label = label
+            if let title { info.game.title = RunEntry.normalizedTitle(title, exe: info.game.exe) }
             try RunBundleWriter.writeInfo(info, to: url)
             try SummaryReport.write(bundleAt: url)
             refreshLocked()
@@ -265,7 +310,7 @@ public final class RunIndex: @unchecked Sendable {
         let summary = RunSummary(bundle)
         let lastElapsed = bundle.rows.last?["elapsed_s"].flatMap(Double.init)
         let duration = info.end.map { $0.timeIntervalSince(info.start) } ?? lastElapsed ?? 0
-        let entry = RunEntry(id: name, game: RunEntry.displayGame(info),
+        let entry = RunEntry(id: name, game: RunEntry.displayGame(info), app: RunEntry.displayApp(info.game.exe),
                              stackLine: SummaryReport.stackLine(info.stack) ?? "",
                              settings: info.user.gameSettings, label: info.user.label, start: info.start,
                              duration: max(0, duration), medianFPS: summary.medianFPS,
