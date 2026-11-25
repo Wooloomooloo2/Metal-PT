@@ -178,6 +178,9 @@ public final class RunRecorder: @unchecked Sendable {
     private var counter = FrameCounter()
     private var imagePaths: [Int32: String] = [:]
     private var names: [Int32: String] = [:]
+    /// Store app ID per PID, read once when the process is first identified (it may have exited by `finish`).
+    private var storeIDs: [Int32: String] = [:]
+    private let environment: @Sendable (Int32) -> [String: String]?
     private var pendingFrameTimes: [Double] = []
     private var sawHUD = false
     private var sawFrames = false
@@ -202,7 +205,8 @@ public final class RunRecorder: @unchecked Sendable {
                 warmup: Double = 0,
                 argv0: @escaping @Sendable (Int32) -> String? = { ProcessNames.displayName(pid: $0) },
                 inLaunchedGroup: @escaping @Sendable (Int32) -> Bool = { _ in true },
-                stackOf: (@Sendable (Int32) -> Stack?)? = nil) {
+                stackOf: (@Sendable (Int32) -> Stack?)? = nil,
+                environment: @escaping @Sendable (Int32) -> [String: String]? = { ProcessNames.environment(pid: $0) }) {
         // Only the `preferTranslated` rule consults it; it must not block (called with the lock held).
         if let stackOf {
             self.stackOf = stackOf
@@ -218,6 +222,7 @@ public final class RunRecorder: @unchecked Sendable {
         self.follow = follow
         self.warmup = max(0, warmup)
         self.argv0 = argv0
+        self.environment = environment
         self.inLaunchedGroup = inLaunchedGroup
     }
 
@@ -326,6 +331,7 @@ public final class RunRecorder: @unchecked Sendable {
         let pid = resolveFollowed()
         let exe = pid.flatMap { name(of: $0) }
         let stack = pid.flatMap { stacks[$0] }
+        let storeID = pid.flatMap { storeIDs[$0] }
         let source = sawFrames ? "stderr" : (sawHUD ? "log" : "none")
         identifiedExe = exe
         var warnings = writeWarnings
@@ -344,6 +350,7 @@ public final class RunRecorder: @unchecked Sendable {
             info.steadyEndS = steadyEnd
             info.fpsSource = source
             info.game.exe = exe ?? ""
+            if info.game.storeAppID == nil { info.game.storeAppID = storeID }
             if let stack { info.stack = stack }
             info.warnings += warnings
         }
@@ -418,7 +425,11 @@ public final class RunRecorder: @unchecked Sendable {
         if let cached = names[pid] { return cached }
         let found = argv0(pid).map(ProcessNames.exeName(fromArgv0:))
             ?? imagePaths[pid].map(ProcessNames.exeName(fromArgv0:))
-        if let found, !found.isEmpty { names[pid] = found; return found }
+        if let found, !found.isEmpty {
+            names[pid] = found
+            if let id = environment(pid).flatMap(StoreAppID.steam(from:)) { storeIDs[pid] = id }
+            return found
+        }
         return nil
     }
 
