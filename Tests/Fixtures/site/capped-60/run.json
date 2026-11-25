@@ -1,0 +1,50 @@
+{
+  "appVersion": "0.2.0",
+  "end": "2026-11-20T12:03:00Z",
+  "fpsSource": "log",
+  "game": {
+    "exe": "cappedgame.exe",
+    "title": "Capped Game"
+  },
+  "graphics": {
+    "frameGeneration": false,
+    "height": 1080,
+    "preset": "low",
+    "upscaler": "off",
+    "width": 1920
+  },
+  "machine": {
+    "chip": "Apple M4 Max",
+    "gpuCores": 40,
+    "gpuMaxMHz": 1578,
+    "memoryGB": 48,
+    "modelID": "Mac16,5",
+    "osBuild": "25B78",
+    "osVersion": "26.1"
+  },
+  "schema": 1,
+  "settings": {
+    "displayHeight": 2234,
+    "displayWidth": 3456,
+    "onACAtStart": true,
+    "powerMode": "high",
+    "refreshHz": 120
+  },
+  "stack": {
+    "graphics": [
+      "DXMT"
+    ],
+    "runtime": "Protium",
+    "translator": "FEX",
+    "wineArch": "arm64ec"
+  },
+  "start": "2026-11-20T12:00:00Z",
+  "steadyEndS": 180.0,
+  "steadyStartS": 20.0,
+  "user": {
+    "gameSettings": "",
+    "label": "Fixture: capped at 60",
+    "notes": ""
+  },
+  "warnings": []
+}

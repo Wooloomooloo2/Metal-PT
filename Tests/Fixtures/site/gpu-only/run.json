@@ -1,0 +1,51 @@
+{
+  "appVersion": "0.2.0",
+  "end": "2026-11-20T12:02:30Z",
+  "fpsSource": "log",
+  "game": {
+    "exe": "bg3.exe",
+    "title": "Baldur's Gate 3"
+  },
+  "graphics": {
+    "frameGeneration": false,
+    "height": 1964,
+    "preset": "ultra",
+    "upscaler": "fsr",
+    "upscalerMode": "balanced",
+    "width": 3024
+  },
+  "machine": {
+    "chip": "Apple M4 Max",
+    "gpuCores": 40,
+    "gpuMaxMHz": 1578,
+    "memoryGB": 48,
+    "modelID": "Mac16,5",
+    "osBuild": "25B78",
+    "osVersion": "26.1"
+  },
+  "schema": 1,
+  "settings": {
+    "displayHeight": 2234,
+    "displayWidth": 3456,
+    "onACAtStart": true,
+    "powerMode": "high",
+    "refreshHz": 120
+  },
+  "stack": {
+    "graphics": [
+      "DXMT"
+    ],
+    "runtime": "Protium",
+    "translator": "FEX",
+    "wineArch": "arm64ec"
+  },
+  "start": "2026-11-20T12:00:00Z",
+  "steadyEndS": 150.0,
+  "steadyStartS": 15.0,
+  "user": {
+    "gameSettings": "",
+    "label": "Fixture: GPU power only",
+    "notes": ""
+  },
+  "warnings": []
+}

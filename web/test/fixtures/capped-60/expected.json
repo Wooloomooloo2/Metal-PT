@@ -1,0 +1,18 @@
+{
+  "fpsPerWatt": 1.5321246572148637,
+  "key": "BG_wO5SSQc4drdQ1GeaWDgqFtBppoFwygQOqK84VlMoWPE91OlW_AdxT9sCwx-7ni0DG_30lqW4igrmJzvccFEo",
+  "keyID": "256b1be32745d1d1",
+  "limiter": {
+    "primary": "frameCap",
+    "verdict": "Mostly a frame cap"
+  },
+  "meanSystemW": 39.16130434782609,
+  "medianFPS": 60,
+  "p1LowFPS": null,
+  "powerSource": "system",
+  "signature": "d-x8s4c8ddL6I_8_G51Wdrx1J9fZA_wL1JWMZxDhPqLEktabIRNAnbRv-G1St4Uinvii6nx3TGZgc6kpGVxwFg",
+  "steadyEndS": 180,
+  "steadyStartS": 20,
+  "summaryVersion": 1,
+  "timestamp": "2026-11-25T12:00:00Z"
+}

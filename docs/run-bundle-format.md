@@ -37,7 +37,7 @@ or null. A reader must treat any missing optional key as unknown.
 | `machine.osBuild` | string | macOS build, e.g. `25G...`. |
 | `game.exe` | string | Executable name (Windows exe for Wine games, from argv[0]); empty if the game process was never identified. |
 | `game.title` | string? | Human title. `game.title` (user-editable) names the game and is what runs are grouped by; `game.exe` is the detected recorded app, never edited, used for the folder slug and the Compare 'recorded app' row. |
-| `game.storeAppID` | string? | Store id (Steam etc.), when known. |
+| `game.storeAppID` | string? | Store id when known. Steam: `steam:<digits>` (the game's `SteamAppId` environment variable, digits only; anything else is left absent). |
 | `stack.runtime` | string? | `Protium`, `CrossOver`, `Whisky`, `Kegworks`, `GPTK`, `Wine (unknown)` (a Wine build no named runtime claims), `native`; null when detection failed |
 | `stack.runtimeVersion` | string? | Runtime version when its bundle exposes one. |
 | `stack.wineArch` | string? | `arm64ec` or `x86_64`. |
@@ -47,9 +47,15 @@ or null. A reader must treat any missing optional key as unknown.
 | `settings.onACAtStart` | bool? | On AC power when the run started. |
 | `settings.displayWidth`, `displayHeight` | int? | Main display size at start (`CGDisplayPixelsWide`/`High` of the main display). Absent when unknown. |
 | `settings.refreshHz` | number? | Main display refresh rate at start (current display mode). Absent when unknown (0). |
+| `graphics.preset` | string? | In-game preset: `low`, `medium`, `high`, `veryHigh`, `ultra`, `custom`. The whole `graphics` object is optional (absent in older runs); unknown strings read as absent. |
+| `graphics.width`, `graphics.height` | int? | Render resolution the user set in the game. |
+| `graphics.upscaler` | string? | `off`, `metalfx`, `fsr`, `xess`, `dlss`, `other`. |
+| `graphics.upscalerMode` | string? | `quality`, `balanced`, `performance`, `ultraPerformance`, `native`; needed unless `upscaler` is `off`. |
+| `graphics.frameGeneration` | bool? | Frame generation on. Publishing needs all of preset, size, upscaler (and its mode) and frame generation. |
 | `user.label` | string | Free text given with `--label`. Default empty. |
 | `user.gameSettings` | string | Free text given with `--settings`: in-game settings. Default empty. |
 | `user.notes` | string | Free text given with `--notes`. Default empty. |
+| `user.videoURL` | string? | A YouTube link in canonical form `https://www.youtube.com/watch?v=<11-char id>`; anything that does not parse as YouTube is rejected, never stored. |
 | `start` | date | Run start (recording start, includes warm-up). |
 | `end` | date? | Run end. Absent if the recorder was killed hard. |
 | `steadyStartS`, `steadyEndS` | number? | Steady window, seconds since `start` (`elapsed_s`). Warm-up end to run end. Readers use it only when `steadyStartS > 0`, else compute their own. |
@@ -159,6 +165,7 @@ The zip holds one folder with that name, so unzipping it gives a run folder that
       frames.csv      only if the run has one; re-written from its numbers: the three columns above (by header
                       name, 2 decimals), rows with a missing or non-numeric value dropped, other columns dropped
       manifest.json
+      summary.json    headline numbers (see "summary.json" below); listed in the manifest
       run.json        the run's run.json, re-scrubbed; user.notes is "" unless the user opted in
       samples.csv     the run's samples.csv with every text cell scrubbed again (`fps_app`, `thermal_state`, `mem_pressure`, and any
                       cell in any column that is not a number); numbers and column order unchanged
@@ -197,6 +204,31 @@ game settings are always included (they are the point of a submission); notes on
 
 Size: when the files listed in the manifest total more than 25 MB (25 × 1024 × 1024 bytes, uncompressed), export is
 refused ("This run is too large to submit"), to keep within a single Cloudflare Worker request body.
+
+## summary.json
+
+Written into the zip (and listed in `manifest.json` with size and hash) and sent as its own upload part. Sorted keys,
+absent numbers are `null`. It is a convenience the website re-checks from `samples.csv`, never trusted on its own.
+
+| key | meaning |
+|---|---|
+| `summaryVersion` | 1. |
+| `medianFPS`, `p1LowFPS` | Median FPS and 1 % low over the steady rows (`p1LowFPS` needs `frames.csv`). |
+| `fpsPerWatt` | `medianFPS` divided by mean power of `powerSource`; null without power. |
+| `meanSystemW` | Mean `smc_PSTR_w` over steady rows; null unless `powerSource` is `system`. |
+| `steadyStartS`, `steadyEndS` | The run's recorded steady window, or null. |
+| `limiter` | `{ primary, verdict }` from the limiter analysis; `primary` is `memory`, `frameCap`, `gpuThermal`, `gpu`, `cpuOneThread`, `cpu`, `unclear` or null. |
+| `powerSource` | `system` (`smc_PSTR_w`), `gpuOnly` (`gpu_w`, a lower bound) or `none`. |
+
+Row selection is `RunSummary`: with `steadyStartS > 0` the rows from it to `steadyEndS`; otherwise the most common
+`fps_app`, the first 10 s dropped, rows above 2 x the median FPS dropped. Golden examples: `Tests/Fixtures/site/`.
+
+## Publishing
+
+The app uploads the zip plus byte-identical `run.json`, `samples.csv` and `summary.json` as multipart parts, signed with
+a per-Mac P-256 key. The request contract, headers and signed message are in
+`docs/superpowers/specs/2026-11-25-metal-pt-website-design.md` section 4.B. `mpt payload RUN --out DIR` writes the four
+parts; `scripts/make-site-fixtures.sh` builds the website's test fixtures from them.
 
 A website should check `format`, every listed file's size and hash, reject unknown files, and treat all text as
 untrusted.

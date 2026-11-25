@@ -1,0 +1,53 @@
+{
+  "appVersion": "0.2.0",
+  "end": "2026-11-20T12:03:20Z",
+  "fpsSource": "log",
+  "game": {
+    "exe": "hzd.exe",
+    "storeAppID": "steam:1151640",
+    "title": "Horizon Zero Dawn"
+  },
+  "graphics": {
+    "frameGeneration": false,
+    "height": 1440,
+    "preset": "high",
+    "upscaler": "metalfx",
+    "upscalerMode": "quality",
+    "width": 2560
+  },
+  "machine": {
+    "chip": "Apple M4 Max",
+    "gpuCores": 40,
+    "gpuMaxMHz": 1578,
+    "memoryGB": 48,
+    "modelID": "Mac16,5",
+    "osBuild": "25B78",
+    "osVersion": "26.1"
+  },
+  "schema": 1,
+  "settings": {
+    "displayHeight": 2234,
+    "displayWidth": 3456,
+    "onACAtStart": true,
+    "powerMode": "high",
+    "refreshHz": 120
+  },
+  "stack": {
+    "graphics": [
+      "DXMT"
+    ],
+    "runtime": "Protium",
+    "translator": "FEX",
+    "wineArch": "arm64ec"
+  },
+  "start": "2026-11-20T12:00:00Z",
+  "steadyEndS": 200.0,
+  "steadyStartS": 20.0,
+  "user": {
+    "gameSettings": "High, MetalFX Quality",
+    "label": "Fixture: system power with warm-up",
+    "notes": "",
+    "videoURL": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  },
+  "warnings": []
+}

@@ -65,11 +65,15 @@ Metal-PT game-title/FPS-per-watt plan (`docs/superpowers/plans/2026-11-25-metal-
 final review: editable game title (`game.title`; `game.exe` stays the recorded app) and FPS/W as a headline metric.
 `SummaryReport.version` 4 and run-index `cacheVersion` 4 regenerate older summaries and caches lazily.
 Also committed (25af2c3): compare hang fix, same-game Add Runs, runs named by what differs + coloured, D3DMetal version in the stack (`docs/BACKLOG.md`).
+Metal-PT website part 1 (`docs/superpowers/plans/2026-11-25-metal-pt-website-app-prep.md`, what the app carries: graphics, video
+link, Steam ID, `summary.json`, publish payload, signing key, golden fixtures in `Tests/Fixtures/site/` ->
+`web/test/fixtures/`) done; part 2 (the Worker in `web/`, then the app's Publish UI) is next.
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 
 ## Resume here
 
 Manual check: title a real ARMSX2 run, then check the Runs row, run header, Compare and Submit.
+Manual check: Secure Enclave key under the signed, bundled app (first Publish).
 User's manual checks of the rebuilt app: a heavy GPU-bound game recording (verify the GPU clock mapping and record it
 `[M]` in hardware-baseline), the red menu-bar label and sounds, the not-reporting warning, notifications. Then a first
 GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the Metal-PT Helper plan (battery charge limit and
