@@ -69,20 +69,20 @@ import Testing
         return try dec.decode(RunInfo.self, from: Data(contentsOf: folder.appendingPathComponent("run.json")))
     }
 
-    @Test func zipHasManifestAndNoSummary() throws {
+    @Test func zipHasManifestAndSummaryJSONButNoSummaryHTML() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let bundle = try makeBundle()
         let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"),
                                       appVersion: "9.9")
         let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
-        #expect(names == ["frames.csv", "manifest.json", "run.json", "samples.csv"])
+        #expect(names == ["frames.csv", "manifest.json", "run.json", "samples.csv", "summary.json"])
         let m = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: folder.appendingPathComponent("manifest.json")))
         #expect(m.format == "metal-pt-run")
         #expect(m.schema == 1)
         #expect(m.app == "9.9")
         #expect(m.includesNotes == false)
-        #expect(m.files.map(\.path) == ["frames.csv", "run.json", "samples.csv"])
+        #expect(m.files.map(\.path) == ["frames.csv", "run.json", "samples.csv", "summary.json"])
         for f in m.files {
             let data = try Data(contentsOf: folder.appendingPathComponent(f.path))
             #expect(f.bytes == data.count)
@@ -108,7 +108,7 @@ import Testing
         let zip = try RunExport.write(bundle, includeNotes: false, to: root.appendingPathComponent("exports"))
         let folder = try unzip(zip).appendingPathComponent("\(base).mptrun")
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
-        #expect(names == ["manifest.json", "run.json", "samples.csv"])
+        #expect(names == ["manifest.json", "run.json", "samples.csv", "summary.json"])
         #expect(RunExport.preview(bundle, includeNotes: false).frameCount == nil)
     }
 

@@ -26,7 +26,7 @@ public struct ExportPreview: Equatable, Sendable {
     public var columnCount: Int
     /// Frame times sent; nil: no frames.csv.
     public var frameCount: Int?
-    /// Total size of the files in the upload (run.json, samples.csv, frames.csv; not the manifest), uncompressed.
+    /// Total size of the files in the upload (run.json, samples.csv, frames.csv, summary.json; not the manifest), uncompressed.
     public var bytes: Int
     public var privacyLine: String
 }
@@ -95,7 +95,7 @@ public enum RunExport {
             sampleCount: csvs?.sampleCount ?? 0,
             columnCount: csvs?.columnCount ?? 0,
             frameCount: csvs?.frameCount,
-            bytes: json + (csvs?.files.reduce(0) { $0 + $1.data.count } ?? 0),
+            bytes: json + ((try? SiteSummary(bundle: bundle).encoded())?.count ?? 0) + (csvs?.files.reduce(0) { $0 + $1.data.count } ?? 0),
             privacyLine: privacyLine)
     }
 
@@ -238,20 +238,42 @@ public enum RunExport {
                              appVersion: String = MetalPTVersion.current, limit: Int = maxBytes,
                              hosts: [String]? = nil) throws -> URL {
         let fm = FileManager.default
+        let staged = try stageFiles(bundle, includeNotes: includeNotes, hosts: hosts)
+        let total = staged.files.reduce(0) { $0 + $1.data.count }
+        guard total <= limit else { throw Error.tooLarge(bytes: total) }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let out = availableZip(in: dir, folderName: staged.folderName)
+        try zip(staged, includeNotes: includeNotes, appVersion: appVersion, to: out)
+        return out
+    }
+
+    /// Every file of the upload except manifest.json (run.json, samples.csv, frames.csv, summary.json), sorted by path,
+    /// plus the folder name. The one place the bytes are made: the zip and the publish payload both take them from here.
+    struct StagedFiles {
+        var files: [(path: String, data: Data)]
+        var folderName: String
+
+        func data(_ path: String) -> Data? { files.first { $0.path == path }?.data }
+    }
+
+    static func stageFiles(_ bundle: RunBundle, includeNotes: Bool, hosts: [String]?) throws -> StagedFiles {
         var files = try stageCSVs(bundle, hosts: hosts).files
         files.append(("run.json", try runJSON(bundle.info, includeNotes: includeNotes, hosts: hosts)))
+        files.append(("summary.json", try SiteSummary(bundle: bundle).encoded()))
         files.sort { $0.path < $1.path }
-        let total = files.reduce(0) { $0 + $1.data.count }
-        guard total <= limit else { throw Error.tooLarge(bytes: total) }
+        return StagedFiles(files: files, folderName: folderName(bundle.info, hosts: hosts))
+    }
 
+    /// Writes the staged files and manifest.json into a temporary folder and zips it with ditto to `out`.
+    static func zip(_ staged: StagedFiles, includeNotes: Bool, appVersion: String, to out: URL) throws {
+        let fm = FileManager.default
         let stagingRoot = fm.temporaryDirectory.appendingPathComponent("mpt-export-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: stagingRoot) }
-        let name = folderName(bundle.info, hosts: hosts)
-        let staging = stagingRoot.appendingPathComponent(name)
+        let staging = stagingRoot.appendingPathComponent(staged.folderName)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
 
         var entries: [ManifestFile] = []
-        for f in files {
+        for f in staged.files {
             try f.data.write(to: staging.appendingPathComponent(f.path))
             entries.append(ManifestFile(path: f.path, bytes: f.data.count,
                                         sha256: SHA256.hash(data: f.data).map { String(format: "%02x", $0) }.joined()))
@@ -262,8 +284,6 @@ public enum RunExport {
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try enc.encode(manifest).write(to: staging.appendingPathComponent("manifest.json"))
 
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let out = availableZip(in: dir, folderName: name)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         p.arguments = ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", "--noacl", "--keepParent",
@@ -278,7 +298,6 @@ public enum RunExport {
             throw Error.zipFailed(status: p.terminationStatus,
                                   message: message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        return out
     }
 
     private struct ManifestFile: Encodable {
