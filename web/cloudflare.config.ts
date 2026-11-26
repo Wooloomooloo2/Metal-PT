@@ -38,6 +38,10 @@ export default defineConfig(({ mode }) => {
         // public; the secret is uploaded with `cf deploy --secrets-file` / the dashboard, never committed.
         TURNSTILE_SITE_KEY: bindings.text("0x4AAAAAAGT9bUnCW06efxOQ"),
         TURNSTILE_SECRET: bindings.secret(),
+        // Cloudflare Access application "Metal-PT admin (staging)" on this host's /admin and /admin/* (one allowed
+        // email; Cloudflare-account and email-code logins). The Worker verifies Access's JWT against these.
+        ACCESS_TEAM_DOMAIN: bindings.text("solitary-bush-8405"),
+        ACCESS_AUD: bindings.text("7b81b9785c0bf2f7f54b9550111fc54b9b3187745a3ab74b6682cea6cd2cc469"),
       },
     },
   };

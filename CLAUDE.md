@@ -84,9 +84,10 @@ fixes: `.superpowers/sdd/2026-11-25-metal-pt-website-site/final-fix-report.md`.
 Website, in order (production only when the user says so):
 1-2. Done 2026-11-26: R2 enabled, staging deployed. Redeploy after Worker changes: `cd web && npm run deploy:staging`
    (new migrations: `npm run migrate:staging` first). Release builds hide publishing while `SiteClient.isLive` is false.
-3. Access (admin) and Turnstile (report form): follow "Setup: Cloudflare Access (admin) and Turnstile (reports)" in
-   `web/README.md` (team domain + AUD to `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`, Turnstile site key to
-   `TURNSTILE_SITE_KEY`, secret `TURNSTILE_SECRET`; redeploy staging).
+3. Done 2026-11-26 for staging: Turnstile widget "Metal-PT reports" (secret uploaded with `cf deploy --secrets-file`,
+   kept across deploys), Zero Trust team `solitary-bush-8405` (Free), Access app "Metal-PT admin (staging)" on
+   /admin and /admin/* (one allowed email; Cloudflare-account and email-code logins); values in `web/cloudflare.config.ts`.
+   Production needs its own Access app for metal-pt.com/admin (the Turnstile widget already lists metal-pt.com).
 4. Manual checks: first Publish from the bundled app (Secure Enclave key under the signed app); app and `mpt` sharing
    the key (publish in one, remove in the other); a real game run published and viewed on a phone; the notification
    "Publish..." action.
