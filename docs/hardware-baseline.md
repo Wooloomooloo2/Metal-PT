@@ -95,6 +95,16 @@ Raw outputs are in `docs/data/`. Procedure: `docs/m0-test-plan.md`.
     `MTL_HUD_LOG_METRICS_ENABLED=1` added nothing visible. Other variables are listed by `strings libMTLHud.dylib`.
   - Still to test: a real Wine/CrossOver/Protium game (DXMT and D3DMetal), whether the HUD env reaches it, stderr
     capture through `wine`, and `log stream` CPU cost.
+- [M] E8 2026-11-26, **Metal HUD hidden, logging kept** (macOS 27.0, a minimal MTKView test app at 60 Hz, 12 s per case,
+  launched directly with the variables; window captured with `screencapture -l`):
+  - `MTL_HUD_ENABLED=1 MTL_HUD_LOG_ENABLED=1`: HUD panel drawn top-right; 11 `metal-HUD:` lines in the unified log,
+    final cumulative frame count 669.
+  - the same plus **`MTL_HUD_OPACITY=0`: no HUD visible** in the capture; 11 lines, final count 670 (identical
+    logging). Per-frame lines on stderr too.
+  - `MTL_HUD_LOG_ENABLED=1` alone, or with `MTL_HUD_ENABLED=0`: **no lines at all** (logging needs the HUD enabled).
+  - libMTLHud also adds an in-app menu (Enable HUD ⌘F9, Enable Logging ⌘F8, Configuration Panel ⌘F12).
+  - Metal-PT sets `MTL_HUD_OPACITY=0` unless "Show Apple's Metal HUD in games" is on (`MetalHUDEnvironment`).
+    [?] Not yet confirmed in a Wine/CrossOver game (same libMTLHud, expected to match).
 - [M] E8 2026-11-24: **each HUD line appears twice in the unified log**: first with empty subsystem, then a copy with
   subsystem `com.apple.metal.hud`, category `Logging`, same thread and message, ~50–130 µs later. A naive per-event
   frame delta then gives 0 fps on the copy; `FrameCounter` ignores an unchanged count < 0.25 s after the previous line.

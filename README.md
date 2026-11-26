@@ -35,8 +35,10 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
 
 - **FPS logging** (Settings, or the menu bar): FPS comes from Apple's Metal HUD. Turning FPS logging on sets the
   HUD variables for apps you launch from now on. Then **quit and relaunch the game, and its launcher** (CrossOver,
-  Protium...) so they pick the variables up. The HUD is drawn in the game while FPS logging is on. Turning it off,
-  or quitting Metal-PT, removes the variables again; games already running keep the HUD until they restart.
+  Protium...) so they pick the variables up. Apple's HUD panel itself stays hidden (`MTL_HUD_OPACITY=0`; frame times
+  are still logged) unless you turn on "Show Apple's Metal HUD in games"; a game keeps the choice it started with.
+  Turning FPS logging off, or quitting Metal-PT, removes the variables again; games already running keep them until
+  they restart.
 - **⌃⇧F6** starts and stops a recording. It works without a game detected (telemetry only); FPS fills in once a
   game with FPS logging appears. A notification says when the run is saved.
 - **⌃⇧F7** shows or hides the in-game overlay. Its style, corner and opacity are in Settings. Both hotkeys can
@@ -142,6 +144,7 @@ as the app. It runs as you and needs no helper. Details: `docs/adr/0002-unprivil
 
     F=.build/debug/mpt
     $F hud on                      # terminal 1: leave running; Ctrl-C unsets the HUD variables
+                                   # (Apple's HUD panel stays hidden; add --show-hud to see it)
     # relaunch the launcher / game, get to a repeatable scene, then in terminal 2:
     $F record --warmup 15 --seconds 120 --label "CrossOver DXMT" --settings "High, 1440p"
     $F ls                          # run names

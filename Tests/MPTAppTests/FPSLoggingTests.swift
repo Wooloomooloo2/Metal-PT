@@ -20,11 +20,14 @@ private final class FakeLaunchctl: LaunchctlRunning, @unchecked Sendable {
 }
 
 private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
+private let opacity = "MTL_HUD_OPACITY"
+private let all = both + [opacity]
 
 @Suite struct FPSLoggingTests {
     @Test func adoptsWhenEnabled() {
         let fake = FakeLaunchctl()
         for n in both { fake.env[n] = "1" }
+        fake.env[opacity] = "0"
         let fps = FPSLogging(launchctl: fake)
         fps.reconcileAtLaunch(enabled: true)
         #expect(fps.isOn)
@@ -90,7 +93,7 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         let fps = FPSLogging(launchctl: fake)
         try? fps.setEnabled(true)
         fake.stickyUnset = true
-        #expect(throws: FPSLoggingError.stillSet(both)) { try fps.setEnabled(false) }
+        #expect(throws: FPSLoggingError.stillSet(all)) { try fps.setEnabled(false) }
         #expect(fps.isOn)   // reflects reality: the variables are still set
     }
 
@@ -100,7 +103,7 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         try? fps.setEnabled(true)
         fake.stickyUnset = true
         fps.releaseAtQuit()
-        #expect(fps.lastError == .stillSet(both))
+        #expect(fps.lastError == .stillSet(all))
         #expect(fps.isOn)
         fake.stickyUnset = false
         fps.releaseAtQuit()
@@ -136,11 +139,87 @@ private let both = ["MTL_HUD_ENABLED", "MTL_HUD_LOG_ENABLED"]
         for n in both { #expect(fake.env[n] == nil) }
     }
 
+    // MARK: Apple's HUD hidden (MTL_HUD_OPACITY=0) unless shown
+
+    @Test func enableHidesHUDByDefault() throws {
+        let fake = FakeLaunchctl()
+        let fps = FPSLogging(launchctl: fake)
+        try fps.setEnabled(true)
+        for n in both { #expect(fake.env[n] == "1") }
+        #expect(fake.env[opacity] == "0")
+        #expect(!fps.showsHUD)
+        try fps.setEnabled(false)
+        for n in all { #expect(fake.env[n] == nil) }
+    }
+
+    @Test func enableWithShowHUDLeavesOpacityUnsetAndClearsAStaleOne() throws {
+        let fake = FakeLaunchctl()
+        fake.env[opacity] = "0"
+        let fps = FPSLogging(launchctl: fake)
+        try fps.setEnabled(true, showHUD: true)
+        for n in both { #expect(fake.env[n] == "1") }
+        #expect(fake.env[opacity] == nil)
+        #expect(fps.showsHUD)
+    }
+
+    @Test func setShowHUDWhileOnChangesOpacityAtOnce() throws {
+        let fake = FakeLaunchctl()
+        let fps = FPSLogging(launchctl: fake)
+        try fps.setEnabled(true)
+        try fps.setShowHUD(true)
+        #expect(fake.env[opacity] == nil)
+        #expect(fps.isOn)
+        try fps.setShowHUD(false)
+        #expect(fake.env[opacity] == "0")
+        for n in both { #expect(fake.env[n] == "1") }
+    }
+
+    @Test func setShowHUDWhileOffOnlyRemembers() throws {
+        let fake = FakeLaunchctl()
+        let fps = FPSLogging(launchctl: fake)
+        try fps.setShowHUD(true)
+        #expect(fake.calls.isEmpty)
+        #expect(fps.showsHUD)
+        #expect(!fps.isOn)
+    }
+
+    @Test func reconcileFixesOpacityToTheSetting() {
+        let fake = FakeLaunchctl()
+        for n in both { fake.env[n] = "1" }
+        let fps = FPSLogging(launchctl: fake)
+        fps.reconcileAtLaunch(enabled: true)            // hidden wanted, opacity missing
+        #expect(fake.env[opacity] == "0")
+        #expect(fps.isOn)
+        let fps2 = FPSLogging(launchctl: fake)
+        fps2.reconcileAtLaunch(enabled: true, showHUD: true)   // shown wanted, opacity 0 left over
+        #expect(fake.env[opacity] == nil)
+        #expect(fps2.isOn)
+    }
+
+    @Test func reconcileDisabledUnsetsALeftoverOpacity() {
+        let fake = FakeLaunchctl()
+        fake.env[opacity] = "0"
+        let fps = FPSLogging(launchctl: fake)
+        fps.reconcileAtLaunch(enabled: false)
+        #expect(fake.env[opacity] == nil)
+        #expect(!fps.isOn)
+    }
+
+    @Test func opacityFailureRollsBackEverything() {
+        let fake = FakeLaunchctl()
+        fake.failSet = [opacity]
+        let fps = FPSLogging(launchctl: fake)
+        #expect(throws: FPSLoggingError.self) { try fps.setEnabled(true) }
+        #expect(!fps.isOn)
+        for n in all { #expect(fake.env[n] == nil) }
+    }
+
     @Test func releaseAtQuitUnsetsEvenIfWeNeverTookIt() {
         let fake = FakeLaunchctl()
         for n in both { fake.env[n] = "1" }
+        fake.env[opacity] = "0"
         FPSLogging(launchctl: fake).releaseAtQuit()
-        for n in both { #expect(fake.env[n] == nil) }
+        for n in all { #expect(fake.env[n] == nil) }
     }
 }
 

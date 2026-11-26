@@ -83,12 +83,14 @@ public final class RecordingSession: @unchecked Sendable {
         /// The child inherits the owner's SIGPIPE disposition: the owner must ignore SIGPIPE (the CLI does), or the
         /// child may die writing to its stderr pipe after the owner exits.
         public var launch: [String]?
+        /// For `launch`: show Apple's on-screen HUD (false: hidden with `MTL_HUD_OPACITY=0`, frame times unchanged).
+        public var showHUD: Bool
         /// Written to run.json.
         public var appVersion: String
 
         public init(seconds: Double? = nil, warmup: Double = 0, label: String = "", settings: String = "",
                     notes: String = "", runsRoot: URL, follow: FollowRule = .busiest, launch: [String]? = nil,
-                    appVersion: String) {
+                    showHUD: Bool = false, appVersion: String) {
             self.seconds = seconds
             self.warmup = warmup
             self.label = label
@@ -97,6 +99,7 @@ public final class RecordingSession: @unchecked Sendable {
             self.runsRoot = runsRoot
             self.follow = follow
             self.launch = launch
+            self.showHUD = showHUD
             self.appVersion = appVersion
         }
     }
@@ -117,7 +120,9 @@ public final class RecordingSession: @unchecked Sendable {
     }
 
     /// Environment added to a launched child.
-    public static let hudEnvironment = ["MTL_HUD_ENABLED": "1", "MTL_HUD_LOG_ENABLED": "1"]
+    public static func hudEnvironment(showHUD: Bool) -> [String: String] {
+        MetalHUDEnvironment.values(showHUD: showHUD)
+    }
     /// How long `stop` waits for a stack detection under way (lsof is bounded at 5 s).
     static let detectionWait: DispatchTimeInterval = .seconds(2)
 
@@ -435,7 +440,7 @@ public final class RecordingSession: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, writeFD, 2)
 
         var env = ProcessInfo.processInfo.environment
-        for (k, v) in Self.hudEnvironment { env[k] = v }
+        for (k, v) in Self.hudEnvironment(showHUD: options.showHUD) { env[k] = v }
         let argv = command.map { strdup($0) } + [nil]
         let envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { (argv + envp).forEach { free($0) } }

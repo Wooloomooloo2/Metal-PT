@@ -154,6 +154,7 @@ private final class Fixture {
 }
 
 private let both = FPSLogging.variables
+private let opacity = "MTL_HUD_OPACITY"
 
 @MainActor
 private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
@@ -190,8 +191,29 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(f.model.fpsLoggingOn)
         #expect(f.hudHolds == 1)
         for n in both { #expect(f.launchctl.env[n] == "1") }
+        #expect(f.launchctl.env[opacity] == "0")   // Apple's HUD hidden by default
         f.model.quit()
         for n in both { #expect(f.launchctl.env[n] == nil) }
+        #expect(f.launchctl.env[opacity] == nil)
+    }
+
+    /// "Show Apple's Metal HUD in games": saved, applied at once while FPS logging is on, and used at the next turn-on.
+    @Test func showMetalHUDSettingDrivesOpacity() {
+        let f = Fixture(fpsLogging: false)
+        f.model.launch()
+        f.model.setShowMetalHUD(true)
+        #expect(f.defaults.bool(forKey: SettingsKey.showMetalHUD))
+        #expect(f.model.showMetalHUD)
+        #expect(f.launchctl.env[opacity] == nil)
+        f.model.setFPSLogging(true)
+        for n in both { #expect(f.launchctl.env[n] == "1") }
+        #expect(f.launchctl.env[opacity] == nil)
+        f.model.setShowMetalHUD(false)
+        #expect(f.launchctl.env[opacity] == "0")
+        #expect(f.model.fpsLoggingOn)
+        #expect(f.hudHolds == 1)
+        f.model.quit()
+        #expect(f.launchctl.env[opacity] == nil)
     }
 
     /// Quit hands the variables back even when we believe FPS logging is off (recovery reads state).
@@ -219,8 +241,8 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
             }
         }
         f.model.quit()
-        #expect(recordingAtUnset == [true, true])
-        #expect(hudHoldsAtUnset == [1, 1])
+        #expect(recordingAtUnset == [true, true, true])
+        #expect(hudHoldsAtUnset == [1, 1, 1])
         for n in both { #expect(f.launchctl.env[n] == nil) }
         #expect(!f.hub.isRecording)
         #expect(f.hudHolds == 0)

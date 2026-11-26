@@ -67,9 +67,13 @@ private struct SettingsContent: View {
             SettingsToggle("FPS logging", isOn: Binding(get: { model.fpsLoggingOn },
                                                         set: { model.setFPSLogging($0) }))
             SettingsNote("Sets MTL_HUD_ENABLED and MTL_HUD_LOG_ENABLED for apps started from now on, so Metal-PT can "
-                         + "read their frame times. Apple's Metal HUD then shows on screen in those games. Start the "
-                         + "game — or quit and restart it and its launcher — after turning this on. Turned off again "
-                         + "when Metal-PT quits.")
+                         + "read their frame times. Start the game — or quit and restart it and its launcher — after "
+                         + "turning this on. Turned off again when Metal-PT quits.")
+            SettingsToggle("Show Apple's Metal HUD in games", isOn: Binding(get: { model.showMetalHUD },
+                                                                           set: { model.setShowMetalHUD($0) }))
+            SettingsNote("Off: Apple's HUD panel is hidden (MTL_HUD_OPACITY=0) and frame times are still recorded; "
+                         + "Metal-PT's own overlay shows the numbers. A game keeps the choice it started with, so a "
+                         + "change applies to games started afterwards.")
             if let error = model.fpsLoggingError {
                 HStack(alignment: .firstTextBaseline) {
                     Warning(text: error)
@@ -186,7 +190,7 @@ private struct SettingsContent: View {
             ])
             SettingsSlider("Background opacity", value: $opacity, text: OverlayView.opacityPercent(opacity))
             SettingsNote("The overlay sits above full-screen games and ignores the mouse. Top left keeps it clear "
-                         + "of Apple's Metal HUD (top right). Text stays fully opaque.")
+                         + "of Apple's Metal HUD (top right) if you show that. Text stays fully opaque.")
         }
     }
 

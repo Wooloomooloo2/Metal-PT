@@ -70,6 +70,10 @@ Metal-PT website part 1 (`docs/superpowers/plans/2026-11-25-metal-pt-website-app
 link, Steam ID, `summary.json`, publish payload, signing key, golden fixtures in `Tests/Fixtures/site/` ->
 `web/test/fixtures/`) done; part 2 (the Worker in `web/`, then the app's Publish UI) is next.
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
+Apple's Metal HUD panel is hidden by default (2026-11-26): FPS logging also sets `MTL_HUD_OPACITY=0` (measured: logging
+unchanged; hardware-baseline E8), Settings "Show Apple's Metal HUD in games" / `mpt hud on --show-hud` / `mpt run
+--show-hud` show it (`MetalHUDEnvironment` in MPTCore). Unconfirmed in a real Wine game. Flaky under load (e.g. a game
+running): AppModelTests `debounceIgnoresSecondPress`, TelemetryHubTests `stopNow*`; they pass when run alone.
 Metal-PT website (plan `docs/superpowers/plans/2026-11-25-metal-pt-website-site.md`, notes in `web/README.md`): part 1 (app prep:
 bundle, signing, Submit) and part 2 (Worker in `web/`: publish API, pages, reports, admin, and the app's Publish/Remove,
 `mpt publish`) are built and tested. Staging is deployed (2026-11-26) at https://metal-pt-staging.yh7mm4fp8v.workers.dev (D1

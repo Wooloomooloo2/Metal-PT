@@ -22,7 +22,7 @@ enum OverlayStyle: String, CaseIterable, Sendable {
     }
 }
 
-/// The screen corner the overlay sits in. Default top-left: Apple's Metal HUD (which must be on for FPS) is top-right.
+/// The screen corner the overlay sits in. Default top-left: clear of Apple's Metal HUD (top right) when that is shown.
 enum OverlayCorner: String, CaseIterable, Sendable {
     case topLeft, topRight, bottomLeft, bottomRight
 

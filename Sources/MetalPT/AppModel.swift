@@ -8,6 +8,8 @@ import MPTCore
 enum SettingsKey {
     /// Bool, default false: FPS logging (the Metal HUD variables) on.
     static let fpsLogging = "fpsLogging"
+    /// Bool, default false: Apple's Metal HUD shown in games (false: hidden with `MTL_HUD_OPACITY=0`, logging unchanged).
+    static let showMetalHUD = "showMetalHUD"
     /// String: the data folder chosen in Settings (unset = `~/Documents/Metal-PT`).
     static let dataFolder = "dataFolder"
     /// String, `HotkeyCombo.display` form ("⌃⇧F6").
@@ -108,6 +110,8 @@ final class AppModel: ObservableObject {
     /// `FPSLogging.lastError` (or an unexpected error), copied after each lease operation.
     @Published private(set) var fpsLoggingError: String?
     @Published private(set) var fpsLoggingOn = false
+    /// The "Show Apple's Metal HUD in games" setting.
+    @Published private(set) var showMetalHUD = false
     /// The last refused or failed recording start, or the last warning/error of the recording (cleared at the next
     /// start); "still being saved" is cleared once the save completes.
     @Published private(set) var recordingProblem: String?
@@ -166,6 +170,7 @@ final class AppModel: ObservableObject {
         self.live = live
         self.usesAppKit = usesAppKit ?? live
         self.defaults = defaults
+        self.showMetalHUD = defaults.bool(forKey: SettingsKey.showMetalHUD)
         self.env = env
         self.notifier = notifier ?? (live && (usesAppKit ?? live) ? Notifications() : nil)
         self.sounds = sounds ?? (live && (usesAppKit ?? live) ? SystemSounds() : nil)
@@ -366,7 +371,8 @@ final class AppModel: ObservableObject {
         if launchctlDisabled {
             Self.log("\(SingleInstance.allowSecondKey)=1: second instance; FPS logging (launchctl) is left alone")
         } else {
-            fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging))
+            fpsLogging.reconcileAtLaunch(enabled: defaults.bool(forKey: SettingsKey.fpsLogging),
+                                         showHUD: defaults.bool(forKey: SettingsKey.showMetalHUD))
         }
         syncFPSLogging()
         hub.menuBarWantsSamplesWhenFollowing = true
@@ -452,7 +458,7 @@ final class AppModel: ObservableObject {
         guard live else { return }
         var unexpected: Error?
         do {
-            try fpsLogging.setEnabled(on)
+            try fpsLogging.setEnabled(on, showHUD: defaults.bool(forKey: SettingsKey.showMetalHUD))
         } catch is FPSLoggingError {
             // Kept in `fpsLogging.lastError`, copied by `syncFPSLogging`.
         } catch {
@@ -461,6 +467,27 @@ final class AppModel: ObservableObject {
         syncFPSLogging()
         if let unexpected {
             fpsLoggingError = "Could not turn FPS logging \(on ? "on" : "off"): \(unexpected.localizedDescription)"
+            Self.log(fpsLoggingError ?? "")
+        }
+    }
+
+    /// Shows or hides Apple's Metal HUD in games started from now on. Saved first, like `setFPSLogging`; while FPS
+    /// logging is on, `MTL_HUD_OPACITY` is changed at once (games already running keep what they started with).
+    func setShowMetalHUD(_ show: Bool) {
+        defaults.set(show, forKey: SettingsKey.showMetalHUD)
+        showMetalHUD = show
+        guard live, !launchctlDisabled else { return }
+        var unexpected: Error?
+        do {
+            try fpsLogging.setShowHUD(show)
+        } catch is FPSLoggingError {
+            // Kept in `fpsLogging.lastError`, copied by `syncFPSLogging`.
+        } catch {
+            unexpected = error
+        }
+        syncFPSLogging()
+        if let unexpected {
+            fpsLoggingError = "Could not \(show ? "show" : "hide") the Metal HUD: \(unexpected.localizedDescription)"
             Self.log(fpsLoggingError ?? "")
         }
     }

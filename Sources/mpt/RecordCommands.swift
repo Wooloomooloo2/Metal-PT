@@ -8,10 +8,11 @@ enum RecordCommands {
                                        follows the Metal process with the most frames unless --pid/--name;
                                        --warmup must be shorter than --seconds; --settings records the
                                        in-game settings, --notes anything else (both shown in the summary)
-        run [--seconds N] [--warmup S] [--label TEXT] [--settings TEXT] [--notes TEXT] -- CMD ARGS...
+        run [--seconds N] [--warmup S] [--label TEXT] [--settings TEXT] [--notes TEXT] [--show-hud] -- CMD ARGS...
                                        launch CMD with the HUD variables, record it and its per-frame times;
                                        stops at N seconds, when CMD exits or on Ctrl-C (CMD keeps running;
-                                       it inherits SIGPIPE ignored so it survives mpt exiting)
+                                       it inherits SIGPIPE ignored so it survives mpt exiting); Apple's HUD
+                                       panel is hidden (MTL_HUD_OPACITY=0) unless --show-hud
         stack PID                      print the detected runtime / translator / graphics stack as JSON
         ls                             list recorded runs
         summary RUN [--open]           write RUN/summary.html (RUN: a .mptrun folder, or its name under the runs
@@ -36,21 +37,24 @@ enum RecordCommands {
         } else if let name = o["--name"] {
             follow = .nameContains(name)
         }
-        try record(o, follow: follow, launch: nil)
+        try record(o, follow: follow, launch: nil, showHUD: false)
     }
 
     static func run(_ args: [String]) throws {
         guard let dash = args.firstIndex(of: "--"), dash + 1 < args.count else {
             throw UsageError("run needs -- CMD [ARGS...]")
         }
-        let o = try parseOptions(Array(args[..<dash]), allowed: ["--seconds", "--warmup", "--label", "--settings",
-                                                                          "--notes", "--out"])
-        try record(o, follow: .busiest, launch: Array(args[(dash + 1)...]))
+        var before = Array(args[..<dash])
+        let showHUD = before.contains("--show-hud")
+        before.removeAll { $0 == "--show-hud" }
+        let o = try parseOptions(before, allowed: ["--seconds", "--warmup", "--label", "--settings", "--notes", "--out"])
+        try record(o, follow: .busiest, launch: Array(args[(dash + 1)...]), showHUD: showHUD)
     }
 
     /// Runs a `RecordingSession` until `--seconds`, the child's exit, or a signal (which exits from the lease's
     /// handler). Never returns.
-    private static func record(_ o: [String: String], follow: FollowRule, launch: [String]?) throws -> Never {
+    private static func record(_ o: [String: String], follow: FollowRule, launch: [String]?,
+                               showHUD: Bool) throws -> Never {
         let seconds = try number(o, "--seconds")
         if let seconds, seconds <= 0 { throw UsageError("--seconds needs a number > 0") }
         let warmup = try number(o, "--warmup") ?? 0
@@ -61,7 +65,7 @@ enum RecordCommands {
         let options = RecordingSession.Options(
             seconds: seconds, warmup: warmup, label: o["--label"] ?? "", settings: o["--settings"] ?? "",
             notes: o["--notes"] ?? "", runsRoot: try runsRoot(o["--out"], create: true), follow: follow,
-            launch: launch, appVersion: appVersion)
+            launch: launch, showHUD: showHUD, appVersion: appVersion)
         let session = try RecordingSession(options: options, telemetry: TelemetrySampler(), hud: MetalHUDLogStream())
 
         session.onMessage = { m in
