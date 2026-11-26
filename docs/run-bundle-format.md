@@ -219,6 +219,7 @@ absent numbers are `null`. It is a convenience the website re-checks from `sampl
 | `steadyStartS`, `steadyEndS` | The run's recorded steady window, or null. |
 | `limiter` | `{ primary, verdict }` from the limiter analysis; `primary` is `memory`, `frameCap`, `gpuThermal`, `gpu`, `cpuOneThread`, `cpu`, `unclear` or null. |
 | `powerSource` | `system` (`smc_PSTR_w`), `gpuOnly` (`gpu_w`, a lower bound) or `none`. |
+| `publisherVersion` | Optional (left out when absent): the version of the app that made the file (publishing or exporting it). metal-pt.com checks its minimum app version on this, else on run.json `appVersion`. |
 
 Row selection is `RunSummary`: with `steadyStartS > 0` the rows from it to `steadyEndS`; otherwise the most common
 `fps_app`, the first 10 s dropped, rows above 2 x the median FPS dropped. Golden examples: `Tests/Fixtures/site/`.
