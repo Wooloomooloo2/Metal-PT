@@ -20,17 +20,28 @@ function r(keyId: string, fps: number, extra: Partial<StatRun> = {}): StatRun {
 }
 
 describe("weightedPercentile", () => {
-  it("is the smallest value whose cumulative weight reaches q of the total", () => {
+  it("is the smallest value whose cumulative weight passes q of the total", () => {
     const v = [
       { value: 10, weight: 1 },
       { value: 20, weight: 1 },
       { value: 30, weight: 1 },
       { value: 40, weight: 1 },
     ];
-    expect(weightedPercentile(v, 0.25)).toBe(10);
-    expect(weightedPercentile(v, 0.5)).toBe(20);
-    expect(weightedPercentile(v, 0.75)).toBe(30);
+    expect(weightedPercentile(v, 0.2)).toBe(10);
+    expect(weightedPercentile(v, 0.6)).toBe(30);
     expect(weightedPercentile(v, 1)).toBe(40);
+  });
+
+  it("landing exactly on q gives the mean of that value and the next (as the plain median)", () => {
+    const v = [10, 20, 30, 40].map((value) => ({ value, weight: 1 }));
+    expect(weightedPercentile(v, 0.25)).toBe(15);
+    expect(weightedPercentile(v, 0.5)).toBe(25);
+    expect(weightedPercentile(v, 0.75)).toBe(35);
+    // Two equally weighted Macs: the midpoint.
+    expect(weightedPercentile([{ value: 50, weight: 1 }, { value: 60, weight: 1 }], 0.5)).toBe(55);
+    // Within 1e-9: quarters of thirds still land.
+    const sixth = 1 / 6;
+    expect(weightedPercentile([1, 2, 3, 4, 5, 6].map((value) => ({ value, weight: sixth })), 0.5)).toBe(3.5);
   });
 
   it("thirds that sum to just under 1 still reach the median", () => {
@@ -50,10 +61,11 @@ describe("groupStats: one Mac counts once (Review Focus 1)", () => {
     expect(s.counted).toBe(5);
     expect(s.macs).toBe(2);
     expect(s.enough).toBe(true);
-    // Weights: A's runs 0.25 each (total 1), B 1; total 2. Median: cumulative ≥ 1 first at A's 63.
-    expect(s.typical).toBe(63);
-    // p25: cumulative ≥ 0.5 at 61; p75: ≥ 1.5 only at B's 80.
-    expect(s.p25).toBe(61);
+    // Weights: A's runs 0.25 each (total 1), B 1; total 2. Median: cumulative lands exactly on 1 at A's 63 →
+    // mean of 63 and the next value, B's 80 (the two Macs weigh the same).
+    expect(s.typical).toBe(71.5);
+    // p25: cumulative lands exactly on 0.5 at 61 → (61 + 62) / 2; p75: passes 1.5 only at B's 80.
+    expect(s.p25).toBe(61.5);
     expect(s.p75).toBe(80);
     expect(s.outlierIds).toEqual([]);
   });
@@ -80,8 +92,8 @@ describe("groupStats: one Mac counts once (Review Focus 1)", () => {
   it("3 runs from 2 Macs is enough", () => {
     const s = groupStats([r("A", 50), r("A", 52), r("B", 54)]);
     expect(s.enough).toBe(true);
-    // A: 0.5 + 0.5, B: 1; total 2: median at cumulative ≥ 1 → 52.
-    expect(s.typical).toBe(52);
+    // A: 0.5 + 0.5, B: 1; total 2: cumulative lands exactly on 1 at 52 → (52 + 54) / 2.
+    expect(s.typical).toBe(53);
   });
 });
 
@@ -98,7 +110,8 @@ describe("groupStats: outliers", () => {
     expect(s.outlierIds).toEqual([far.id]);
     expect(s.counted).toBe(4);
     expect(s.macs).toBe(4);
-    expect(s.typical).toBe(51);
+    // 50, 51, 52, 53 equally weighted: the median lands between 51 and 52.
+    expect(s.typical).toBe(51.5);
   });
 
   it("low outliers too", () => {

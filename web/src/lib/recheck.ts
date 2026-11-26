@@ -6,6 +6,37 @@ import type { RunJson } from "./run-json.ts";
 
 /** The columns the re-check reads (spec §4.J also lists `on_ac`, read by the upload's sanity checks). */
 export const RECHECK_COLUMNS = ["elapsed_s", "fps", "fps_app", "smc_PSTR_w", "gpu_w"] as const;
+/** Everything the upload reads from samples.csv, in its one pass. */
+export const SAMPLE_COLUMNS = [...RECHECK_COLUMNS, "on_ac"] as const;
+
+/**
+ * samples.csv parsed once (the Free plan's 10 ms CPU budget): each numeric column converted to number | null a
+ * single time (Swift `Double(String)` rules) and reused by the re-check, the sanity checks and the chart series.
+ */
+export interface Samples {
+  rows: number;
+  elapsed: (number | null)[];
+  fps: (number | null)[];
+  app: (string | undefined)[];
+  system: (number | null)[];
+  gpu: (number | null)[];
+  /** Raw `on_ac` cells: "1", "0" or missing. */
+  onAC: (string | undefined)[];
+}
+
+export function parseSamples(text: string): Samples {
+  const cols = parseColumns(text, [...SAMPLE_COLUMNS]);
+  const nums = (c: (string | undefined)[]) => c.map(swiftDouble);
+  return {
+    rows: cols.elapsed_s.length,
+    elapsed: nums(cols.elapsed_s),
+    fps: nums(cols.fps),
+    app: cols.fps_app,
+    system: nums(cols.smc_PSTR_w),
+    gpu: nums(cols.gpu_w),
+    onAC: cols.on_ac,
+  };
+}
 
 export type PowerSource = "system" | "gpuOnly" | "none";
 
@@ -19,6 +50,8 @@ export interface Recheck {
   steadyRows: number;
   /** Steady rows with an FPS value: rows are 1 Hz, so these are the steady seconds with FPS (spec §4.C.2). */
   steadySeconds: number;
+  /** The steady rows' indices, ascending. */
+  steady: number[];
 }
 
 /** summary.json (spec §4.A; Swift `SiteSummary`). */
@@ -61,11 +94,11 @@ function median(sorted: number[]): number {
 const ascending = (a: number, b: number) => a - b;
 
 /** Swift: `steady.compactMap { Double(...) }.filter(\.isFinite).sorted()`, then mean (summed in sorted order) and median. */
-function columnStats(values: (string | undefined)[], steady: number[]): { mean: number; median: number; count: number } | null {
+function columnStats(values: (number | null)[], steady: number[]): { mean: number; median: number; count: number } | null {
   const vals: number[] = [];
   for (const i of steady) {
-    const v = swiftDouble(values[i]);
-    if (v !== null && Number.isFinite(v)) vals.push(v);
+    const v = values[i];
+    if (v != null && Number.isFinite(v)) vals.push(v);
   }
   if (vals.length === 0) return null;
   vals.sort(ascending);
@@ -74,14 +107,18 @@ function columnStats(values: (string | undefined)[], steady: number[]): { mean: 
   return { mean: sum / vals.length, median: median(vals), count: vals.length };
 }
 
+/** Re-check from samples.csv text (parses it; use `recheckSamples` when the samples are already parsed). */
 export function recheck(run: RunJson, samples: string): Recheck {
-  const cols = parseColumns(samples, [...RECHECK_COLUMNS]);
-  const n = cols.elapsed_s.length;
+  return recheckSamples(run, parseSamples(samples));
+}
+
+export function recheckSamples(run: RunJson, s: Samples): Recheck {
+  const n = s.rows;
   const indices = Array.from({ length: n }, (_, i) => i);
-  const elapsed = (i: number): number | null => swiftDouble(cols.elapsed_s[i]);
+  const elapsed = (i: number): number | null => s.elapsed[i] ?? null;
   // Swift `fps(i)`: nil for a missing or empty cell, else `Double(s)` (which may itself be nil).
-  const fps = (i: number): number | null => swiftDouble(cols.fps[i]);
-  const app = (i: number): string | undefined => cols.fps_app[i];
+  const fps = (i: number): number | null => s.fps[i] ?? null;
+  const app = (i: number): string | undefined => s.app[i];
 
   let steady: number[];
   const end = run.steadyEndS ?? Infinity;
@@ -140,9 +177,9 @@ export function recheck(run: RunJson, samples: string): Recheck {
     }
   }
 
-  const fpsStats = columnStats(cols.fps, steady);
-  const system = columnStats(cols.smc_PSTR_w, steady);
-  const gpu = system === null ? columnStats(cols.gpu_w, steady) : null;
+  const fpsStats = columnStats(s.fps, steady);
+  const system = columnStats(s.system, steady);
+  const gpu = system === null ? columnStats(s.gpu, steady) : null;
   const powerSource: PowerSource = system !== null ? "system" : gpu !== null ? "gpuOnly" : "none";
   const power = system ?? gpu;
   const medianFPS = fpsStats?.median ?? null;
@@ -155,6 +192,7 @@ export function recheck(run: RunJson, samples: string): Recheck {
     powerSource,
     steadyRows: steady.length,
     steadySeconds: fpsStats?.count ?? 0,
+    steady,
   };
 }
 

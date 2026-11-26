@@ -8,6 +8,68 @@
 export type Columns = Record<string, (string | undefined)[]>;
 
 export function parseColumns(text: string, wanted: string[]): Columns {
+  // samples.csv almost never quotes anything (only a text cell with a comma or quote would be): then the runtime's
+  // native split does the scanning, several times faster than the general loop on a cold isolate.
+  return text.indexOf('"') === -1 && text.indexOf("\r") === -1 ? parseUnquoted(text, wanted) : parseGeneral(text, wanted);
+}
+
+/**
+ * The same result as `parseGeneral` for text without any `"` or CR: each record is found with `indexOf` and only the
+ * cells up to the last wanted column are visited; only wanted cells are copied.
+ */
+export function parseUnquoted(text: string, wanted: string[]): Columns {
+  const out: Columns = {};
+  for (const w of wanted) out[w] = [];
+  const len = text.length;
+  // Records end at LF only (the caller sends text with a CR to the general parser).
+  const lineEnd = (from: number): [number, number] => {
+    const i = text.indexOf("\n", from);
+    return i === -1 ? [len, len] : [i, i + 1];
+  };
+
+  let pos = 0;
+  let header: string[] | null = null;
+  // Header index -> output column, and the last index needed.
+  let pick: (string | undefined)[] = [];
+  let last = -1;
+  let rows = 0;
+  while (pos < len) {
+    const [end, next] = lineEnd(pos);
+    if (end > pos) {
+      if (header === null) {
+        header = text.slice(pos, end).split(",");
+        const want = new Set(wanted);
+        const seen = new Set<string>();
+        for (const h of header) {
+          if (!want.has(h)) continue;
+          // A repeated wanted name: the general parser's per-row "later present cell wins" applies.
+          if (seen.has(h)) return parseGeneral(text, wanted);
+          seen.add(h);
+        }
+        pick = header.map((h) => (want.has(h) ? h : undefined));
+        for (let i = 0; i < pick.length; i++) if (pick[i] !== undefined) last = i;
+      } else {
+        let cell = 0;
+        let start = pos;
+        while (cell <= last && start <= end) {
+          let comma = text.indexOf(",", start);
+          if (comma === -1 || comma > end) comma = end;
+          const name = pick[cell];
+          if (name !== undefined) out[name][rows] = comma > start ? text.slice(start, comma) : undefined;
+          cell += 1;
+          start = comma + 1;
+        }
+        for (const w of wanted) if (out[w].length === rows) out[w].push(undefined);
+        rows += 1;
+      }
+    }
+    pos = next;
+  }
+  return out;
+}
+
+/** RFC-4180 with quotes: one pass, character by character. */
+export function parseGeneral(text: string, wanted: string[]): Columns {
   const out: Columns = {};
   for (const w of wanted) out[w] = [];
 
@@ -87,7 +149,9 @@ export function parseColumns(text: string, wanted: string[]): Columns {
         if (d === 0x22 || d === 0x2c || d === 0x0a || d === 0x0d) break;
         j += 1;
       }
-      field += text.slice(i, j);
+      // Only wanted cells (and the header) are copied: the others are skipped without allocating.
+      const p = pick as (string | undefined)[] | null;
+      if (p === null || (cell < p.length && p[cell] !== undefined)) field += text.slice(i, j);
       sawAny = true;
       i = j;
       continue;

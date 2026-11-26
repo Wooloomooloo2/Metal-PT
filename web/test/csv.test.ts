@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseColumns } from "../src/lib/csv.ts";
+import { parseColumns, parseGeneral, parseUnquoted } from "../src/lib/csv.ts";
+import { FIXTURE_NAMES, fixtureText } from "./fixtures.ts";
 
 describe("parseColumns", () => {
   it("picks wanted columns by header name, empty cells undefined", () => {
@@ -30,5 +31,26 @@ describe("parseColumns", () => {
 
   it("empty text gives empty columns", () => {
     expect(parseColumns("", ["a"])).toEqual({ a: [] });
+  });
+});
+
+describe("parseUnquoted (the fast path) equals parseGeneral", () => {
+  const wanted = ["elapsed_s", "fps", "fps_app", "smc_PSTR_w", "gpu_w", "on_ac", "nope"];
+  it.each(FIXTURE_NAMES)("on fixture %s", (name) => {
+    const text = fixtureText(name, "samples.csv");
+    expect(text.includes('"')).toBe(false);
+    expect(parseUnquoted(text, wanted)).toEqual(parseGeneral(text, wanted));
+  });
+  it.each([
+    ["blank lines and a trailing comma", "a,b,c\n\n1,2,\n\n4,,6\n"],
+    ["short and long rows", "a,b,c\n1\n1,2,3,4,5\n,\n"],
+    ["no final newline", "a,b\n1,2"],
+    ["header only", "a,b\n"],
+    ["leading blank lines", "\n\na,b\n1,2\n"],
+    ["repeated header name", "a,b,a\n1,2,3\n4,5\n"],
+    ["white space is a value", "a,b\n ,2\n \n"],
+    ["empty", ""],
+  ])("%s", (_, text) => {
+    for (const w of [["a"], ["b", "c"], ["c", "a", "x"]]) expect(parseUnquoted(text, w)).toEqual(parseGeneral(text, w));
   });
 });

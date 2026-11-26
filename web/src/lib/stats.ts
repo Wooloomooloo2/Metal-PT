@@ -46,8 +46,10 @@ export interface Weighted {
 const EPS = 1e-9;
 
 /**
- * Weighted percentile: the smallest value whose cumulative weight (values ascending) is ≥ q · total weight.
- * (An exact data value, never interpolated; with equal weights q = 0.5 is the lower median.)
+ * Weighted percentile (values ascending): the smallest value whose cumulative weight passes q · total weight; when
+ * the cumulative weight lands exactly on q · total (within 1e-9), the mean of that value and the next one. So with
+ * equal weights q = 0.5 is the plain median (two equally weighted Macs give their midpoint), consistent with the
+ * plain medians used everywhere else; otherwise the result is an exact data value, never interpolated.
  */
 export function weightedPercentile(values: Weighted[], q: number): number | null {
   if (values.length === 0) return null;
@@ -55,10 +57,14 @@ export function weightedPercentile(values: Weighted[], q: number): number | null
   let total = 0;
   for (const v of sorted) total += v.weight;
   const target = q * total;
+  const eps = EPS * Math.max(1, total);
   let cum = 0;
-  for (const v of sorted) {
-    cum += v.weight;
-    if (cum >= target - EPS * Math.max(1, total)) return v.value;
+  for (let i = 0; i < sorted.length; i++) {
+    cum += sorted[i].weight;
+    if (Math.abs(cum - target) <= eps) {
+      return i + 1 < sorted.length ? (sorted[i].value + sorted[i + 1].value) / 2 : sorted[i].value;
+    }
+    if (cum > target) return sorted[i].value;
   }
   return sorted[sorted.length - 1].value;
 }
