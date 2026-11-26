@@ -278,7 +278,7 @@ final class StubTransport: HTTPTransport, @unchecked Sendable {
         #expect(SiteClient.override(["MPT_SITE_URL": "ftp://x"]) == nil)
         #expect(SiteClient.override(["MPT_SITE_URL": " "]) == nil)
         #expect(SiteClient.override([:]) == nil)
-        #expect(SiteClient.defaultBase.absoluteString == "https://metal-pt.com")
+        #expect(SiteClient.defaultBase.absoluteString == "https://metal-pt-staging.yh7mm4fp8v.workers.dev")
     }
 
     @Test func defaultTransportKeepsNoCookiesOrCache() {

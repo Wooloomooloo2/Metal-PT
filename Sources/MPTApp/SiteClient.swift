@@ -57,8 +57,8 @@ public struct SiteClient: Sendable {
         }
     }
 
-    // TODO(staging): set to the staging workers.dev URL until production is approved
-    public static let defaultBase = URL(string: "https://metal-pt.com")!
+    /// The staging site until production is approved; set to https://metal-pt.com when going live (with isLive).
+    public static let defaultBase = URL(string: "https://metal-pt-staging.yh7mm4fp8v.workers.dev")!
 
     /// flip when metal-pt.com production is live. While false, release builds of the app hide everything that talks
     /// to the site (Publish, Remove, "Open on metal-pt.com", the edit sheet's video sync, "Offer to publish after

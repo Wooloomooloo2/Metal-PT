@@ -72,9 +72,9 @@ link, Steam ID, `summary.json`, publish payload, signing key, golden fixtures in
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
 Metal-PT website (plan `docs/superpowers/plans/2026-11-25-metal-pt-website-site.md`, notes in `web/README.md`): part 1 (app prep:
 bundle, signing, Submit) and part 2 (Worker in `web/`: publish API, pages, reports, admin, and the app's Publish/Remove,
-`mpt publish`) are built and tested locally. Staging is NOT deployed yet: R2 must be enabled in the Cloudflare dashboard
-first. `SiteClient.defaultBase` is still `https://metal-pt.com` (a TODO(staging) marks it), and `SiteClient.isLive` is
-false: release builds hide Publish, Remove, "Open on metal-pt.com", the video sync and "Offer to publish" (Export
+`mpt publish`) are built and tested. Staging is deployed (2026-11-26) at https://metal-pt-staging.yh7mm4fp8v.workers.dev (D1
+`metal-pt-staging`, R2 `metal-pt-runs-staging`, migrations 0001-0003) and `SiteClient.defaultBase` points at it; smoke-tested
+with `mpt publish`/`unpublish` and the fixtures. `SiteClient.isLive` is false: release builds hide Publish, Remove, "Open on metal-pt.com", the video sync and "Offer to publish" (Export
 stays); debug builds and `mpt publish --site`/`MPT_SITE_URL` still publish. Runs over 90 steady minutes are refused on
 both sides (`PublishLimits` in the app, `MAX_STEADY_SECONDS`/`MAX_SAMPLES_BYTES` in `web/src/config.ts`). Final review
 fixes: `.superpowers/sdd/2026-11-25-metal-pt-website-site/final-fix-report.md`.
@@ -82,10 +82,8 @@ fixes: `.superpowers/sdd/2026-11-25-metal-pt-website-site/final-fix-report.md`.
 ## Resume here
 
 Website, in order (production only when the user says so):
-1. Enable R2 in the Cloudflare dashboard (R2 Object Storage, Free plan).
-2. Staging: create bucket `metal-pt-runs-staging` with cf (dry-run first); `cd web && npm run migrate:staging`;
-   `npm run deploy:staging`; note the workers.dev URL and set `SiteClient.defaultBase` to it (then rebuild the app;
-   release builds still hide publishing while `SiteClient.isLive` is false — test with a debug build or `mpt --site`).
+1-2. Done 2026-11-26: R2 enabled, staging deployed. Redeploy after Worker changes: `cd web && npm run deploy:staging`
+   (new migrations: `npm run migrate:staging` first). Release builds hide publishing while `SiteClient.isLive` is false.
 3. Access (admin) and Turnstile (report form): follow "Setup: Cloudflare Access (admin) and Turnstile (reports)" in
    `web/README.md` (team domain + AUD to `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`, Turnstile site key to
    `TURNSTILE_SITE_KEY`, secret `TURNSTILE_SECRET`; redeploy staging).
