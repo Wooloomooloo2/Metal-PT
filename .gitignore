@@ -9,3 +9,6 @@ build/
 web/node_modules/
 web/.wrangler/
 web/.cf/
+web/dist/
+web/.dev.vars*
+web/.env*

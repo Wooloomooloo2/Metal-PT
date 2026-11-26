@@ -7,6 +7,8 @@ declare global {
       DB: D1Database;
       RUNS: R2Bucket;
       TEST_MIGRATIONS: D1Migration[];
+      /** Golden fixtures: name -> file name -> base64 of the file's bytes (vitest.config.ts). */
+      FIXTURES: Record<string, Record<string, string>>;
     }
   }
 }
