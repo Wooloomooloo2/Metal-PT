@@ -16,6 +16,7 @@ struct RunsPage: View {
     @State private var editing: RunEntry?
     @State private var submitting: RunEntry?
     @State private var deleting: RunEntry?
+    @State private var unpublishing: RunEntry?
     @State private var problem: String?
 
     init(model: AppModel, ticked: Set<String> = [], filter: String = "") {
@@ -48,12 +49,15 @@ struct RunsPage: View {
         .onAppear {
             refresh()
             selectRequestedRun()
+            openRequestedSubmit()
         }
         .onChange(of: store.entries) {
             ticked.formIntersection(store.entries.filter { !$0.inProgress }.map(\.id))
             selectRequestedRun()
         }
         .onChange(of: model.selectedRun) { selectRequestedRun() }
+        .onChange(of: model.submitRun) { openRequestedSubmit() }
+        .onChange(of: store.entries) { openRequestedSubmit() }
         .sheet(item: $editing) { entry in
             EditNotesSheet(entry: entry, store: store)
         }
@@ -67,6 +71,14 @@ struct RunsPage: View {
         } message: { entry in
             Text("\(entry.game), \(RunFormat.date(entry.start)). The folder \(entry.id) goes to the Trash; "
                  + "you can put it back from there.")
+        }
+        .confirmationDialog("Remove this run from metal-pt.com?", isPresented: Binding(
+            get: { unpublishing != nil }, set: { if !$0 { unpublishing = nil } }), presenting: unpublishing) { entry in
+            Button("Remove from metal-pt.com", role: .destructive) { unpublish(entry) }
+            Button("Cancel", role: .cancel) {}
+        } message: { entry in
+            Text("\(entry.game), \(RunFormat.date(entry.start)). Its page and its place in the statistics go; "
+                 + "the run stays on this Mac.")
         }
         .alert("Runs", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK") {}
@@ -126,6 +138,11 @@ struct RunsPage: View {
                 .disabled(entry.inProgress)
             Button("Submit…") { submitting = entry }
                 .disabled(entry.inProgress)
+            if let url = entry.publishedURL {
+                Divider()
+                Button("Open on metal-pt.com") { NSWorkspace.shared.open(url) }
+                Button("Remove from metal-pt.com…") { unpublishing = entry }
+            }
             Button("Show in Finder") {
                 if let url = store.url(of: entry.id) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
@@ -194,6 +211,23 @@ struct RunsPage: View {
         model.selectedRun = nil
     }
 
+    /// A "Run saved" notification's "Publish…": open that run's Submit sheet once the index has it.
+    private func openRequestedSubmit() {
+        guard let url = model.submitRun, let entry = store.entry(url.lastPathComponent), !entry.inProgress else { return }
+        model.submitRun = nil
+        submitting = entry
+    }
+
+    private func unpublish(_ entry: RunEntry) {
+        Task {
+            do {
+                try await store.removeFromSite(entry.id)
+            } catch {
+                problem = "Could not remove the run from metal-pt.com: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func compare() {
         let runs = store.entries.filter { ticked.contains($0.id) && !$0.inProgress }
         do {
@@ -237,12 +271,22 @@ private struct RunRow: View {
             .help(entry.inProgress ? "Still recording" : ticked ? "Untick (leave out of the comparison)" : "Tick to compare")
             VStack(alignment: .leading, spacing: 2) {
                 // A title the user gave, with the recorded app after it in secondary text.
-                (Text(entry.game)
-                    + Text(entry.title != nil && !entry.app.isEmpty ? "  \(entry.app)" : "")
-                        .font(.subheadline).foregroundStyle(.secondary))
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 4) {
+                    (Text(entry.game)
+                        + Text(entry.title != nil && !entry.app.isEmpty ? "  \(entry.app)" : "")
+                            .font(.subheadline).foregroundStyle(.secondary))
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if entry.isPublished {
+                        Spacer(minLength: 2)
+                        Image(systemName: "globe")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentColor)
+                            .help("Published on metal-pt.com")
+                            .accessibilityLabel("Published")
+                    }
+                }
                 let sub = [entry.stackLine, entry.settings, entry.label].filter { !$0.isEmpty }
                 Text(sub.isEmpty ? "Stack unknown" : sub.joined(separator: " · "))
                     .font(.subheadline)

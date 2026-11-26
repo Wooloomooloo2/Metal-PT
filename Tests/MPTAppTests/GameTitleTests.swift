@@ -153,26 +153,26 @@ import MPTCore
     }
 
     @Test func olderCacheVersionIsRebuilt() throws {
-        #expect(RunIndex.cacheVersion == 5)
+        #expect(RunIndex.cacheVersion == 6)
         let root = tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try makeRun(in: root, exe: "ARMSX2", title: "Ico", start: 1_800_000_000)
         _ = RunIndex(root: root).entries()
         let cache = root.appendingPathComponent(RunIndex.cacheFileName)
         let text = try String(contentsOf: cache, encoding: .utf8)
-        #expect(text.contains("\"version\":5"))
-        // The same cache marked version 4 (entries had no graphics) is ignored: the run is parsed again.
+        #expect(text.contains("\"version\":6"))
+        // The same cache marked version 5 (entries had no published state) is ignored: the run is parsed again.
         final class Count: @unchecked Sendable { var n = 0 }
         let count = Count()
         let counting: RunIndex.Loader = { url, frames in count.n += 1; return try RunBundle.load(url, frames: frames) }
         _ = RunIndex(root: root, loader: counting).entries()
         #expect(count.n == 0)   // current cache reused
-        try Data(text.replacingOccurrences(of: "\"version\":5", with: "\"version\":4").utf8).write(to: cache)
+        try Data(text.replacingOccurrences(of: "\"version\":6", with: "\"version\":5").utf8).write(to: cache)
         let e = try #require(RunIndex(root: root, loader: counting).entries().first)
         #expect(count.n == 1)
         #expect(e.game == "Ico")
         #expect(e.app == "ARMSX2")
-        #expect(try String(contentsOf: cache, encoding: .utf8).contains("\"version\":5"))
+        #expect(try String(contentsOf: cache, encoding: .utf8).contains("\"version\":6"))
     }
 }
 

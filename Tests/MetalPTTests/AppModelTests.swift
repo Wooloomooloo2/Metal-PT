@@ -69,6 +69,7 @@ private final class FakeActivities: ActivityProviding, @unchecked Sendable {
 @MainActor
 private final class FakeNotifier: RecordingNotifying {
     var onOpenRun: ((URL) -> Void)?
+    var onPublishRun: ((URL) -> Void)?
     var authorizationRequests = 0
     var posted: [RecordingNotice] = []
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
@@ -294,9 +295,32 @@ private func waitUntil(_ what: String, _ condition: () -> Bool) async throws {
         #expect(saved.title == "Run saved — add settings")
         #expect(saved.run == run.directory)
         #expect(!saved.body.isEmpty)
+        #expect(!saved.offersPublish)
         f.notifier.onOpenRun?(run.directory)
         #expect(f.model.page == .runs)
         #expect(f.model.selectedRun == run.directory)
+        #expect(f.model.submitRun == nil)
+    }
+
+    /// Settings → "Offer to publish after each run" (off by default): the "Run saved" notification offers
+    /// "Publish…", which opens the run's Submit sheet in Runs.
+    @Test func offerToPublishAfterARun() async throws {
+        let f = Fixture()
+        #expect(!f.model.offerPublish)
+        f.defaults.set(true, forKey: SettingsKey.offerPublish)
+        f.model.launch()
+        f.model.toggleRecording()
+        try await waitUntil("recording") { f.model.recordState == .recording && f.notifier.posted.count == 1 }
+        f.model.toggleRecording()
+        try await waitUntil("idle") { f.model.recordState == .idle && f.notifier.posted.count == 2 }
+        let run = try #require(f.hub.lastRun)
+        let saved = try #require(f.notifier.posted.last)
+        #expect(saved.offersPublish)
+        #expect(saved.body.hasSuffix("Publish it to metal-pt.com?"))
+        f.notifier.onPublishRun?(run.directory)
+        #expect(f.model.page == .runs)
+        #expect(f.model.selectedRun == run.directory)
+        #expect(f.model.submitRun == run.directory)
     }
 
     /// Session messages reach the app: warnings and errors are shown, and a run with an error is announced as

@@ -29,6 +29,7 @@ private struct SettingsContent: View {
     @AppStorage(SettingsKey.overlayCorner) private var cornerSetting = OverlayCorner.defaultValue.rawValue
     @AppStorage(SettingsKey.overlayOpacity) private var opacity = OverlayDefaults.opacity
     @AppStorage(SettingsKey.soundOnRecord) private var soundOnRecord = true
+    @AppStorage(SettingsKey.offerPublish) private var offerPublish = false
     @Environment(\.rendersSnapshot) private var snapshot
 
     init(model: AppModel, recordingField: GlobalHotkeys.Action?, hotkeyMessages: [GlobalHotkeys.Action: String]) {
@@ -133,8 +134,11 @@ private struct SettingsContent: View {
         SettingsSection("Recording feedback") {
             SettingsToggle("Play a sound when recording starts and stops", isOn: $soundOnRecord)
             notificationRow
+            SettingsToggle("Offer to publish after each run", isOn: $offerPublish)
             SettingsNote("While recording, the menu bar shows a red ● with the elapsed time. Metal-PT asks for "
-                         + "notification permission at the first recording; \"Run saved\" notifications open the run.")
+                         + "notification permission at the first recording; \"Run saved\" notifications open the run. "
+                         + "With \"Offer to publish\", they also have Publish…, which opens the run's Submit sheet; "
+                         + "nothing is sent until you press Publish there.")
         }
     }
 

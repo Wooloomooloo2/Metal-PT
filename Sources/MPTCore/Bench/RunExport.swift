@@ -265,6 +265,9 @@ public enum RunExport {
     }
 
     /// Writes the staged files and manifest.json into a temporary folder and zips it with ditto to `out`.
+    /// The modification time of every entry in an upload zip (2026-01-01 00:00 UTC).
+    static let zipDate = Date(timeIntervalSince1970: 1_767_225_600)
+
     static func zip(_ staged: StagedFiles, includeNotes: Bool, appVersion: String, to out: URL) throws {
         let fm = FileManager.default
         let stagingRoot = fm.temporaryDirectory.appendingPathComponent("mpt-export-\(UUID().uuidString)")
@@ -283,6 +286,12 @@ public enum RunExport {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try enc.encode(manifest).write(to: staging.appendingPathComponent("manifest.json"))
+        // Fixed times: the same run zips to the same bytes (the website knows a run already published by the
+        // zip's SHA-256), whenever it is exported.
+        for path in staged.files.map(\.path) + ["manifest.json"] {
+            try fm.setAttributes([.modificationDate: zipDate], ofItemAtPath: staging.appendingPathComponent(path).path)
+        }
+        try fm.setAttributes([.modificationDate: zipDate], ofItemAtPath: staging.path)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")

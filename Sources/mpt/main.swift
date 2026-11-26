@@ -11,6 +11,7 @@ let usage = """
     \(CompareCommands.usage)
     \(ExportCommands.usage)
     \(PayloadCommands.usage)
+    \(PublishCommands.usage)
     \(HUDCommands.usage)
     """
 
@@ -36,6 +37,10 @@ do {
         try ExportCommands.run(Array(args.dropFirst()))
     case "payload":
         try PayloadCommands.run(Array(args.dropFirst()))
+    case "publish":
+        try await PublishCommands.publish(Array(args.dropFirst()))
+    case "unpublish":
+        try await PublishCommands.unpublish(Array(args.dropFirst()))
     case "compare":
         try CompareCommands.run(Array(args.dropFirst()))
     case "hud":

@@ -408,7 +408,7 @@ import MPTCore
         #expect(byGame["gpu"].map { $0.fpsPerWatt == nil } == true)
         #expect(byGame["none"].map { $0.fpsPerWatt == nil } == true)
         // Entries gained a field: caches of the previous shape are rebuilt.
-        #expect(RunIndex.cacheVersion == 5)
+        #expect(RunIndex.cacheVersion == 6)
     }
 
     @Test func updateSetsAndClearsGraphicsAndVideoWithoutTouchingTheExe() throws {
@@ -467,8 +467,62 @@ import MPTCore
         _ = index.entries()
         let url = root.appendingPathComponent(".index.json")
         let text = try String(contentsOf: url, encoding: .utf8)
-            .replacingOccurrences(of: "\"version\":5", with: "\"version\":4")
+            .replacingOccurrences(of: "\"version\":\(RunIndex.cacheVersion)", with: "\"version\":4")
         try text.write(to: url, atomically: true, encoding: .utf8)
         #expect(try #require(RunIndex(root: root).entries().first).graphics?.preset == .low)
+    }
+
+    @Test func publishedStateLivesBesideTheRunAndSurvivesACacheRebuild() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "g.exe", start: 1_800_000_000)
+        let counter = CountingLoader()
+        let index = RunIndex(root: root, loader: { try counter.load($0, frames: $1) })
+        let id = dir.lastPathComponent
+        #expect(try #require(index.entries().first).isPublished == false)
+        let loads = counter.total
+        let record = SiteRecord(id: "r_abc", url: URL(string: "https://metal-pt.com/run/r_abc")!)
+        try index.setPublished(dir: id, record: record)
+        let e = try #require(index.entries().first)
+        #expect(e.publishedID == "r_abc")
+        #expect(e.publishedURL == record.url)
+        #expect(counter.total == loads)   // no re-parse for a published-state change
+        #expect(index.published(dir: id) == record)
+        // A cache from another version is rebuilt: the record comes back from site.json.
+        try FileManager.default.removeItem(at: index.cacheURL)
+        #expect(try #require(RunIndex(root: root).entries().first).publishedID == "r_abc")
+        // Written outside the index (the CLI): picked up at the next scan.
+        try SiteRecord(id: "r_new", url: URL(string: "https://metal-pt.com/run/r_new")!).write(to: dir)
+        let later = Date().addingTimeInterval(5)
+        try FileManager.default.setAttributes([.modificationDate: later],
+                                              ofItemAtPath: dir.appendingPathComponent("site.json").path)
+        #expect(try #require(index.entries().first).publishedID == "r_new")
+        try index.clearPublished(dir: id)
+        #expect(try #require(index.entries().first).isPublished == false)
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("site.json").path))
+    }
+
+    @Test func siteRecordIsNeverExported() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "g.exe", start: 1_800_000_000)
+        try SiteRecord(id: "r_abc", url: URL(string: "https://metal-pt.com/run/r_abc")!).write(to: dir)
+        let payload = try PublishPayload.make(try RunBundle.load(dir, frames: true), includeNotes: false, hosts: [])
+        #expect(payload.bundleZip.range(of: Data("site.json".utf8)) == nil)
+    }
+
+    @Test func updateWithNilFieldsLeavesThem() throws {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeRun(in: root, game: "g.exe", start: 1_800_000_000, settings: "High", notes: "n")
+        let index = RunIndex(root: root)
+        _ = index.entries()
+        let g = RunInfo.Graphics(preset: .low, width: 1920, height: 1080, upscaler: .off, frameGeneration: false)
+        try index.update(dir: dir.lastPathComponent, settings: nil, notes: nil, label: nil, graphics: .some(g))
+        let info = try RunBundle.loadInfo(dir)
+        #expect(info.user.gameSettings == "High")
+        #expect(info.user.notes == "n")
+        #expect(info.user.label == "lbl")
+        #expect(info.graphics == g)
     }
 }

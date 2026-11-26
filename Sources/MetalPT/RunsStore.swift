@@ -17,6 +17,14 @@ final class RunsStore: ObservableObject {
     private(set) var root: URL?
     private var index: RunIndex?
 
+    /// The website client (set by `AppModel`; nil in snapshots and tests that do not publish). Called on the first
+    /// publish, remove or link change: it may create this Mac's publishing key.
+    var makeSiteClient: (@MainActor () throws -> SiteClient)?
+    /// `SiteKey.lostKeyNote` once the key was found replaced (shown in the Submit sheet).
+    @Published private(set) var siteKeyNote: String?
+    /// Set when the key was replaced (`AppModel`).
+    func noteKeyReplaced() { siteKeyNote = SiteKey.lostKeyNote }
+
     /// The bundle the app is recording now (the hub's), shown as "Recording…" and locked until it is finished.
     var recordingDirectory: URL? {
         didSet { applyRecordingDirectory() }
@@ -106,6 +114,53 @@ final class RunsStore: ObservableObject {
             let bundle = try RunBundle.load(url, frames: false)
             return try RunExport.write(bundle, includeNotes: includeNotes, to: folder)
         }.value
+    }
+
+    // MARK: - Website
+
+    private func publisher() throws -> SitePublisher {
+        guard let index else { throw CocoaError(.fileNoSuchFile) }
+        guard let make = makeSiteClient else { throw SiteError(message: "Publishing is not available here.") }
+        return SitePublisher(client: try make(), index: index)
+    }
+
+    /// Saves the graphics and video link into run.json when they changed (the upload carries them), then publishes
+    /// the run and records its page. Refused while recording.
+    func publish(_ id: String, includeNotes: Bool, graphics: RunInfo.Graphics?, videoURL: String?) async throws
+        -> SiteClient.Published {
+        let p = try publisher()
+        let index = p.index
+        let video = videoURL.flatMap { $0.isEmpty ? nil : $0 }
+        let list = try await Task.detached { () throws -> (SiteClient.Published, [RunEntry]) in
+            let user = try index.userFields(dir: id)
+            let current = index.entries().first { $0.id == id }?.graphics
+            let canonical = video.flatMap(YouTubeLink.videoID(from:)).map(YouTubeLink.canonicalURL(id:))
+            if current != graphics || user.videoURL != canonical {
+                try index.update(dir: id, settings: nil, notes: nil, label: nil, graphics: .some(graphics),
+                                 videoURL: .some(video))
+            }
+            let published = try await p.publish(dir: id, includeNotes: includeNotes)
+            return (published, index.entries())
+        }.value
+        entries = list.1
+        summaryVersions[id, default: 0] += 1
+        return list.0
+    }
+
+    /// Removes the run from the website (signed DELETE) and forgets its page.
+    func removeFromSite(_ id: String) async throws {
+        let p = try publisher()
+        let list = try await Task.detached {
+            try await p.remove(dir: id)
+            return p.index.entries()
+        }.value
+        entries = list
+    }
+
+    /// Sends a published run's new video link (nil clears it) to the website.
+    func setSiteVideo(_ id: String, url: String?) async throws {
+        let p = try publisher()
+        try await Task.detached { try await p.setVideo(dir: id, url: url) }.value
     }
 
     /// Snapshots: index `root` synchronously.

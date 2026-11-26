@@ -21,6 +21,8 @@ enum SettingsKey {
     static let overlayOpacity = "overlayOpacity"
     /// Bool, default true: a short sound when recording starts and stops.
     static let soundOnRecord = "soundOnRecord"
+    /// Bool, default false: the "Run saved" notification offers "Publish…" (opens the run's Submit sheet).
+    static let offerPublish = "offerPublish"
     /// The overlay's own keys: the panel re-lays itself out only when one of these changes.
     static let overlayKeys = [overlayStyle, overlayCorner, overlayOpacity]
 }
@@ -88,6 +90,8 @@ final class AppModel: ObservableObject {
     @Published var page: Page? = .live
     /// The run to show in Runs (set by a "Run saved" notification; the Runs page selects it).
     @Published var selectedRun: URL?
+    /// The run whose Submit sheet to open (a "Run saved" notification's "Publish…"; the Runs page opens it).
+    @Published var submitRun: URL?
     /// The compare project to show in Compare (set by Runs → "Compare selected…"; the Compare page selects it).
     @Published var selectedProject: URL?
     /// The runs folder's index, for the Runs page.
@@ -178,6 +182,13 @@ final class AppModel: ObservableObject {
         }
         self.frameCheck = frameCheck ?? FrameReportingCheck()
         self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
+        self.notifier?.onPublishRun = { [weak self] url in self?.openSubmit(url) }
+        if live && (usesAppKit ?? live) {
+            runs.makeSiteClient = { [weak self] in
+                guard let self else { throw SiteError(message: "Publishing is not available here.") }
+                return try self.siteClient()
+            }
+        }
         hub.objectWillChange
             .sink { [weak self] _ in
                 // After the change lands (objectWillChange fires before it).
@@ -237,6 +248,30 @@ final class AppModel: ObservableObject {
     /// Settings → "Play a sound when recording starts and stops" (default on).
     var soundOnRecord: Bool {
         defaults.object(forKey: SettingsKey.soundOnRecord) as? Bool ?? true
+    }
+
+    /// Settings → "Offer to publish after each run" (default off).
+    var offerPublish: Bool { defaults.bool(forKey: SettingsKey.offerPublish) }
+
+    /// This Mac's publishing key, loaded (or made) on the first publish, remove or link change.
+    private var siteKey: SiteKey?
+
+    /// The website client: `MPT_SITE_URL` in debug builds, else `SiteClient.defaultBase`; the key from
+    /// `~/Library/Application Support/Metal-PT/site-key` (shared with `mpt publish`).
+    func siteClient() throws -> SiteClient {
+        let key: SiteKey
+        if let siteKey {
+            key = siteKey
+        } else {
+            do {
+                key = try SiteKey.loadOrCreate(in: try AppFolders.support())
+            } catch {
+                throw SiteError(message: "Could not set up this Mac's publishing key: \(error.localizedDescription)")
+            }
+            siteKey = key
+            if key.wasReplaced { runs.noteKeyReplaced() }
+        }
+        return SiteClient(base: SiteClient.appBase(env: env), signer: key)
     }
 
     /// Settings' notification row: asks macOS again (on Settings appear and app activation).
@@ -497,6 +532,12 @@ final class AppModel: ObservableObject {
         showMainWindow()
     }
 
+    /// A "Run saved" notification's "Publish…": the run in Runs with its Submit sheet open.
+    func openSubmit(_ url: URL) {
+        submitRun = url
+        openRun(url)
+    }
+
     // MARK: - Actions
 
     /// Runs → "Compare selected…": saves a new compare project of `entries` and shows it in Compare.
@@ -693,7 +734,7 @@ final class AppModel: ObservableObject {
         if let run = hub.lastRun, run != lastSeenRun {
             lastSeenRun = run
             noteRun(run)
-            if !quitDone { notifier?.post(.saved(run, withProblems: runHadErrors)) }
+            if !quitDone { notifier?.post(.saved(run, withProblems: runHadErrors, offerPublish: offerPublish)) }
         }
         // The recording's folder is locked in Runs while it is written; rescan when it appears or is finished.
         let recordingDir = hub.recordingDirectory

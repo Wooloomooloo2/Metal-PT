@@ -95,4 +95,14 @@ import Testing
         #expect(!json.contains("\n"))
         #expect(json.hasPrefix("{\"fpsPerWatt\""))   // sorted keys
     }
+
+    /// The site refuses a bundle it already has (409, by SHA-256): the same run must zip to the same bytes each time.
+    @Test func sameRunZipsToTheSameBytes() throws {
+        let b = try makeBundle()
+        let first = try PublishPayload.make(b, includeNotes: false, hosts: [])
+        Thread.sleep(forTimeInterval: 1.1)   // a later second: file times must not leak into the zip
+        let second = try PublishPayload.make(b, includeNotes: false, hosts: [])
+        #expect(first.bundleZip == second.bundleZip)
+        #expect(first.hashes().bundle == second.hashes().bundle)
+    }
 }

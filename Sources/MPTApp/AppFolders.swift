@@ -24,6 +24,13 @@ public enum AppFolders {
         return v
     }
 
+    /// `~/Library/Application Support/Metal-PT`: the website publishing key (`site-key`). Shared by the app and
+    /// `mpt publish`, so runs published from either can be removed from either. Not created here.
+    public static func support() throws -> URL {
+        try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil,
+                                    create: false).appendingPathComponent("Metal-PT", isDirectory: true)
+    }
+
     private static func settingRoot(_ setting: String?) -> String? {
         setting.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
     }

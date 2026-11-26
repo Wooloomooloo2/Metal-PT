@@ -23,7 +23,7 @@ let package = Package(
         .target(name: "MPTCore", dependencies: ["CMacPrivate"]),
         .target(name: "MPTApp", dependencies: ["MPTCore"]),
         .executableTarget(name: "mptprobe", dependencies: ["MPTCore"]),
-        .executableTarget(name: "mpt", dependencies: ["MPTCore"]),
+        .executableTarget(name: "mpt", dependencies: ["MPTCore", "MPTApp"]),
         .executableTarget(
             name: "MetalPT",
             dependencies: ["MPTApp", "MPTCore"],

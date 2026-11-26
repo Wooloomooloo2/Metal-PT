@@ -134,7 +134,14 @@ enum Snapshots {
     /// Runs with three fixture bundles (two ticked for comparison), the edit sheet, and the empty folder.
     private static func runsShots() -> [Shot] {
         let withRuns = Fixture.model(.loggingOff)
-        withRuns.runs.showFixture(root: Fixture.makeRuns())
+        let runsRoot = Fixture.makeRuns()
+        withRuns.runs.showFixture(root: runsRoot)
+        // The second run is on the website (its row shows the published mark).
+        if withRuns.runs.entries.count > 1 {
+            try? SiteRecord(id: "k3v9q2x7mp", url: URL(string: "https://metal-pt.com/run/k3v9q2x7mp")!)
+                .write(to: runsRoot.appendingPathComponent(withRuns.runs.entries[1].id))
+            withRuns.runs.showFixture(root: runsRoot)
+        }
         let ids = withRuns.runs.entries.map(\.id)
         let recording = Fixture.model(.loggingOff)
         recording.runs.showFixture(root: Fixture.makeRuns(recording: true))
@@ -181,11 +188,33 @@ enum Snapshots {
             if let url = withRuns.runs.url(of: first.id), let b = try? RunBundle.load(url, frames: false) {
                 let previews = (withoutNotes: RunExport.preview(b, includeNotes: false),
                                 withNotes: RunExport.preview(b, includeNotes: true))
-                for (name, include) in [("runs-submit", false), ("runs-submit-notes", true)] {
-                    list.append(Shot(name: name, size: nil, width: 520,
-                                     view: AnyView(SubmitSheet(entry: first, store: withRuns.runs,
+                var ready = first
+                ready.graphics = .init(preset: .high, width: 2560, height: 1440, upscaler: .metalfx,
+                                       upscalerMode: .quality, frameGeneration: false)
+                var partial = first
+                partial.graphics = .init(preset: .high, upscaler: .fsr)
+                let page = URL(string: "https://metal-pt.com/run/k3v9q2x7mp")!
+                let video = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                let states: [(String, RunEntry, Bool, String?, SubmitSheet.Phase, Bool)] = [
+                    ("runs-submit", ready, false, video, .editing, false),
+                    ("runs-submit-notes", ready, true, nil, .editing, false),
+                    ("runs-submit-missing", partial, false, nil, .editing, true),
+                    ("runs-submit-publishing", ready, false, video, .publishing, false),
+                    ("runs-submit-published", ready, false, video,
+                     .published(.init(id: "k3v9q2x7mp", url: page,
+                                      notice: "Published without the video link: that video is private.")), false),
+                    ("runs-submit-already", ready, false, nil,
+                     .published(.init(id: "k3v9q2x7mp", url: page, alreadyPublished: true)), false),
+                    ("runs-submit-error", ready, false, nil,
+                     .failed("A run needs at least 60 seconds of steady play with a frame rate; this one has 42."), false),
+                    ("runs-submit-offline", ready, false, nil, .failed(SiteError.offline.message), false),
+                ]
+                for (name, entry, include, link, phase, missing) in states {
+                    list.append(Shot(name: name, size: nil, width: 560,
+                                     view: AnyView(SubmitSheet(entry: entry, store: withRuns.runs,
                                                                exportsFolder: URL(fileURLWithPath: "/tmp/exports"),
-                                                               previews: previews, includeNotes: include))))
+                                                               previews: previews, includeNotes: include,
+                                                               videoURL: link, phase: phase, showMissing: missing))))
                 }
             }
         }

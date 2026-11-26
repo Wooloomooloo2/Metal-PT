@@ -33,15 +33,21 @@ public struct RunEntry: Codable, Identifiable, Sendable, Equatable, Hashable {
     /// Being recorded right now (unfinished and still being written, or the app's current recording): listed as
     /// "Recording…", not editable, deletable or summarised. Worked out at each scan, never cached.
     public var inProgress: Bool
+    /// The run's id and page on the website (`site.json` in the bundle), when this Mac published it.
+    public var publishedID: String?
+    public var publishedURL: URL?
+    public var isPublished: Bool { publishedID != nil && publishedURL != nil }
 
     public init(id: String, game: String, app: String? = nil, stackLine: String, settings: String, label: String,
                 start: Date, duration: Double, medianFPS: Double?, low1: Double?, fpsPerWatt: Double? = nil,
-                finished: Bool = true, inProgress: Bool = false, graphics: RunInfo.Graphics? = nil) {
+                finished: Bool = true, inProgress: Bool = false, graphics: RunInfo.Graphics? = nil,
+                published: SiteRecord? = nil) {
         self.id = id; self.game = game; self.app = app ?? game
         self.stackLine = stackLine; self.settings = settings; self.label = label
         self.start = start; self.duration = duration; self.medianFPS = medianFPS; self.low1 = low1
         self.fpsPerWatt = fpsPerWatt; self.graphics = graphics
         self.finished = finished; self.inProgress = inProgress
+        self.publishedID = published?.id; self.publishedURL = published?.url
     }
 
     public static let unknownGame = "Unknown game"
@@ -100,12 +106,14 @@ public enum RunIndexError: LocalizedError, CustomStringConvertible {
     case newerFormat(Int)
     case inProgress
     case notYouTube
+    case notPublished
 
     public var description: String {
         switch self {
         case .newerFormat(let s): "this run was saved by a newer Metal-PT (format \(s)); edit it there"
         case .inProgress: "this run is still being recorded; try again once it has stopped"
         case .notYouTube: "only YouTube links (youtube.com, youtu.be) can be saved"
+        case .notPublished: "this run is not published on metal-pt.com"
         }
     }
 
@@ -132,8 +140,8 @@ public final class RunIndex: @unchecked Sendable {
 
     public static let cacheFileName = ".index.json"
     /// 3: `RunEntry.app`. 4: `RunEntry.fpsPerWatt` (a version-3 cache was written by builds before it).
-    /// 5: `RunEntry.graphics`.
-    static let cacheVersion = 5
+    /// 5: `RunEntry.graphics`. 6: `RunEntry.publishedID`/`publishedURL` and `Record.siteMtime`.
+    static let cacheVersion = 6
     /// Seconds since samples.csv was last written for an unfinished run to still count as being recorded (the
     /// recorder appends once a second).
     public static let activeWindow: TimeInterval = 10
@@ -146,6 +154,9 @@ public final class RunIndex: @unchecked Sendable {
         var entry: RunEntry?
         /// The run had ended when indexed, so `low1` is final.
         var finished: Bool
+        /// site.json's modification time, nil when there is none (published state changed outside the app: the
+        /// CLI's `mpt publish`).
+        var siteMtime: Double?
     }
 
     struct Cache: Codable {
@@ -227,13 +238,14 @@ public final class RunIndex: @unchecked Sendable {
     }
 
     /// Rewrites the run's user fields (privacy-scrubbed, by the bundle writer), regenerates summary.html and
-    /// refreshes the run's entry. The folder name does not change. Refuses a run in progress.
+    /// refreshes the run's entry. The folder name does not change. Refuses a run in progress. `settings`, `notes` and
+    /// `label`: nil leaves the field.
     /// `title`: the game's name (`normalizedTitle`: empty or the recorded app's name clears it); nil leaves it.
     /// `game.exe` is never changed.
     /// `graphics` and `videoURL` are doubly optional: outer nil leaves the field, `.some(nil)` clears it, a value sets
     /// it. A video link (or an empty one, which clears) must parse as YouTube, else `RunIndexError.notYouTube` and
     /// nothing is written; it is stored in canonical form.
-    public func update(dir: String, settings: String, notes: String, label: String, title: String? = nil,
+    public func update(dir: String, settings: String?, notes: String?, label: String?, title: String? = nil,
                        graphics: RunInfo.Graphics?? = nil, videoURL: String?? = nil) throws {
         var video: String??
         if let videoURL {
@@ -251,9 +263,9 @@ public final class RunIndex: @unchecked Sendable {
             var info = try infoLoader(url)
             guard !inProgressLocked(dir, finished: info.end != nil) else { throw RunIndexError.inProgress }
             guard info.schema <= RunInfo.currentSchema else { throw RunIndexError.newerFormat(info.schema) }
-            info.user.gameSettings = settings
-            info.user.notes = notes
-            info.user.label = label
+            if let settings { info.user.gameSettings = settings }
+            if let notes { info.user.notes = notes }
+            if let label { info.user.label = label }
             if let title { info.game.title = RunEntry.normalizedTitle(title, exe: info.game.exe) }
             if let graphics { info.graphics = graphics }
             if let video { info.user.videoURL = video }
@@ -272,7 +284,34 @@ public final class RunIndex: @unchecked Sendable {
         }
     }
 
+    /// Records that the run is on the website (`site.json` in its folder) and refreshes its entry.
+    public func setPublished(dir: String, record: SiteRecord) throws {
+        try lock.withLock {
+            try record.write(to: root.appendingPathComponent(dir))
+            refreshLocked()
+        }
+    }
+
+    /// Forgets that the run is on the website (removes `site.json`) and refreshes its entry.
+    public func clearPublished(dir: String) throws {
+        try lock.withLock {
+            try SiteRecord.remove(from: root.appendingPathComponent(dir))
+            refreshLocked()
+        }
+    }
+
+    /// The run's website record, read from its folder (nil when not published).
+    public func published(dir: String) -> SiteRecord? {
+        SiteRecord.read(root.appendingPathComponent(dir))
+    }
+
     // MARK: - Private (lock held)
+
+    private func siteMtime(_ name: String) -> Double? {
+        let file = root.appendingPathComponent(name).appendingPathComponent(SiteRecord.fileName)
+        return ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date)?
+            .timeIntervalSince1970
+    }
 
     private func sortedLocked() -> [RunEntry] {
         (records ?? [:]).values.compactMap { r -> RunEntry? in
@@ -319,7 +358,13 @@ public final class RunIndex: @unchecked Sendable {
                   let date = attrs[.modificationDate] as? Date else { continue }
             let mtime = date.timeIntervalSince1970
             let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
-            if let r = old[name], r.mtime == mtime, r.size == size {
+            let site = siteMtime(name)
+            if var r = old[name], r.mtime == mtime, r.size == size {
+                if r.siteMtime != site {
+                    // Only the published state changed: no re-parse.
+                    r.entry?.setPublished(SiteRecord.read(root.appendingPathComponent(name)))
+                    r.siteMtime = site
+                }
                 current[name] = r
             } else {
                 current[name] = index(name, mtime: mtime, size: size, previous: old[name])
@@ -335,7 +380,7 @@ public final class RunIndex: @unchecked Sendable {
         let url = root.appendingPathComponent(name)
         let reuseLow = previous.map { $0.finished && $0.entry != nil } ?? false
         guard let bundle = try? loader(url, !reuseLow) else {
-            return Record(mtime: mtime, size: size, entry: nil, finished: false)
+            return Record(mtime: mtime, size: size, entry: nil, finished: false, siteMtime: siteMtime(name))
         }
         let info = bundle.info
         let summary = RunSummary(bundle)
@@ -347,8 +392,8 @@ public final class RunIndex: @unchecked Sendable {
                              duration: max(0, duration), medianFPS: summary.medianFPS,
                              low1: reuseLow ? previous?.entry?.low1 : summary.low1,
                              fpsPerWatt: summary.powerColumn == "smc_PSTR_w" ? summary.fpsPerWatt : nil,
-                             finished: info.end != nil, graphics: info.graphics)
-        return Record(mtime: mtime, size: size, entry: entry, finished: info.end != nil)
+                             finished: info.end != nil, graphics: info.graphics, published: SiteRecord.read(url))
+        return Record(mtime: mtime, size: size, entry: entry, finished: info.end != nil, siteMtime: siteMtime(name))
     }
 
     private func loadCache() -> [String: Record] {
@@ -367,6 +412,41 @@ public final class RunIndex: @unchecked Sendable {
         enc.outputFormatting = [.sortedKeys]
         // Best effort: an unwritable cache only costs a re-parse next launch.
         try? enc.encode(Cache(version: Self.cacheVersion, runs: runs)).write(to: cacheURL, options: .atomic)
+    }
+}
+
+extension RunEntry {
+    mutating func setPublished(_ record: SiteRecord?) {
+        publishedID = record?.id
+        publishedURL = record?.url
+    }
+}
+
+/// A run published from this Mac: `site.json` in the run's folder, `{ "id", "url" }`. Kept beside run.json, not in
+/// the index cache (which is rebuilt whenever its version changes), and never part of an export (`RunExport` stages
+/// named files only).
+public struct SiteRecord: Codable, Equatable, Sendable {
+    public static let fileName = "site.json"
+    public var id: String
+    public var url: URL
+
+    public init(id: String, url: URL) { self.id = id; self.url = url }
+
+    public static func read(_ bundle: URL) -> SiteRecord? {
+        guard let data = try? Data(contentsOf: bundle.appendingPathComponent(fileName)) else { return nil }
+        return try? JSONDecoder().decode(SiteRecord.self, from: data)
+    }
+
+    public func write(to bundle: URL) throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
+        try enc.encode(self).write(to: bundle.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+
+    public static func remove(from bundle: URL) throws {
+        let file = bundle.appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        try FileManager.default.removeItem(at: file)
     }
 }
 

@@ -3,11 +3,13 @@ import Foundation
 import MPTCore
 import UserNotifications
 
-/// One recording notification: its text, and the run it opens when clicked (stop only).
+/// One recording notification: its text, and the run it opens when clicked (stop only). `offersPublish`: it has a
+/// "Publish…" action that opens the run's Submit sheet (Settings → "Offer to publish after each run").
 struct RecordingNotice: Equatable {
     let title: String
     let body: String
     let run: URL?
+    var offersPublish = false
 
     /// "Recording <app> · <stack line>", or "Recording — no game detected yet".
     static func started(app: String?, stack: Stack?) -> RecordingNotice {
@@ -21,9 +23,10 @@ struct RecordingNotice: Equatable {
 
     /// "Run saved — add settings" ("Run saved with problems — see the run" when an error occurred during the run),
     /// with the run's game; clicking it opens the run.
-    static func saved(_ run: RunResult, withProblems: Bool = false) -> RecordingNotice {
+    static func saved(_ run: RunResult, withProblems: Bool = false, offerPublish: Bool = false) -> RecordingNotice {
         RecordingNotice(title: withProblems ? "Run saved with problems — see the run" : "Run saved — add settings",
-                        body: gameName(of: run.directory), run: run.directory)
+                        body: gameName(of: run.directory) + (offerPublish ? " · Publish it to metal-pt.com?" : ""),
+                        run: run.directory, offersPublish: offerPublish)
     }
 
     /// The run's game from its run.json (title, else exe), else the folder name.
@@ -44,6 +47,8 @@ struct RecordingNotice: Equatable {
 protocol RecordingNotifying: AnyObject {
     /// Called with the run folder when a "Run saved" notification is clicked.
     var onOpenRun: ((URL) -> Void)? { get set }
+    /// Called with the run folder when a "Run saved" notification's "Publish…" action is chosen.
+    var onPublishRun: ((URL) -> Void)? { get set }
     /// Asks for permission once (first recording). Recording does not wait for or depend on the answer.
     func requestAuthorizationIfNeeded()
     func post(_ notice: RecordingNotice)
@@ -54,8 +59,11 @@ protocol RecordingNotifying: AnyObject {
 @MainActor
 final class Notifications: NSObject, RecordingNotifying {
     nonisolated static let runKey = "run"
+    nonisolated static let publishCategory = "runSaved.publish"
+    nonisolated static let publishAction = "publish"
 
     var onOpenRun: ((URL) -> Void)?
+    var onPublishRun: ((URL) -> Void)?
     private var askedForAuthorization = false
     private let center: UNUserNotificationCenter?
 
@@ -63,6 +71,10 @@ final class Notifications: NSObject, RecordingNotifying {
         center = Bundle.main.bundleIdentifier != nil ? UNUserNotificationCenter.current() : nil
         super.init()
         center?.delegate = self
+        let publish = UNNotificationAction(identifier: Self.publishAction, title: "Publish…", options: [.foreground])
+        center?.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.publishCategory, actions: [publish], intentIdentifiers: []),
+        ])
     }
 
     func requestAuthorizationIfNeeded() {
@@ -89,6 +101,7 @@ final class Notifications: NSObject, RecordingNotifying {
         content.title = notice.title
         content.body = notice.body
         if let run = notice.run { content.userInfo = [Self.runKey: run.path] }
+        if notice.offersPublish { content.categoryIdentifier = Self.publishCategory }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         center.add(request) { error in
             // Denied permission lands here; the recording is unaffected.
@@ -116,9 +129,13 @@ extension Notifications: UNUserNotificationCenterDelegate {
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let path = response.notification.request.content.userInfo[Self.runKey] as? String
         completionHandler()
-        guard let path, response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let action = response.actionIdentifier
+        guard let path, action == UNNotificationDefaultActionIdentifier || action == Self.publishAction else { return }
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { self.onOpenRun?(URL(fileURLWithPath: path, isDirectory: true)) }
+            MainActor.assumeIsolated {
+                let url = URL(fileURLWithPath: path, isDirectory: true)
+                if action == Self.publishAction { self.onPublishRun?(url) } else { self.onOpenRun?(url) }
+            }
         }
     }
 }
