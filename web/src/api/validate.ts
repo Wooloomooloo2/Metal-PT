@@ -3,6 +3,7 @@
 import { MIN_APP_VERSION } from "../config.ts";
 import type { SummaryJson } from "../lib/recheck.ts";
 import type { RunGraphics, RunJson } from "../lib/run-json.ts";
+import { ISO } from "./auth.ts";
 import { ApiError } from "./errors.ts";
 
 type Obj = Record<string, unknown>;
@@ -22,6 +23,14 @@ function parseJSON(file: string, text: string): unknown {
   } catch {
     throw new ApiError(422, "bad_json", `${file} could not be read. Please update Metal-PT.`);
   }
+}
+
+export const GPU_CORES = [1, 256] as const;
+export const MEMORY_GB = [1, 1024] as const;
+
+/** RAM in GB within 1–1024, rounded; else null (shown as unknown, never a reason to refuse). */
+export function boundedMemoryGB(v: number): number | null {
+  return v >= MEMORY_GB[0] && v <= MEMORY_GB[1] ? Math.round(v) : null;
 }
 
 /** run.json: the types of every field the site reads (unknown fields are ignored). */
@@ -58,6 +67,13 @@ export function parseRunJson(text: string): RunJson {
     for (const k of ["label", "gameSettings", "notes", "videoURL"]) if (!optional(u[k], isStr)) throw shapeError(f, `user.${k}`);
   }
   if (!isStr(r.start)) throw shapeError(f, "start");
+  if (!ISO.test(r.start) || Number.isNaN(Date.parse(r.start))) {
+    throw new ApiError(422, "bad_json", "The run's start time in run.json could not be read, so it can't be published. Please update Metal-PT.");
+  }
+  // Out-of-range GPU core counts put the run in the unknown bucket (published, not counted) rather than refusing it.
+  if (m.gpuCores != null && !((m.gpuCores as number) >= GPU_CORES[0] && (m.gpuCores as number) <= GPU_CORES[1])) {
+    m.gpuCores = null;
+  }
   if (!optional(r.steadyStartS, isNum) || !optional(r.steadyEndS, isNum)) throw shapeError(f, "steady window");
   if (!optional(r.fpsSource, isStr)) throw shapeError(f, "fpsSource");
   return r as unknown as RunJson;

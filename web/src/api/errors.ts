@@ -27,6 +27,7 @@ export type ErrorCode =
   | "not_yours"
   | "bad_video_link"
   | "video_unavailable"
+  | "storage_unavailable"
   | "server_error";
 
 export class ApiError extends Error {

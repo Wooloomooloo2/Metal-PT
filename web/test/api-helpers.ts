@@ -26,9 +26,15 @@ export function oembedStub(opts: { status?: number; throws?: boolean; calls?: OE
   };
 }
 
-export function app(opts: { now?: Date; fetch?: Fetch } = {}) {
+export function app(opts: { now?: Date; fetch?: Fetch; runs?: Partial<R2Bucket> } = {}) {
   const a = createApp({ now: () => opts.now ?? NOW, fetch: opts.fetch ?? oembedStub() });
-  return (req: Request) => a.fetch(req, env, createExecutionContext());
+  // `runs` replaces R2 methods (to make a put or delete fail); the rest go to the local bucket.
+  const RUNS = opts.runs
+    ? (new Proxy(env.RUNS, {
+        get: (t, k) => (k in opts.runs! ? (opts.runs as any)[k] : (t as any)[k]?.bind?.(t) ?? (t as any)[k]),
+      }) as R2Bucket)
+    : env.RUNS;
+  return (req: Request) => a.fetch(req, { ...env, RUNS }, createExecutionContext());
 }
 
 // MARK: - Keys

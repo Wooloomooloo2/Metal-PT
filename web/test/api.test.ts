@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { UPLOADS_PER_HOUR } from "../src/config.ts";
+import { isDigestMismatch } from "../src/api/publish.ts";
 import { checkVideo } from "../src/oembed.ts";
 import { parseSamples, recheckSamples } from "../src/lib/recheck.ts";
 import type { RunJson } from "../src/lib/run-json.ts";
@@ -581,5 +582,97 @@ describe("a 60-minute run (CPU budget, spec §4.J)", () => {
     await annotate(whole);
     const row = await runRow(b.id);
     expect(JSON.parse(row.fps_series).points.length).toBe(300);
+  });
+});
+
+describe("review fixes", () => {
+  const enc = (t: string) => new TextEncoder().encode(t);
+
+  it.each([
+    ["run.json", "run", 256 * 1024, "256 KB"],
+    ["summary.json", "summary", 16 * 1024, "16 KB"],
+    ["samples.csv", "samples", 8 * 1024 * 1024, "8 MB"],
+  ] as const)("%s over its cap: 413 before anything is parsed", async (part, field, cap, label) => {
+    const u = syntheticUpload();
+    const big = { ...u, [field]: new Uint8Array(cap + 1).fill(0x20) };
+    const { status, body } = await send(await publishRequest(big, await newKey()));
+    expect(status).toBe(413);
+    expect(body.code).toBe("too_large");
+    expect(body.message).toContain(part);
+    expect(body.message).toContain(label);
+  });
+
+  it("a part exactly at its cap is not refused for size", async () => {
+    const u = syntheticUpload();
+    const text = new TextDecoder().decode(u.summary);
+    const padded = enc(text + " ".repeat(16 * 1024 - u.summary.length));
+    expect(padded.length).toBe(16 * 1024);
+    expect((await send(await publishRequest({ ...u, summary: padded }, await newKey()))).status).toBe(201);
+  });
+
+  it("R2 failing for another reason than the hash: 503 storage_unavailable, nothing stored", async () => {
+    const put = async () => {
+      throw new Error("internal error");
+    };
+    const { status, body } = await send(await publishRequest(syntheticUpload(), await newKey()), { runs: { put } as any });
+    expect(status).toBe(503);
+    expect(body).toEqual({
+      code: "storage_unavailable",
+      message: "metal-pt.com couldn't store the run just now — try again in a few minutes.",
+    });
+    expect((await env.DB.prepare("SELECT count(*) AS n FROM runs").first<Body>())!.n).toBe(0);
+  });
+
+  it("tells R2's digest refusal from other errors", () => {
+    expect(isDigestMismatch(new Error("put: The SHA-256 checksum you specified did not match what we received. (10037)"))).toBe(true);
+    expect(isDigestMismatch(new Error("put: We encountered an internal error. Please try again. (10001)"))).toBe(false);
+    expect(isDigestMismatch("network connection lost")).toBe(false);
+  });
+
+  it("DELETE: the group is recomputed before the zip goes; an R2 failure still removes the run", async () => {
+    const k = await newKey();
+    const id = (await publishOK(syntheticUpload(), k)).id;
+    const key = (await runRow(id)).group_key;
+    let groupGoneFirst: boolean | null = null;
+    const del = async () => {
+      groupGoneFirst = (await groupRow(key)) === null;
+      throw new Error("R2 down");
+    };
+    const r = await send(await deleteRequest(id, k), { runs: { delete: del } as any });
+    expect(r.status).toBe(200);
+    expect(groupGoneFirst).toBe(true);
+    expect(await env.DB.prepare("SELECT id FROM runs WHERE id = ?").bind(id).first()).toBeNull();
+    // The orphaned zip is harmless.
+    expect(await env.RUNS.get(`runs/${id}.zip`)).not.toBeNull();
+  });
+
+  it("GPU cores outside 1–256: published in the unknown bucket", async () => {
+    for (const cores of [0, 300]) {
+      const b = await publishOK(syntheticUpload({ gpuCores: cores }), await newKey());
+      const row = await runRow(b.id);
+      expect(row.gpu_cores).toBeNull();
+      expect(row.mac_key).toBe("unknown");
+    }
+  });
+
+  it("memory outside 1–1024 GB is stored as unknown", async () => {
+    const b = await publishOK(syntheticUpload({ edit: (r) => (r.machine.memoryGB = 4096) }), await newKey());
+    expect((await runRow(b.id)).memory_gb).toBeNull();
+    const ok = await publishOK(syntheticUpload({ edit: (r) => (r.machine.memoryGB = 1024) }), await newKey());
+    expect((await runRow(ok.id)).memory_gb).toBe(1024);
+  });
+
+  it("a start time that is not ISO-8601: refused with a clear message", async () => {
+    for (const start of ["yesterday", "2026-11-20 12:00:00", "2026-13-45T99:00:00Z"]) {
+      const { status, body } = await send(await publishRequest(syntheticUpload({ edit: (r) => (r.start = start) }), await newKey()));
+      expect(status, start).toBe(422);
+      expect(body.code).toBe("bad_json");
+      expect(body.message).toContain("start time");
+    }
+  });
+
+  it("the recorded time is stored normalised to the second", async () => {
+    const b = await publishOK(syntheticUpload({ edit: (r) => (r.start = "2026-11-20T13:00:00.250+01:00") }), await newKey());
+    expect((await runRow(b.id)).recorded).toBe("2026-11-20T12:00:00Z");
   });
 });

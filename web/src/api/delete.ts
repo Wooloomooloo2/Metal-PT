@@ -18,8 +18,13 @@ export async function deleteRun(req: Request, env: Env, deps: Deps, id: string):
     env.DB.prepare("DELETE FROM reports WHERE run_id = ?").bind(id),
     env.DB.prepare("DELETE FROM runs WHERE id = ?").bind(id),
   ]);
-  await env.RUNS.delete(`runs/${id}.zip`);
   await recomputeGroup(env, run.group_key, isoSeconds(now));
   await afterWrite(env, { gameIds: [run.game_id], runIds: [id], macKeys: [run.mac_key], setupKeys: [run.setup_key] });
+  // Last: the run is already gone from pages and statistics. A zip left behind is harmless (no row points to it).
+  try {
+    await env.RUNS.delete(`runs/${id}.zip`);
+  } catch {
+    console.error("delete: R2 object not removed");
+  }
   return json({ id, deleted: true });
 }

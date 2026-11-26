@@ -27,17 +27,35 @@ import { checkVideo, type Video } from "../oembed.ts";
 import { requireSignature, signedHeaders } from "./auth.ts";
 import { ApiError, json } from "./errors.ts";
 import { checkSanity, onACOf } from "./sanity.ts";
-import { parseRunJson, parseSummaryJson, requireFields } from "./validate.ts";
+import { boundedMemoryGB, parseRunJson, parseSummaryJson, requireFields } from "./validate.ts";
 
 export const PARTS = ["bundle", "run.json", "samples.csv", "summary.json"] as const;
+
+/** Per-part caps (the bundle is capped by the whole upload's 25 MB). */
+export const PART_CAPS: Partial<Record<(typeof PARTS)[number], { bytes: number; label: string }>> = {
+  "run.json": { bytes: 256 * 1024, label: "256 KB" },
+  "summary.json": { bytes: 16 * 1024, label: "16 KB" },
+  "samples.csv": { bytes: 8 * 1024 * 1024, label: "8 MB" },
+};
 
 function tooLarge(): ApiError {
   return new ApiError(413, "too_large", "This run is larger than metal-pt.com accepts (25 MB).");
 }
 
-async function partBytes(v: File | string | null): Promise<Uint8Array | null> {
+/** A form part as a Blob (a plain string field becomes its UTF-8 bytes); null when absent. */
+function partBlob(v: File | string | null): Blob | null {
   if (v === null) return null;
-  return typeof v === "string" ? new TextEncoder().encode(v) : new Uint8Array(await v.arrayBuffer());
+  return typeof v === "string" ? new Blob([new TextEncoder().encode(v)]) : v;
+}
+
+async function bytesOf(b: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await b.arrayBuffer());
+}
+
+/** R2's refusal of a put whose bytes don't match the `sha256` given (error 10037 "BadDigest"). */
+export function isDigestMismatch(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /sha-?256|checksum|digest|10037/i.test(m);
 }
 
 export function runURL(req: Request, id: string): string {
@@ -101,15 +119,24 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
   } catch {
     throw new ApiError(400, "bad_request", "The upload could not be read. Please update Metal-PT.");
   }
-  const [bundle, runBytes, samplesBytes, summaryBytes] = await Promise.all(PARTS.map((p) => partBytes(form.get(p))));
-  const missing = PARTS.filter((_, i) => [bundle, runBytes, samplesBytes, summaryBytes][i] === null);
+  const blobs = PARTS.map((p) => partBlob(form.get(p)));
+  const missing = PARTS.filter((_, i) => blobs[i] === null);
   if (missing.length > 0) {
     throw new ApiError(400, "missing_part", `The upload is missing ${missing.join(", ")}. Please update Metal-PT.`);
   }
-  if (bundle!.length + runBytes!.length + samplesBytes!.length + summaryBytes!.length > MAX_UPLOAD_BYTES) throw tooLarge();
+  const [bundle, runBlob, samplesBlob, summaryBlob] = blobs as Blob[];
+  // Sizes from the parts themselves, before anything is read, hashed or parsed.
+  if (blobs.reduce((n, b) => n + b!.size, 0) > MAX_UPLOAD_BYTES) throw tooLarge();
+  for (const [i, part] of PARTS.entries()) {
+    const cap = PART_CAPS[part];
+    if (cap !== undefined && blobs[i]!.size > cap.bytes) {
+      throw new ApiError(413, "too_large", `This run's ${part} is larger than metal-pt.com accepts (${cap.label}).`);
+    }
+  }
+  const [runBytes, samplesBytes, summaryBytes] = await Promise.all([runBlob, samplesBlob, summaryBlob].map(bytesOf));
 
   // 4. Signature: the small parts are hashed here; the bundle's hash is the signed header, enforced by R2 below.
-  const [runHash, samplesHash, summaryHash] = await Promise.all([runBytes!, samplesBytes!, summaryBytes!].map((b) => sha256Hex(b)));
+  const [runHash, samplesHash, summaryHash] = await Promise.all([runBytes, samplesBytes, summaryBytes].map((b) => sha256Hex(b)));
   await requireSignature(
     h,
     publishMessage({ bundle: h.bundleSHA256, run: runHash, samples: samplesHash, summary: summaryHash, timestamp: h.timestamp }),
@@ -133,14 +160,14 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
 
   // 5. JSON shape.
   const decoder = new TextDecoder();
-  const rawRun = parseRunJson(decoder.decode(runBytes!));
-  const summary = parseSummaryJson(decoder.decode(summaryBytes!));
+  const rawRun = parseRunJson(decoder.decode(runBytes));
+  const summary = parseSummaryJson(decoder.decode(summaryBytes));
 
   // 6. Required fields.
   const graphics = requireFields(rawRun);
 
   // 7. Re-check (samples.csv parsed once, its numbers reused below).
-  const samples = parseSamples(decoder.decode(samplesBytes!));
+  const samples = parseSamples(decoder.decode(samplesBytes));
   const r = recheckSamples(rawRun, samples);
   if (r.steadySeconds < MIN_STEADY_SECONDS) {
     throw new ApiError(
@@ -172,8 +199,12 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
   const id = newRunID();
   const object = `runs/${id}.zip`;
   try {
-    await env.RUNS.put(object, bundle!, { sha256: h.bundleSHA256, httpMetadata: { contentType: "application/zip" } });
-  } catch {
+    // The Blob goes as is (no copy of up to 25 MB); R2 checks its SHA-256 against the signed one.
+    await env.RUNS.put(object, bundle, { sha256: h.bundleSHA256, httpMetadata: { contentType: "application/zip" } });
+  } catch (e) {
+    if (!isDigestMismatch(e)) {
+      throw new ApiError(503, "storage_unavailable", "metal-pt.com couldn't store the run just now — try again in a few minutes.");
+    }
     throw new ApiError(
       422,
       "bundle_mismatch",
@@ -221,11 +252,11 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
         h.keyId,
         h.bundleSHA256,
         nowText,
-        text(run.start, 40, true),
+        isoSeconds(new Date(Date.parse(run.start))),
         run.appVersion ?? null,
         run.machine.chip || null,
         run.machine.gpuCores ?? null,
-        Math.round(run.machine.memoryGB),
+        boundedMemoryGB(run.machine.memoryGB),
         run.machine.modelID || null,
         run.machine.osVersion || null,
         mk,

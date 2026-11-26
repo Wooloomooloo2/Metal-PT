@@ -16,7 +16,8 @@ export interface SignedHeaders {
   bundleSHA256: string;
 }
 
-const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+/** Strict ISO-8601 date-time with a zone (what Swift's ISO8601DateFormatter writes, fractions allowed). */
+export const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
