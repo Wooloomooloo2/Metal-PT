@@ -120,9 +120,9 @@ Windows/Linux data; pulling game names or art from Steam.
    (`[A-Za-z0-9_-]{11}`) is extracted and **only the ID is stored** — the user's URL is never echoed. The site asks
    YouTube's oEmbed endpoint whether the video exists and is public; if not, the upload is still accepted without the
    link and the reply says why. The video's title and channel name from oEmbed are stored for display.
-5. Notes: the server never opens the zip, so it can't read `includesNotes`; it stores `notes` when non-empty — the
+7. Notes: the server never opens the zip, so it can't read `includesNotes`; it stores `notes` when non-empty — the
    app empties them unless the box is ticked.
-7. Privacy re-scrub on the server (home paths, `/Users/<name>`, host-name patterns) of every text field; notes only if
+8. Privacy re-scrub on the server (home paths, `/Users/<name>`, host-name patterns) of every text field; notes only if
    `includesNotes`.
 
 ### D. Storage
