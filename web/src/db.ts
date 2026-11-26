@@ -1,5 +1,6 @@
 // D1 access for the API (spec §4.D, §4.E): game matching, key registration, runs, cached group statistics, and the
 // hook every successful write ends with.
+import { purge } from "./cache.ts";
 import type { Env } from "./index.ts";
 import { normalizeTitle, slugify } from "./lib/games.ts";
 import { isUnknown } from "./lib/keys.ts";
@@ -209,11 +210,38 @@ export interface Affected {
   setupKeys: string[];
 }
 
+/** Where the purge happens: the request's origin and the page cache (null: none). */
+export interface PurgeTarget {
+  origin: string;
+  cache: Cache | null;
+}
+
+/** The page paths a write touches (spec §4.F): home, the Mac and setup lists, and the game, run, Mac and setup pages. */
+export async function affectedPaths(env: Env, affected: Affected): Promise<string[]> {
+  const paths = ["/", "/macs", "/setups"];
+  if (affected.gameIds.length > 0) {
+    const { results } = await env.DB.prepare(
+      `SELECT slug FROM games WHERE id IN (${affected.gameIds.map(() => "?").join(", ")})`,
+    )
+      .bind(...affected.gameIds)
+      .all<{ slug: string }>();
+    for (const g of results) paths.push(`/game/${g.slug}`);
+  }
+  for (const id of affected.runIds) paths.push(`/run/${id}`);
+  for (const k of affected.macKeys) paths.push(`/mac/${k}`);
+  for (const k of affected.setupKeys) paths.push(`/setup/${k}`);
+  return paths;
+}
+
 /**
- * Called after every successful POST, PATCH and DELETE with what the write touched. Task 4 (pages) fills this in
- * with the edge-cache purge of the affected game, run, Mac and setup URLs (spec §4.F "publish/delete purges…");
- * until then it does nothing.
+ * Called after every successful POST, PATCH and DELETE with what the write touched: purges those pages from the
+ * edge cache (see cache.ts for what is and isn't purged). Never fails the write.
  */
-export async function afterWrite(_env: Env, _affected: Affected): Promise<void> {
-  // No-op until the pages and their edge cache exist (Task 4).
+export async function afterWrite(env: Env, affected: Affected, target: PurgeTarget): Promise<void> {
+  if (target.cache === null) return;
+  try {
+    await purge(target.cache, target.origin, await affectedPaths(env, affected));
+  } catch {
+    console.error("afterWrite: purge failed");
+  }
 }

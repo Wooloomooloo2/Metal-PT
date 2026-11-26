@@ -45,6 +45,9 @@ export async function patchRun(req: Request, env: Env, deps: Deps, id: string): 
   await env.DB.prepare("UPDATE runs SET video_id = ?, video_title = ?, video_channel = ? WHERE id = ?")
     .bind(video?.id ?? null, video?.title ?? null, video?.channel ?? null, id)
     .run();
-  await afterWrite(env, { gameIds: [run.game_id], runIds: [id], macKeys: [run.mac_key], setupKeys: [run.setup_key] });
+  await afterWrite(env, { gameIds: [run.game_id], runIds: [id], macKeys: [run.mac_key], setupKeys: [run.setup_key] }, {
+    origin: new URL(req.url).origin,
+    cache: deps.cache(),
+  });
   return json({ id, url: runURL(req, id), video });
 }

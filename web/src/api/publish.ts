@@ -301,6 +301,9 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
   }
 
   await recomputeGroup(env, gk, nowText);
-  await afterWrite(env, { gameIds: [game.id], runIds: [id], macKeys: [mk], setupKeys: [sk] });
+  await afterWrite(env, { gameIds: [game.id], runIds: [id], macKeys: [mk], setupKeys: [sk] }, {
+    origin: new URL(req.url).origin,
+    cache: deps.cache(),
+  });
   return json({ id, url: runURL(req, id), ...(notice !== undefined ? { notice } : {}) }, 201);
 }

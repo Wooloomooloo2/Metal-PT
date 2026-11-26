@@ -19,7 +19,10 @@ export async function deleteRun(req: Request, env: Env, deps: Deps, id: string):
     env.DB.prepare("DELETE FROM runs WHERE id = ?").bind(id),
   ]);
   await recomputeGroup(env, run.group_key, isoSeconds(now));
-  await afterWrite(env, { gameIds: [run.game_id], runIds: [id], macKeys: [run.mac_key], setupKeys: [run.setup_key] });
+  await afterWrite(env, { gameIds: [run.game_id], runIds: [id], macKeys: [run.mac_key], setupKeys: [run.setup_key] }, {
+    origin: new URL(req.url).origin,
+    cache: deps.cache(),
+  });
   // Last: the run is already gone from pages and statistics. A zip left behind is harmless (no row points to it).
   try {
     await env.RUNS.delete(`runs/${id}.zip`);
