@@ -2,7 +2,7 @@
 // the small parts' hashes computed here and the signed bundle hash), key standing (banned, duplicate, rate limit),
 // JSON shape, required fields, re-check, sanity, scrub. The bundle is never opened: it goes to R2 with the signed
 // SHA-256, which R2 enforces on write.
-import { MAX_UPLOAD_BYTES, MIN_STEADY_SECONDS, UPLOADS_PER_HOUR } from "../config.ts";
+import { MAX_SAMPLES_BYTES, MAX_STEADY_SECONDS, MAX_UPLOAD_BYTES, MIN_STEADY_SECONDS, UPLOADS_PER_HOUR } from "../config.ts";
 import {
   afterWrite,
   findMac,
@@ -35,7 +35,7 @@ export const PARTS = ["bundle", "run.json", "samples.csv", "summary.json"] as co
 export const PART_CAPS: Partial<Record<(typeof PARTS)[number], { bytes: number; label: string }>> = {
   "run.json": { bytes: 256 * 1024, label: "256 KB" },
   "summary.json": { bytes: 16 * 1024, label: "16 KB" },
-  "samples.csv": { bytes: 8 * 1024 * 1024, label: "8 MB" },
+  "samples.csv": { bytes: MAX_SAMPLES_BYTES, label: "2 MB" },
 };
 
 function tooLarge(): ApiError {
@@ -62,8 +62,25 @@ export function runURL(req: Request, id: string): string {
   return new URL(`/run/${id}`, req.url).href;
 }
 
-function alreadyPublished(req: Request, id: string): ApiError {
-  return new ApiError(409, "already_published", "This run is already published.", { id, url: runURL(req, id) });
+/**
+ * The same bundle is already on the site. Its page is given back only when it is visible and was published by the
+ * same key; a hidden run or another key's run gets a 409 without an id or URL (nothing to link to or record).
+ */
+function alreadyPublished(req: Request, existing: { id: string; key_id: string; hidden: number }, keyId: string): ApiError {
+  if (existing.key_id !== keyId) {
+    return new ApiError(409, "already_published_elsewhere", "This exact run was already published from another Mac.");
+  }
+  if (existing.hidden) {
+    return new ApiError(
+      409,
+      "already_published_hidden",
+      "This run was already published and has been hidden by a moderator.",
+    );
+  }
+  return new ApiError(409, "already_published", "This run is already published.", {
+    id: existing.id,
+    url: runURL(req, existing.id),
+  });
 }
 
 /** Trimmed, scrubbed text, cut to `max` characters; null when empty. */
@@ -145,13 +162,17 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
   // The key's standing.
   const mac = await findMac(env, h.keyId);
   if (mac !== null && mac.public_key !== h.publicKey) {
-    throw new ApiError(403, "key_conflict", "This Mac's signing key can't be used on metal-pt.com. Reset it in Metal-PT's settings.");
+    throw new ApiError(
+      403,
+      "key_conflict",
+      "Your Mac's publishing key clashes with another — please report this on GitHub.",
+    );
   }
   if (mac !== null && mac.banned) {
     throw new ApiError(403, "banned", "Runs from this Mac are no longer accepted on metal-pt.com.");
   }
   const existing = await runByBundle(env, h.bundleSHA256);
-  if (existing !== null) throw alreadyPublished(req, existing.id);
+  if (existing !== null) throw alreadyPublished(req, existing, h.keyId);
   // Rate limit, D1 fallback: the Workers rate-limiting binding only has 10 s / 60 s periods, not an hour.
   const hourAgo = isoSeconds(new Date(now.getTime() - 3600_000));
   if ((await runsSince(env, h.keyId, hourAgo)) >= UPLOADS_PER_HOUR) {
@@ -164,7 +185,7 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
   const summary = parseSummaryJson(decoder.decode(summaryBytes));
 
   // 6. Required fields.
-  const graphics = requireFields(rawRun);
+  const graphics = requireFields(rawRun, summary);
 
   // 7. Re-check (samples.csv parsed once, its numbers reused below).
   const samples = parseSamples(decoder.decode(samplesBytes));
@@ -174,6 +195,13 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
       422,
       "too_short",
       `A run needs at least ${MIN_STEADY_SECONDS} seconds of steady play with a frame rate; this one has ${r.steadySeconds}.`,
+    );
+  }
+  if (Math.max(r.steadySeconds, r.steadySpanSeconds) > MAX_STEADY_SECONDS) {
+    throw new ApiError(
+      422,
+      "too_long",
+      "Runs longer than 90 minutes can't be published yet — record a shorter run.",
     );
   }
   const mismatch = matches(summary, r);
@@ -296,7 +324,7 @@ export async function publish(req: Request, env: Env, deps: Deps): Promise<Respo
     await env.RUNS.delete(object);
     // Two uploads of the same bundle at once: the second loses the UNIQUE race.
     const dup = await runByBundle(env, h.bundleSHA256);
-    if (dup !== null) throw alreadyPublished(req, dup.id);
+    if (dup !== null) throw alreadyPublished(req, dup, h.keyId);
     throw e;
   }
 

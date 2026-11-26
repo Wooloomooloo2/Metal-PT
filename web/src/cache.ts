@@ -1,5 +1,5 @@
 // Edge cache for the HTML pages (spec §4.F): each page's response is kept for 60 s in this data centre's cache
-// (Cache API, keyed by the full URL), and a publish, video-link change or remove purges the pages it touches.
+// (Cache API, keyed by the path and the known query parameters, `cacheKeyURL`), and a publish, video-link change or remove purges the pages it touches.
 //
 // Limits, by design:
 // - The Cache API is per data centre, so a purge clears the copies where the write was handled; elsewhere a page
@@ -12,11 +12,26 @@ export const PAGE_TTL_S = 60;
 const EDGE = `public, max-age=${PAGE_TTL_S}`;
 const BROWSER = "no-cache";
 
-/** The cache key: GET of the URL without a fragment. */
-function key(url: string): Request {
+/** The query parameters a page reads, in the order they go into the cache key. Any other parameter is ignored. */
+export const PAGE_PARAMS = ["preset", "res", "up", "fg", "sort", "runs", "find", "q"] as const;
+
+/**
+ * The cache key: GET of the route path plus only the known query parameters (first value of each, as the pages
+ * read them), in a fixed order. Unknown parameters and the parameters' order don't make new entries, so a
+ * `?x=1`, `?x=2`, … loop can't fill the cache or dodge a purge of the bare URL.
+ */
+export function cacheKeyURL(url: string): string {
   const u = new URL(url);
-  u.hash = "";
-  return new Request(u.href, { method: "GET" });
+  const out = new URL(u.origin + u.pathname);
+  for (const p of PAGE_PARAMS) {
+    const v = u.searchParams.get(p);
+    if (v !== null) out.searchParams.set(p, v);
+  }
+  return out.href;
+}
+
+function key(url: string): Request {
+  return new Request(cacheKeyURL(url), { method: "GET" });
 }
 
 function forBrowser(res: Response): Response {

@@ -3,6 +3,8 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { accessConfig, clearJwksCache, verifyAccessJwt, type AccessConfig } from "../src/admin/access.ts";
+import { RECOMPUTE_CHUNK } from "../src/admin/actions.ts";
+import { GROUP_CHUNK, recomputeGroups, STATEMENTS_PER_CHUNK } from "../src/db.ts";
 import { createApp } from "../src/index.ts";
 import { normalizeTitle } from "../src/lib/games.ts";
 import { base64urlEncode } from "../src/lib/signing.ts";
@@ -100,9 +102,14 @@ interface SiteOptions {
   db?: D1Database;
 }
 
-/** env.DB wrapped to count D1 calls: each statement's first/all/run/raw and each batch counts one. */
-function countingDB(): { db: D1Database; calls: () => number } {
+/**
+ * env.DB wrapped to count D1 statements (the Free plan's per-request query limit counts statements, batched or not):
+ * each statement's first/all/run/raw counts one, and a batch counts one per statement in it. `calls` counts round
+ * trips (a batch is one).
+ */
+function countingDB(): { db: D1Database; statements: () => number; calls: () => number } {
   let n = 0;
+  let trips = 0;
   const real = new WeakMap<object, D1PreparedStatement>();
   const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => {
     const p = new Proxy(stmt, {
@@ -111,6 +118,7 @@ function countingDB(): { db: D1Database; calls: () => number } {
         if (k === "first" || k === "all" || k === "run" || k === "raw") {
           return (...args: unknown[]) => {
             n += 1;
+            trips += 1;
             return (t as any)[k](...args);
           };
         }
@@ -126,7 +134,8 @@ function countingDB(): { db: D1Database; calls: () => number } {
       if (k === "prepare") return (sql: string) => wrap(t.prepare(sql));
       if (k === "batch") {
         return (stmts: D1PreparedStatement[]) => {
-          n += 1;
+          n += stmts.length;
+          trips += 1;
           return t.batch(stmts.map((s) => real.get(s) ?? s));
         };
       }
@@ -134,7 +143,7 @@ function countingDB(): { db: D1Database; calls: () => number } {
       return typeof v === "function" ? v.bind(t) : v;
     },
   });
-  return { db, calls: () => n };
+  return { db, statements: () => n, calls: () => trips };
 }
 
 async function call(req: Request, o: SiteOptions = {}): Promise<Response> {
@@ -576,10 +585,11 @@ describe("bounded D1 calls", () => {
   it("a ban touching 60 groups costs a few D1 calls and leaves correct group rows", async () => {
     const gks = await seedGroups(60);
     expect((await group(gks[0]))!.runs).toBe(2);
-    const { db, calls } = countingDB();
+    const { db, calls, statements } = countingDB();
     const res = await adminPost("/admin/key/ban", { key_id: "kban" }, { db });
     expect(res.status).toBe(303);
     expect(calls()).toBeLessThanOrEqual(8);
+    expect(statements()).toBeLessThanOrEqual(8);
     for (const gk of gks) {
       const g = (await group(gk))!;
       // One run from one Mac: counted, but not enough for a typical.
@@ -589,18 +599,58 @@ describe("bounded D1 calls", () => {
     const again = countingDB();
     await adminPost("/admin/key/unban", { key_id: "kban", unhide: "1" }, { db: again.db });
     expect(again.calls()).toBeLessThanOrEqual(8);
+    expect(again.statements()).toBeLessThanOrEqual(8);
     for (const gk of gks) expect((await group(gk))!.runs).toBe(2);
   });
 
   it("a merge of a game with 60 groups costs a few D1 calls", async () => {
     await seedGroups(60);
     await seedGame(2, "other-game", "Other Game");
-    const { db, calls } = countingDB();
+    const { db, calls, statements } = countingDB();
     const res = await adminPost("/admin/game/1/merge", { target: "2", confirm: "1" }, { db });
     expect(res.status).toBe(303);
     expect(calls()).toBeLessThanOrEqual(12);
+    expect(statements()).toBeLessThanOrEqual(16);
     const n = await env.DB.prepare(`SELECT count(*) AS n, sum(runs) AS runs FROM "groups" WHERE game_id = 2`).first();
     expect(n).toEqual({ n: 60, runs: 120 });
+  });
+
+  it("recomputeGroups: one chunk of 200 groups is ≤ 5 statements (1 read + 1 batch), 201 groups is two chunks", async () => {
+    const gks = await seedGroups(201);
+    // Make every kind of write happen: a stale group to delete, and an outlier to mark.
+    await env.DB.prepare(`INSERT INTO "groups" (group_key, game_id, mac_key, setup_key, runs, macs, outliers, updated)
+                          VALUES ('stale', 1, 'm', 's', 1, 1, 0, 'x')`).run();
+    const one = countingDB();
+    await recomputeGroups({ ...env, DB: one.db }, [...gks.slice(0, 199), "stale"], "2026-11-26T00:00:00Z");
+    expect(one.calls()).toBe(2);
+    expect(one.statements()).toBeLessThanOrEqual(STATEMENTS_PER_CHUNK);
+    expect(STATEMENTS_PER_CHUNK).toBe(5);
+    expect(await group("stale")).toBeNull();
+    const two = countingDB();
+    await recomputeGroups({ ...env, DB: two.db }, gks, "2026-11-26T00:00:00Z");
+    expect(two.calls()).toBe(4);
+    expect(two.statements()).toBeLessThanOrEqual(2 * STATEMENTS_PER_CHUNK);
+    for (const gk of gks) expect((await group(gk))!.updated).toBe("2026-11-26T00:00:00Z");
+    expect(GROUP_CHUNK).toBe(RECOMPUTE_CHUNK);
+  });
+
+  it("recomputeGroups marks outliers and writes every upsert column in one statement", async () => {
+    await seedGame(1, "cyberpunk-2077", "Cyberpunk 2077");
+    let gk = "";
+    const fps = [60, 61, 62, 59, 60, 61, 200];
+    for (const [i, f] of fps.entries()) gk = await seedRun({ id: `outl${i}aaaa`, game: 1, key: `k${i}`, fps: f, fpw: 0.5, width: 1920 });
+    const c = countingDB();
+    await recomputeGroups({ ...env, DB: c.db }, [gk], "2026-11-26T00:00:00Z");
+    expect(c.statements()).toBeLessThanOrEqual(STATEMENTS_PER_CHUNK);
+    const g = (await group(gk))!;
+    expect(g.game_id).toBe(1);
+    expect(g.width).toBe(1920);
+    expect(g.runs).toBeGreaterThan(0);
+    expect(typeof g.typical_fps).toBe("number");
+    expect(g.updated).toBe("2026-11-26T00:00:00Z");
+    const out = await env.DB.prepare("SELECT id FROM runs WHERE outlier = 1").all<{ id: string }>();
+    expect(out.results.map((r) => r.id)).toEqual(["outl6aaaa"]);
+    expect(g.outliers).toBe(1);
   });
 
   it("rename, Steam ID and alias writes don't recompute groups", async () => {
@@ -610,9 +660,10 @@ describe("bounded D1 calls", () => {
       ["/admin/game/1/steam", { steam_id: "" }],
       ["/admin/game/1/alias/add", { alias: "CP77" }],
     ] as const) {
-      const { db, calls } = countingDB();
+      const { db, calls, statements } = countingDB();
       expect((await adminPost(path, fields, { db })).status).toBe(303);
       expect(calls()).toBeLessThanOrEqual(6);
+      expect(statements()).toBeLessThanOrEqual(8);
     }
     expect((await group(gk))!.updated).toBe("2026-11-25T12:00:00Z");
   });
@@ -655,7 +706,9 @@ describe("recompute statistics", () => {
   it("all: 200 groups per request, then \"N left — run again\" until done", async () => {
     const gks = await seedGroups(205);
     await env.DB.prepare(`UPDATE "groups" SET typical_fps = 999`).run();
-    const first = await adminPost("/admin/recompute", { scope: "all" });
+    const counted = countingDB();
+    const first = await adminPost("/admin/recompute", { scope: "all" }, { db: counted.db });
+    expect(counted.statements()).toBeLessThanOrEqual(10);
     const html = await first.text();
     expect(html).toContain("200 groups recomputed. 5 groups left — run again.");
     const after = /name="after" value="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");

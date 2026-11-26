@@ -31,7 +31,8 @@ export function PrivacyPage() {
           </li>
           <li>
             Anything the app removes before sending: your user name, your Mac's name and folder paths in your home
-            folder. The site checks text again for names and paths and removes any it finds.
+            folder. The site checks the text it shows on its pages again for names and paths and removes any it
+            finds. The Download file is not changed: it is exactly the file the app sent.
           </li>
           <li>Run pages show no Mac identity beyond the model.</li>
         </ul>

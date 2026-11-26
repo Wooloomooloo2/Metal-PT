@@ -94,8 +94,10 @@ export function parseSummaryJson(text: string): SummaryJson {
   if (!isStr(s.powerSource) || !POWER_SOURCES.has(s.powerSource)) throw shapeError(f, "powerSource");
   const l = s.limiter;
   if (!optional(l, (v) => isObj(v) && optional(v.primary, isStr) && isStr(v.verdict))) throw shapeError(f, "limiter");
+  if (!optional(s.publisherVersion, isStr)) throw shapeError(f, "publisherVersion");
   const n = (v: unknown) => (isNum(v) ? v : null);
   return {
+    publisherVersion: isStr(s.publisherVersion) ? s.publisherVersion : null,
     summaryVersion: 1,
     medianFPS: n(s.medianFPS),
     p1LowFPS: n(s.p1LowFPS),
@@ -146,9 +148,15 @@ export function graphicsOf(g: RunGraphics | null | undefined): { graphics: RunGr
   return { graphics, missing };
 }
 
-/** Required fields (spec §4.C.2), except the steady seconds, which come from the re-check. */
-export function requireFields(run: RunJson): RunGraphics {
-  if (!versionAtLeast(run.appVersion ?? "0", MIN_APP_VERSION)) {
+/**
+ * Required fields (spec §4.C.2), except the steady seconds, which come from the re-check. The minimum app version
+ * is checked on the publishing app (summary.json `publisherVersion`), falling back to the recording app
+ * (run.json `appVersion`) for uploads from apps that don't send it: a run recorded by an old app but published by a
+ * current one is accepted.
+ */
+export function requireFields(run: RunJson, summary?: Pick<SummaryJson, "publisherVersion">): RunGraphics {
+  const publisher = summary?.publisherVersion ?? run.appVersion ?? "0";
+  if (!versionAtLeast(publisher, MIN_APP_VERSION)) {
     throw new ApiError(422, "app_too_old", `Publishing needs Metal-PT ${MIN_APP_VERSION} or later. Please update Metal-PT.`);
   }
   const { graphics, missing } = graphicsOf(run.graphics);

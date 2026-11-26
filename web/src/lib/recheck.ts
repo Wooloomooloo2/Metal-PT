@@ -50,6 +50,8 @@ export interface Recheck {
   steadyRows: number;
   /** Steady rows with an FPS value: rows are 1 Hz, so these are the steady seconds with FPS (spec §4.C.2). */
   steadySeconds: number;
+  /** Seconds from the first to the last steady row's `elapsed_s` (0 for fewer than two rows with a time). */
+  steadySpanSeconds: number;
   /** The steady rows' indices, ascending. */
   steady: number[];
 }
@@ -65,6 +67,8 @@ export interface SummaryJson {
   steadyEndS: number | null;
   limiter: { primary: string | null; verdict: string } | null;
   powerSource: PowerSource;
+  /** The publishing app's version (optional; Swift `SiteSummary.publisherVersion`). */
+  publisherVersion?: string | null;
 }
 
 const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -185,6 +189,15 @@ export function recheckSamples(run: RunJson, s: Samples): Recheck {
   const medianFPS = fpsStats?.median ?? null;
   const fpsPerWatt = medianFPS !== null && power !== null && power.mean > 0 ? medianFPS / power.mean : null;
 
+  let first = Infinity, last = -Infinity;
+  for (const i of steady) {
+    const e = elapsed(i);
+    if (e !== null && Number.isFinite(e)) {
+      if (e < first) first = e;
+      if (e > last) last = e;
+    }
+  }
+
   return {
     medianFPS,
     fpsPerWatt,
@@ -192,6 +205,7 @@ export function recheckSamples(run: RunJson, s: Samples): Recheck {
     powerSource,
     steadyRows: steady.length,
     steadySeconds: fpsStats?.count ?? 0,
+    steadySpanSeconds: last > first ? last - first : 0,
     steady,
   };
 }

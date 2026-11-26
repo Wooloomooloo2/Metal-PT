@@ -1,7 +1,7 @@
 // Admin writes (spec §4.H): hide/unhide a run, remove (and lock) its video link, ban a key, resolve reports,
 // rename games, set or clear a game's Steam ID, edit aliases, merge games. Each write recomputes the groups it
 // touches and ends with `afterWrite` (cache purge), like the API's writes.
-import { afterWrite, isoSeconds, recomputeGroups, type Affected, type PurgeTarget } from "../db.ts";
+import { afterWrite, GROUP_CHUNK, isoSeconds, recomputeGroups, type Affected, type PurgeTarget } from "../db.ts";
 import { purge } from "../cache.ts";
 import type { Env } from "../index.ts";
 import { normalizeTitle } from "../lib/games.ts";
@@ -280,8 +280,13 @@ export async function mergeGames(ctx: WriteContext, sourceId: number, targetId: 
 
 // MARK: - Recompute statistics (the repair path)
 
-/** Groups recomputed per request by "Recompute statistics"; the page offers "run again" while any are left. */
-export const RECOMPUTE_CHUNK = 200;
+/**
+ * Groups recomputed per request by "Recompute statistics"; the page offers "run again" while any are left.
+ * One `recomputeGroups` chunk, so a request costs ≤ 10 D1 statements: the scope check (≤ 1), the key page read,
+ * the "left" count, the key's runs (key scope only), the recompute (≤ `STATEMENTS_PER_CHUNK` = 5) and the purge's
+ * slug read (1).
+ */
+export const RECOMPUTE_CHUNK = GROUP_CHUNK;
 
 export type RecomputeScope = { kind: "all" } | { kind: "game"; id: number } | { kind: "key"; keyId: string };
 

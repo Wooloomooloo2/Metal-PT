@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { UPLOADS_PER_HOUR } from "../src/config.ts";
+import { MAX_SAMPLES_BYTES, MAX_STEADY_SECONDS, UPLOADS_PER_HOUR } from "../src/config.ts";
 import { isDigestMismatch } from "../src/api/publish.ts";
 import { checkVideo } from "../src/oembed.ts";
 import { parseSamples, recheckSamples } from "../src/lib/recheck.ts";
@@ -591,7 +591,7 @@ describe("review fixes", () => {
   it.each([
     ["run.json", "run", 256 * 1024, "256 KB"],
     ["summary.json", "summary", 16 * 1024, "16 KB"],
-    ["samples.csv", "samples", 8 * 1024 * 1024, "8 MB"],
+    ["samples.csv", "samples", 2 * 1024 * 1024, "2 MB"],
   ] as const)("%s over its cap: 413 before anything is parsed", async (part, field, cap, label) => {
     const u = syntheticUpload();
     const big = { ...u, [field]: new Uint8Array(cap + 1).fill(0x20) };
@@ -674,5 +674,86 @@ describe("review fixes", () => {
   it("the recorded time is stored normalised to the second", async () => {
     const b = await publishOK(syntheticUpload({ edit: (r) => (r.start = "2026-11-20T13:00:00.250+01:00") }), await newKey());
     expect((await runRow(b.id)).recorded).toBe("2026-11-20T12:00:00Z");
+  });
+});
+
+describe("final review fixes", () => {
+  it("a steady window over 90 minutes is refused with too_long; just under is published", async () => {
+    const long = await send(await publishRequest(syntheticUpload({ seconds: 5500, steadyStartS: 30 }), await newKey()));
+    expect(long.status).toBe(422);
+    expect(long.body.code).toBe("too_long");
+    expect(long.body.message).toBe("Runs longer than 90 minutes can't be published yet — record a shorter run.");
+    await publishOK(syntheticUpload({ seconds: 5420, steadyStartS: 30 }), await newKey());
+  });
+
+  it("too_long also counts the steady rows' elapsed span (rows with gaps)", async () => {
+    // 3000 rows, one every 2 s: 3000 steady seconds with FPS but a 6000 s span.
+    const u = syntheticUpload({ seconds: 3000, steadyStartS: 30, elapsed: (s) => s * 2, edit: (r) => (r.steadyEndS = 6000) });
+    expect(recheckSamples(u.runJson, parseSamples(new TextDecoder().decode(u.samples))).steadySpanSeconds).toBeGreaterThan(5400);
+    const r = await send(await publishRequest(u, await newKey()));
+    expect(r.status).toBe(422);
+    expect(r.body.code).toBe("too_long");
+  });
+
+  it("the samples.csv cap matches config and the app (2 MiB)", () => {
+    expect(MAX_SAMPLES_BYTES).toBe(2 * 1024 * 1024);
+    expect(MAX_STEADY_SECONDS).toBe(5400);
+  });
+
+  it("409 with the url only for a visible run from the same key", async () => {
+    const k = await newKey(), other = await newKey();
+    const u = syntheticUpload();
+    const first = await publishOK(u, k);
+    const again = await send(await publishRequest(u, k));
+    expect(again.status).toBe(409);
+    expect(again.body).toMatchObject({ code: "already_published", id: first.id, url: first.url });
+
+    const elsewhere = await send(await publishRequest(u, other));
+    expect(elsewhere.status).toBe(409);
+    expect(elsewhere.body.code).toBe("already_published_elsewhere");
+    expect(elsewhere.body.message).toBe("This exact run was already published from another Mac.");
+    expect(elsewhere.body.id).toBeUndefined();
+    expect(elsewhere.body.url).toBeUndefined();
+
+    await env.DB.prepare("UPDATE runs SET hidden = 1 WHERE id = ?").bind(first.id).run();
+    const hidden = await send(await publishRequest(u, k));
+    expect(hidden.status).toBe(409);
+    expect(hidden.body.code).toBe("already_published_hidden");
+    expect(hidden.body.message).toBe("This run was already published and has been hidden by a moderator.");
+    expect(hidden.body.id).toBeUndefined();
+    expect(hidden.body.url).toBeUndefined();
+    // Another key's view of a hidden run says only "elsewhere".
+    expect((await send(await publishRequest(u, other))).body.code).toBe("already_published_elsewhere");
+  });
+
+  it("key_conflict names no setting", async () => {
+    const k = await newKey();
+    await env.DB.prepare("INSERT INTO macs (key_id, public_key, first_seen) VALUES (?, ?, ?)")
+      .bind(await keyIdOf(k.publicKey), "some-other-public-key", "2026-11-01T00:00:00Z")
+      .run();
+    const r = await send(await publishRequest(syntheticUpload(), k));
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe("key_conflict");
+    expect(r.body.message).toBe("Your Mac's publishing key clashes with another — please report this on GitHub.");
+  });
+
+  it("the minimum app version is checked on summary.json publisherVersion when present", async () => {
+    // Recorded by an old app, published by a current one: accepted.
+    await publishOK(
+      syntheticUpload({ edit: (r) => (r.appVersion = "0.1.0"), editSummary: (s) => (s.publisherVersion = "0.3.0") }),
+      await newKey(),
+    );
+    // Published by an old app (even if run.json says otherwise): refused.
+    const old = await send(
+      await publishRequest(syntheticUpload({ editSummary: (s) => (s.publisherVersion = "0.1.9") }), await newKey()),
+    );
+    expect(old.status).toBe(422);
+    expect(old.body.code).toBe("app_too_old");
+    // Absent: falls back to run.json appVersion.
+    const fallback = await send(await publishRequest(syntheticUpload({ edit: (r) => (r.appVersion = "0.1.9") }), await newKey()));
+    expect(fallback.body.code).toBe("app_too_old");
+    // Not a string: a shape error.
+    const bad = await send(await publishRequest(syntheticUpload({ editSummary: (s) => (s.publisherVersion = 3) }), await newKey()));
+    expect(bad.body.code).toBe("bad_json");
   });
 });

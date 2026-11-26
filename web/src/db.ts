@@ -44,8 +44,14 @@ export async function runsSince(env: Env, keyId: string, since: string): Promise
   return r?.n ?? 0;
 }
 
-export async function runByBundle(env: Env, sha256: string): Promise<{ id: string } | null> {
-  return env.DB.prepare("SELECT id FROM runs WHERE bundle_sha256 = ?").bind(sha256).first<{ id: string }>();
+export interface BundleRun {
+  id: string;
+  key_id: string;
+  hidden: number;
+}
+
+export async function runByBundle(env: Env, sha256: string): Promise<BundleRun | null> {
+  return env.DB.prepare("SELECT id, key_id, hidden FROM runs WHERE bundle_sha256 = ?").bind(sha256).first<BundleRun>();
 }
 
 // MARK: - Games
@@ -144,8 +150,15 @@ export function statRun(r: GroupRunRow): StatRun {
   };
 }
 
-/** D1 allows 100 bound parameters per statement; group keys and run ids are bound in chunks below that. */
-export const MAX_BOUND = 90;
+/**
+ * Groups recomputed per chunk. Each chunk is exactly one read and one batch of at most 4 statements (reset
+ * outliers, upsert every counted group, mark outliers, delete groups with nothing counted), each binding one JSON
+ * array (`json_each`), so a chunk costs ≤ 5 D1 statements whatever its size. The admin repair path
+ * (`RECOMPUTE_CHUNK`) does one chunk per request.
+ */
+export const GROUP_CHUNK = 200;
+/** D1 statements one `recomputeGroups` chunk costs at most. */
+export const STATEMENTS_PER_CHUNK = 5;
 
 function chunks<T>(xs: T[], n: number): T[][] {
   const out: T[][] = [];
@@ -156,6 +169,19 @@ function chunks<T>(xs: T[], n: number): T[][] {
 const GROUP_RUN_COLS = `id, key_id, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode, frame_gen,
             median_fps, fps_per_watt, power_source, on_ac, power_mode, limiter_primary, hidden, group_key`;
 
+/** The `groups` columns written by the upsert, in the order of each JSON row. */
+const GROUP_COLS = [
+  "group_key", "game_id", "mac_key", "setup_key", "preset", "width", "height", "upscaler", "upscaler_mode", "frame_gen",
+  "runs", "macs", "typical_fps", "p25_fps", "p75_fps", "typical_fpw", "outliers", "capped_at", "updated",
+] as const;
+const GROUP_UPDATED = ["game_id", "runs", "macs", "typical_fps", "p25_fps", "p75_fps", "typical_fpw", "outliers", "capped_at", "updated"];
+
+/** One statement upserting every row of the bound JSON array (`[[group_key, game_id, …], …]`). */
+const UPSERT_GROUPS = `INSERT INTO "groups" (${GROUP_COLS.join(", ")})
+  SELECT ${GROUP_COLS.map((_, i) => `json_extract(value, '$[${i}]')`).join(", ")}
+  FROM json_each(?1) WHERE true
+  ON CONFLICT (group_key) DO UPDATE SET ${GROUP_UPDATED.map((c) => `${c} = excluded.${c}`).join(", ")}`;
+
 /** Recomputes one group (see `recomputeGroups`). */
 export async function recomputeGroup(env: Env, groupKey: string, now: string): Promise<void> {
   await recomputeGroups(env, [groupKey], now);
@@ -164,25 +190,22 @@ export async function recomputeGroup(env: Env, groupKey: string, now: string): P
 /**
  * Recomputes the cached statistics of every group in `groupKeys`: marks outliers on their runs and upserts each
  * `groups` row, or deletes it when no run is counted any more (so a game page never shows a stale typical).
- * Cost is bounded whatever the number of groups: per chunk of 90 groups, one read of their runs and one batch of
- * writes (D1's per-request query limit on the Free plan makes a per-group loop unsafe for bans and merges).
+ * Cost: per chunk of `GROUP_CHUNK` groups, one read of their runs and one batch of ≤ 4 statements (D1's
+ * per-request query limit on the Free plan makes a per-group statement unsafe for bans and merges).
  */
 export async function recomputeGroups(env: Env, groupKeys: string[], now: string): Promise<void> {
   const keys = [...new Set(groupKeys)];
-  for (const part of chunks(keys, MAX_BOUND)) {
+  for (const part of chunks(keys, GROUP_CHUNK)) {
+    const partJSON = JSON.stringify(part);
     const { results } = await env.DB.prepare(
-      `SELECT ${GROUP_RUN_COLS} FROM runs WHERE group_key IN (${part.map(() => "?").join(", ")})`,
+      `SELECT ${GROUP_RUN_COLS} FROM runs WHERE group_key IN (SELECT value FROM json_each(?1))`,
     )
-      .bind(...part)
+      .bind(partJSON)
       .all<GroupRunRow & { group_key: string }>();
     const byGroup = new Map<string, GroupRunRow[]>(part.map((k) => [k, []]));
     for (const r of results) byGroup.get(r.group_key)?.push(r);
 
-    const stmts: D1PreparedStatement[] = [
-      env.DB.prepare(`UPDATE runs SET outlier = 0 WHERE outlier <> 0 AND group_key IN (${part.map(() => "?").join(", ")})`).bind(
-        ...part,
-      ),
-    ];
+    const rows: unknown[][] = [];
     const outliers: string[] = [];
     const gone: string[] = [];
     for (const [groupKey, runs] of byGroup) {
@@ -193,43 +216,26 @@ export async function recomputeGroups(env: Env, groupKeys: string[], now: string
         continue;
       }
       const g = runs[0];
+      rows.push([
+        groupKey, g.game_id, g.mac_key, g.setup_key, g.preset, g.width, g.height, g.upscaler, g.upscaler_mode,
+        g.frame_gen, s.counted, s.macs, s.typical, s.p25, s.p75, s.typicalFPW, s.outlierIds.length, s.cappedAt, now,
+      ]);
+    }
+    const stmts: D1PreparedStatement[] = [
+      env.DB.prepare(
+        "UPDATE runs SET outlier = 0 WHERE outlier <> 0 AND group_key IN (SELECT value FROM json_each(?1))",
+      ).bind(partJSON),
+    ];
+    if (rows.length > 0) stmts.push(env.DB.prepare(UPSERT_GROUPS).bind(JSON.stringify(rows)));
+    if (outliers.length > 0) {
       stmts.push(
-        env.DB.prepare(
-          `INSERT INTO "groups" (group_key, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode,
-                                 frame_gen, runs, macs, typical_fps, p25_fps, p75_fps, typical_fpw, outliers, capped_at, updated)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (group_key) DO UPDATE SET
-             game_id = excluded.game_id, runs = excluded.runs, macs = excluded.macs, typical_fps = excluded.typical_fps,
-             p25_fps = excluded.p25_fps, p75_fps = excluded.p75_fps, typical_fpw = excluded.typical_fpw,
-             outliers = excluded.outliers, capped_at = excluded.capped_at, updated = excluded.updated`,
-        ).bind(
-          groupKey,
-          g.game_id,
-          g.mac_key,
-          g.setup_key,
-          g.preset,
-          g.width,
-          g.height,
-          g.upscaler,
-          g.upscaler_mode,
-          g.frame_gen,
-          s.counted,
-          s.macs,
-          s.typical,
-          s.p25,
-          s.p75,
-          s.typicalFPW,
-          s.outlierIds.length,
-          s.cappedAt,
-          now,
-        ),
+        env.DB.prepare("UPDATE runs SET outlier = 1 WHERE id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(outliers)),
       );
     }
-    for (const ids of chunks(outliers, MAX_BOUND)) {
-      stmts.push(env.DB.prepare(`UPDATE runs SET outlier = 1 WHERE id IN (${ids.map(() => "?").join(", ")})`).bind(...ids));
-    }
-    for (const ks of chunks(gone, MAX_BOUND)) {
-      stmts.push(env.DB.prepare(`DELETE FROM "groups" WHERE group_key IN (${ks.map(() => "?").join(", ")})`).bind(...ks));
+    if (gone.length > 0) {
+      stmts.push(
+        env.DB.prepare(`DELETE FROM "groups" WHERE group_key IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(gone)),
+      );
     }
     await env.DB.batch(stmts);
   }

@@ -21,6 +21,16 @@ export default defineConfig(({ mode }) => {
       compatibilityDate: "2026-11-10",
       entrypoint: "./src/index.ts",
       workersDev: true,
+      // Privacy (web/README.md "Privacy"): Workers Logs keep only what the code logs (errors, never a request or
+      // its headers). Invocation logs — one entry per request with its URL and headers — are off, as are traces
+      // (which record request attributes too) and Logpush; query strings are redacted in anything that remains.
+      logpush: false,
+      observability: {
+        enabled: true,
+        redactQueryString: true,
+        logs: { enabled: true, invocationLogs: false },
+        traces: { enabled: false },
+      },
       env: {
         DB: bindings.d1({ id: "3c0451a9-1b96-446d-94f8-005aa3f606db", name: "metal-pt-staging" }),
         RUNS: bindings.r2({ name: "metal-pt-runs-staging" }),

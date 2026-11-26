@@ -1,5 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
+import { cacheKeyURL } from "../src/cache.ts";
 import { afterWrite } from "../src/db.ts";
 import { createApp } from "../src/index.ts";
 import { fpsChart, parseSeries } from "../src/pages/chart.ts";
@@ -335,7 +336,7 @@ describe("edge cache", () => {
     const pub = await call(await publishRequest(syntheticUpload({ title: "Cyberpunk 2077" }), key));
     expect(pub.status).toBe(201);
     const { id } = (await pub.json()) as { id: string };
-    const before = await (await call(new Request(`${BASE}/game/cyberpunk-2077?x=1`))).text();
+    const before = await (await call(new Request(`${BASE}/game/cyberpunk-2077?preset=high`))).text();
     const gameBefore = await (await call(new Request(`${BASE}/game/cyberpunk-2077`))).text();
     expect((await call(new Request(`${BASE}/run/${id}`))).status).toBe(200);
     expect(gameBefore).toContain(`/run/${id}`);
@@ -344,7 +345,27 @@ describe("edge cache", () => {
     expect((await call(await deleteRequest(id, key))).status).toBe(200);
     expect((await call(new Request(`${BASE}/run/${id}`))).status).toBe(404);
     expect(await (await call(new Request(`${BASE}/game/cyberpunk-2077`))).text()).not.toContain(`/run/${id}`);
-    // A query-string variant is not purged: it expires after 60 s.
-    expect(await (await call(new Request(`${BASE}/game/cyberpunk-2077?x=1`))).text()).toContain(`/run/${id}`);
+    // A picker variant is not purged: it expires after 60 s.
+    expect(await (await call(new Request(`${BASE}/game/cyberpunk-2077?preset=high`))).text()).toContain(`/run/${id}`);
+    // An unknown parameter is the bare URL's entry, so it was purged with it.
+    expect(await (await call(new Request(`${BASE}/game/cyberpunk-2077?x=1`))).text()).not.toContain(`/run/${id}`);
+  });
+
+  it("the cache key keeps only the known parameters, in a fixed order", () => {
+    expect(cacheKeyURL(`${BASE}/game/x?zzz=1&sort=fpw&preset=high#top`)).toBe(`${BASE}/game/x?preset=high&sort=fpw`);
+    expect(cacheKeyURL(`${BASE}/game/x?sort=fpw&preset=high`)).toBe(cacheKeyURL(`${BASE}/game/x?preset=high&sort=fpw`));
+    expect(cacheKeyURL(`${BASE}/game/x?utm_source=a&fbclid=b`)).toBe(`${BASE}/game/x`);
+    expect(cacheKeyURL(`${BASE}/compare?runs=a,b&find=cp&q=z&res=1920x1080&up=off&fg=on`)).toBe(
+      `${BASE}/compare?res=1920x1080&up=off&fg=on&runs=a%2Cb&find=cp&q=z`,
+    );
+    expect(cacheKeyURL(`${BASE}/search?q=a&q=b`)).toBe(`${BASE}/search?q=a`);
+  });
+
+  it("unknown parameters share the bare URL's cache entry", async () => {
+    const cache = await caches.open("pages-test-4");
+    await get("/run/native63aa?a=1", cache);
+    expect(await cache.match(new Request(BASE + "/run/native63aa"))).toBeDefined();
+    await get("/run/native63aa?a=2", cache);
+    expect(await cache.match(new Request(BASE + "/run/native63aa?a=2"))).toBeUndefined();
   });
 });
