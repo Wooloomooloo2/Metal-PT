@@ -1,1 +1,1 @@
-{"fpsPerWatt":1.5321246572148637,"limiter":{"primary":"frameCap","verdict":"Mostly a frame cap"},"meanSystemW":39.16130434782609,"medianFPS":60,"p1LowFPS":null,"powerSource":"system","steadyEndS":180,"steadyStartS":20,"summaryVersion":1}
+{"fpsPerWatt":1.5321246572148637,"limiter":{"primary":"frameCap","verdict":"Mostly a frame cap"},"meanSystemW":39.16130434782609,"medianFPS":60,"p1LowFPS":null,"powerSource":"system","publisherVersion":"0.2.0","steadyEndS":180,"steadyStartS":20,"summaryVersion":1}

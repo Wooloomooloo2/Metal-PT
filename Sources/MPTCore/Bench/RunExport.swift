@@ -29,6 +29,9 @@ public struct ExportPreview: Equatable, Sendable {
     /// Total size of the files in the upload (run.json, samples.csv, frames.csv, summary.json; not the manifest), uncompressed.
     public var bytes: Int
     public var privacyLine: String
+    /// Why metal-pt.com would refuse this run (too long, samples.csv too large; `PublishLimits`), else nil. The zip's
+    /// own size is checked when publishing.
+    public var publishRefusal: String? = nil
 }
 
 /// The upload file (spec §6, `docs/run-bundle-format.md` "Upload file"): `<run>.mptrun.zip` holding the folder
@@ -68,15 +71,17 @@ public enum RunExport {
     public static func previews(_ bundle: RunBundle, hosts: [String]? = nil)
         -> (withoutNotes: ExportPreview, withNotes: ExportPreview) {
         let csvs = try? stageCSVs(bundle, hosts: hosts)
-        return (makePreview(bundle, csvs: csvs, includeNotes: false, hosts: hosts),
-                makePreview(bundle, csvs: csvs, includeNotes: true, hosts: hosts))
+        let summary = RunSummary(bundle)
+        return (makePreview(bundle, csvs: csvs, summary: summary, includeNotes: false, hosts: hosts),
+                makePreview(bundle, csvs: csvs, summary: summary, includeNotes: true, hosts: hosts))
     }
 
     public static func preview(_ bundle: RunBundle, includeNotes: Bool) -> ExportPreview {
-        makePreview(bundle, csvs: try? stageCSVs(bundle, hosts: nil), includeNotes: includeNotes, hosts: nil)
+        makePreview(bundle, csvs: try? stageCSVs(bundle, hosts: nil), summary: RunSummary(bundle),
+                    includeNotes: includeNotes, hosts: nil)
     }
 
-    private static func makePreview(_ bundle: RunBundle, csvs: StagedCSVs?, includeNotes: Bool,
+    private static func makePreview(_ bundle: RunBundle, csvs: StagedCSVs?, summary: RunSummary, includeNotes: Bool,
                                     hosts: [String]?) -> ExportPreview {
         let info = exportInfo(bundle.info, includeNotes: true, hosts: hosts)   // what notes would be sent
         let notes = info.user.notes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -95,8 +100,12 @@ public enum RunExport {
             sampleCount: csvs?.sampleCount ?? 0,
             columnCount: csvs?.columnCount ?? 0,
             frameCount: csvs?.frameCount,
-            bytes: json + ((try? SiteSummary(bundle: bundle).encoded())?.count ?? 0) + (csvs?.files.reduce(0) { $0 + $1.data.count } ?? 0),
-            privacyLine: privacyLine)
+            bytes: json + ((try? SiteSummary(bundle: bundle, summary: summary).encoded())?.count ?? 0)
+                + (csvs?.files.reduce(0) { $0 + $1.data.count } ?? 0),
+            privacyLine: privacyLine,
+            publishRefusal: PublishLimits.refusal(
+                steadySeconds: PublishLimits.steadySeconds(bundle, summary: summary),
+                samplesBytes: csvs?.files.first { $0.path == "samples.csv" }?.data.count ?? 0)?.localizedDescription)
     }
 
     static func macLine(_ m: RunInfo.Machine) -> String {
@@ -238,7 +247,7 @@ public enum RunExport {
                              appVersion: String = MetalPTVersion.current, limit: Int = maxBytes,
                              hosts: [String]? = nil) throws -> URL {
         let fm = FileManager.default
-        let staged = try stageFiles(bundle, includeNotes: includeNotes, hosts: hosts)
+        let staged = try stageFiles(bundle, includeNotes: includeNotes, hosts: hosts, appVersion: appVersion)
         let total = staged.files.reduce(0) { $0 + $1.data.count }
         guard total <= limit else { throw Error.tooLarge(bytes: total) }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -256,10 +265,14 @@ public enum RunExport {
         func data(_ path: String) -> Data? { files.first { $0.path == path }?.data }
     }
 
-    static func stageFiles(_ bundle: RunBundle, includeNotes: Bool, hosts: [String]?) throws -> StagedFiles {
+    /// `appVersion`: the app making the file (summary.json's `publisherVersion`). `summary`: the run's
+    /// `RunSummary` when the caller already has it.
+    static func stageFiles(_ bundle: RunBundle, includeNotes: Bool, hosts: [String]?,
+                           appVersion: String = MetalPTVersion.current, summary: RunSummary? = nil) throws -> StagedFiles {
         var files = try stageCSVs(bundle, hosts: hosts).files
         files.append(("run.json", try runJSON(bundle.info, includeNotes: includeNotes, hosts: hosts)))
-        files.append(("summary.json", try SiteSummary(bundle: bundle).encoded()))
+        files.append(("summary.json", try SiteSummary(bundle: bundle, summary: summary ?? RunSummary(bundle),
+                                                      publisherVersion: appVersion).encoded()))
         files.sort { $0.path < $1.path }
         return StagedFiles(files: files, folderName: folderName(bundle.info, hosts: hosts))
     }
@@ -267,8 +280,13 @@ public enum RunExport {
     /// The modification time of every entry in an upload zip (2026-01-01 00:00 UTC).
     static let zipDate = Date(timeIntervalSince1970: 1_767_225_600)
 
+    /// ditto's whole environment: zip entry times are stored as local (DOS) time, so the time zone is fixed to UTC for
+    /// the same bytes on every Mac; nothing else from the parent's environment is passed.
+    static let dittoEnvironment = ["TZ": "UTC", "PATH": "/usr/bin:/bin", "LANG": "C"]
+
     /// Writes the staged files and manifest.json into a temporary folder and zips it with ditto to `out`.
-    static func zip(_ staged: StagedFiles, includeNotes: Bool, appVersion: String, to out: URL) throws {
+    static func zip(_ staged: StagedFiles, includeNotes: Bool, appVersion: String, to out: URL,
+                    environment: [String: String] = dittoEnvironment) throws {
         let fm = FileManager.default
         let stagingRoot = fm.temporaryDirectory.appendingPathComponent("mpt-export-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: stagingRoot) }
@@ -297,6 +315,7 @@ public enum RunExport {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         p.arguments = ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", "--noacl", "--keepParent",
                        staging.path, out.path]
+        p.environment = environment
         let err = Pipe()
         p.standardError = err
         try p.run()

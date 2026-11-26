@@ -41,6 +41,18 @@ import MPTCore
         #expect(p.index.published(dir: dir)?.id == "r_first")
     }
 
+    @Test func conflictWithoutAURLRecordsNothingAndShowsTheMessage() async throws {
+        let (root, dir) = try runsRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubTransport(.http(409, #"{"code":"already_published_hidden","message":"This run was already published and has been hidden by a moderator."}"#))
+        let p = publisher(root, stub)
+        await #expect(throws: SiteError(message: "This run was already published and has been hidden by a moderator.",
+                                        code: "already_published_hidden", status: 409)) {
+            _ = try await p.publish(dir: dir, includeNotes: false, hosts: [])
+        }
+        #expect(p.index.published(dir: dir) == nil)
+    }
+
     @Test func refusedOrOfflinePublishRecordsNothing() async throws {
         let (root, dir) = try runsRoot()
         defer { try? FileManager.default.removeItem(at: root) }

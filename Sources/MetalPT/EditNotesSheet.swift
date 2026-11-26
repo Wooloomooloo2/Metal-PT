@@ -123,7 +123,7 @@ struct EditNotesSheet: View {
     private var footnote: String {
         let base = "Game, settings, graphics, label and video link are part of the run: they go with submissions and "
             + "comparisons. Notes stay on this Mac unless you choose to include them when you submit."
-        guard entry.isPublished else { return base }
+        guard entry.isPublished, store.publishingAvailable else { return base }
         return base + " This run is on metal-pt.com: a changed video link is sent there too; the other fields stay "
             + "as published."
     }
@@ -173,7 +173,8 @@ struct EditNotesSheet: View {
                 return
             }
             // Saved here; a published run's changed link also goes to the site (the site checks it again).
-            if VideoLinkSync.needsSend(published: entry.isPublished, link: v, synced: syncedVideo) {
+            if VideoLinkSync.needsSend(published: entry.isPublished && store.publishingAvailable, link: v,
+                                       synced: syncedVideo) {
                 do {
                     try await store.setSiteVideo(entry.id, url: v.isEmpty ? nil : v)
                     syncedVideo = v

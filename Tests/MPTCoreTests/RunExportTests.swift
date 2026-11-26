@@ -317,4 +317,37 @@ import Testing
         let e = RunExport.Error.zipFailed(status: 1, message: "ditto: No space left on device")
         #expect(e.localizedDescription.contains("No space left on device"))
     }
+
+    // MARK: - ditto's environment (byte-identical zips in every time zone)
+
+    @Test func dittoRunsWithTZUTCAndNothingElseFromTheParent() {
+        #expect(RunExport.dittoEnvironment == ["TZ": "UTC", "PATH": "/usr/bin:/bin", "LANG": "C"])
+    }
+
+    /// ditto stores entry times as local (DOS) time: another TZ changes the bytes, so fixing TZ is what keeps a run's
+    /// zip (and its SHA-256, the site's duplicate check) the same on every Mac.
+    @Test func zipBytesDependOnTZOnlyThroughTheFixedEnvironment() throws {
+        let staged = try RunExport.stageFiles(try makeBundle(), includeNotes: false, hosts: [])
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func zip(_ env: [String: String]?) throws -> Data {
+            let out = root.appendingPathComponent("\(UUID().uuidString).zip")
+            if let env {
+                try RunExport.zip(staged, includeNotes: false, appVersion: "9.9", to: out, environment: env)
+            } else {
+                try RunExport.zip(staged, includeNotes: false, appVersion: "9.9", to: out)
+            }
+            return try Data(contentsOf: out)
+        }
+        let fixed = try zip(nil)
+        let utc = try zip(["TZ": "UTC", "PATH": "/usr/bin:/bin", "LANG": "C"])
+        let kiritimati = try zip(["TZ": "Pacific/Kiritimati", "PATH": "/usr/bin:/bin", "LANG": "C"])
+        #expect(fixed == utc)
+        #expect(kiritimati != utc)
+        // The first local header's DOS time and date: 00:00:00 on 2026-01-01.
+        #expect(fixed[fixed.startIndex] == 0x50 && fixed[fixed.startIndex + 1] == 0x4B)
+        let time = UInt16(fixed[fixed.startIndex + 10]) | UInt16(fixed[fixed.startIndex + 11]) << 8
+        let date = UInt16(fixed[fixed.startIndex + 12]) | UInt16(fixed[fixed.startIndex + 13]) << 8
+        #expect(time == 0)
+        #expect(date == UInt16((2026 - 1980) << 9 | 1 << 5 | 1))
+    }
 }

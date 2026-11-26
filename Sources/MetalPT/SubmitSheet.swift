@@ -6,7 +6,8 @@ import SwiftUI
 /// "Submit…" (spec §4.A.4, `runs-submit.html` right side): exactly what the upload holds, the graphics settings
 /// (required to publish; missing ones highlighted), the video link, the "Also send my notes" tick, "Export file…"
 /// (writes `<exports>/<run>.mptrun.zip` and shows it in Finder) and Publish → "Published" with Open page / Copy link,
-/// or the site's message.
+/// or the site's message. While publishing is unavailable (`RunsStore.publishingAvailable`, release builds until
+/// `SiteClient.isLive`) it is "Export this run": the preview and "Export file…" only.
 struct SubmitSheet: View {
     enum Phase: Equatable {
         case editing
@@ -31,6 +32,8 @@ struct SubmitSheet: View {
     @State private var phase: Phase
     /// Publish was pressed with fields missing (they are highlighted from then on, or from the start in snapshots).
     @State private var showMissing: Bool
+    /// Publish and everything about the site shown (else export only).
+    private let publishing: Bool
     @Environment(\.openURL) private var openURL
     @Environment(\.rendersSnapshot) private var snapshot
 
@@ -38,8 +41,10 @@ struct SubmitSheet: View {
     /// published run opens as published.
     init(entry: RunEntry, store: RunsStore, exportsFolder: URL,
          previews: (withoutNotes: ExportPreview, withNotes: ExportPreview)? = nil, includeNotes: Bool = false,
-         videoURL: String? = nil, phase: Phase? = nil, showMissing: Bool = false) {
+         videoURL: String? = nil, phase: Phase? = nil, showMissing: Bool = false, publishing: Bool? = nil) {
         self.entry = entry
+        let publishing = publishing ?? store.publishingAvailable
+        self.publishing = publishing
         self.store = store
         self.exportsFolder = exportsFolder
         _previews = State(initialValue: previews)
@@ -49,7 +54,7 @@ struct SubmitSheet: View {
         let published = entry.publishedID.flatMap { id in
             entry.publishedURL.map { SiteClient.Published(id: id, url: $0) }
         }
-        _phase = State(initialValue: phase ?? published.map { .published($0) } ?? .editing)
+        _phase = State(initialValue: publishing ? (phase ?? published.map { .published($0) } ?? .editing) : .editing)
         _showMissing = State(initialValue: showMissing)
     }
 
@@ -58,10 +63,11 @@ struct SubmitSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Publish this run").font(.title3.weight(.semibold))
-                Text(isPublished ? "This run is on metal-pt.com."
-                                 : "This is exactly what will be sent to metal-pt.com. Nothing leaves your Mac until "
-                                   + "you press Publish.")
+                Text(publishing ? "Publish this run" : "Export this run").font(.title3.weight(.semibold))
+                Text(!publishing ? "This is exactly what the upload file holds. It is saved on this Mac only."
+                     : isPublished ? "This run is on metal-pt.com."
+                     : "This is exactly what will be sent to metal-pt.com. Nothing leaves your Mac until "
+                       + "you press Publish.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -72,16 +78,16 @@ struct SubmitSheet: View {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)
                 }
             }
-            if case .published = phase {} else {
+            if publishing, !isPublished {
                 GraphicsFields(draft: $graphics, highlight: highlighted, title: "Graphics (needed to publish)",
                                footnote: "What you set in the game; saved with the run.")
                     .disabled(phase == .publishing)
                 videoField
-                if let preview {
-                    notesTick(preview)
-                }
             }
-            if let note = store.siteKeyNote {
+            if !isPublished, let preview {
+                notesTick(preview)
+            }
+            if publishing, let note = store.siteKeyNote {
                 Label(note, systemImage: "key.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -108,12 +114,12 @@ struct SubmitSheet: View {
                 Button("Export file…") { export() }
                     .disabled(preview == nil || exporting || tooLarge)
                     .help("Save the upload file (one .mptrun.zip) to \(exportsFolder.path) and show it in Finder")
-                if case .published = phase {} else {
+                if publishing, !isPublished {
                     Button(isFailed ? "Try Again" : "Publish") { publish() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(preview == nil || tooLarge || phase == .publishing || videoProblem != nil
-                                  || graphics.customProblem)
-                        .help("Send this run to \(store.siteHost)")
+                        .disabled(preview == nil || tooLarge || refusal != nil || phase == .publishing
+                                  || videoProblem != nil || graphics.customProblem)
+                        .help(refusal ?? "Send this run to \(store.siteHost)")
                 }
             }
         }
@@ -241,6 +247,9 @@ struct SubmitSheet: View {
 
     private var tooLarge: Bool { (preview?.bytes ?? 0) > RunExport.maxBytes }
 
+    /// Why the site would refuse this run (too long, samples too large): Publish is disabled with this reason.
+    private var refusal: String? { publishing ? preview?.publishRefusal : nil }
+
     private func details(_ p: ExportPreview) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             row("Game", p.game)
@@ -263,6 +272,10 @@ struct SubmitSheet: View {
             if tooLarge {
                 Label(RunExport.Error.tooLarge(bytes: p.bytes).localizedDescription,
                       systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let refusal {
+                Label(refusal, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -297,7 +310,8 @@ struct SubmitSheet: View {
                 Image(systemName: includeNotes ? "checkmark.square.fill" : "square")
                     .font(.system(size: 15))
                     .foregroundStyle(includeNotes ? Color.accentColor : .secondary)
-                Text("Also send my notes (free text you typed)")
+                Text(publishing ? "Also send my notes (free text you typed)"
+                                : "Also include my notes (free text you typed)")
             }
             .contentShape(Rectangle())
         }

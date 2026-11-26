@@ -60,6 +60,42 @@ public struct SiteClient: Sendable {
     // TODO(staging): set to the staging workers.dev URL until production is approved
     public static let defaultBase = URL(string: "https://metal-pt.com")!
 
+    /// flip when metal-pt.com production is live. While false, release builds of the app hide everything that talks
+    /// to the site (Publish, Remove, "Open on metal-pt.com", the edit sheet's video sync, "Offer to publish after
+    /// each run"); "Export file…" stays. Debug builds, and `mpt publish` with `--site` or `MPT_SITE_URL`, still work.
+    public static let isLive: Bool = false
+
+    /// Which build this code is part of.
+    public enum BuildKind: Sendable { case debug, release }
+
+    public static var currentBuild: BuildKind {
+        #if DEBUG
+        return .debug
+        #else
+        return .release
+        #endif
+    }
+
+    /// Whether publishing is offered (see `isLive`). `siteOverride`: a site was named explicitly (`mpt --site` or
+    /// `MPT_SITE_URL`); the app passes false (its release builds ignore `MPT_SITE_URL`).
+    public static func publishingAvailable(isLive: Bool = SiteClient.isLive, build: BuildKind = SiteClient.currentBuild,
+                                           siteOverride: Bool) -> Bool {
+        isLive || build == .debug || siteOverride
+    }
+
+    /// The app's gate: publishing UI shown in debug builds, or once `isLive`.
+    public static func appPublishingAvailable(isLive: Bool = SiteClient.isLive,
+                                              build: BuildKind = SiteClient.currentBuild) -> Bool {
+        publishingAvailable(isLive: isLive, build: build, siteOverride: false)
+    }
+
+    /// `mpt publish`/`unpublish`'s gate: `--site URL` or `MPT_SITE_URL` (any build), a debug build, or `isLive`.
+    public static func cliPublishingAvailable(site: String?, env: [String: String], isLive: Bool = SiteClient.isLive,
+                                              build: BuildKind = SiteClient.currentBuild) -> Bool {
+        let named = site != nil || override(env) != nil
+        return publishingAvailable(isLive: isLive, build: build, siteOverride: named)
+    }
+
     /// The app's site: `MPT_SITE_URL` in debug builds (staging or a local `cf dev`), else `defaultBase`.
     public static func appBase(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         #if DEBUG

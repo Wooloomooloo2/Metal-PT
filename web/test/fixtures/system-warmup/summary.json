@@ -1,1 +1,1 @@
-{"fpsPerWatt":1.5125213325415552,"limiter":{"primary":"unclear","verdict":"No single limit stood out"},"meanSystemW":51.63563535911601,"medianFPS":78.1,"p1LowFPS":null,"powerSource":"system","steadyEndS":200,"steadyStartS":20,"summaryVersion":1}
+{"fpsPerWatt":1.5125213325415552,"limiter":{"primary":"unclear","verdict":"No single limit stood out"},"meanSystemW":51.63563535911601,"medianFPS":78.1,"p1LowFPS":null,"powerSource":"system","publisherVersion":"0.2.0","steadyEndS":200,"steadyStartS":20,"summaryVersion":1}

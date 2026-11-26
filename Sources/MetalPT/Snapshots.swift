@@ -216,6 +216,20 @@ enum Snapshots {
                                                                previews: previews, includeNotes: include,
                                                                videoURL: link, phase: phase, showMissing: missing))))
                 }
+                // Over the site's 90-minute cap: Publish disabled with the reason.
+                var long = previews
+                let reason = PublishLimits.Refusal.tooLong(seconds: 5820).localizedDescription
+                long.withoutNotes.publishRefusal = reason
+                long.withNotes.publishRefusal = reason
+                list.append(Shot(name: "runs-submit-too-long", size: nil, width: 560,
+                                 view: AnyView(SubmitSheet(entry: ready, store: withRuns.runs,
+                                                           exportsFolder: URL(fileURLWithPath: "/tmp/exports"),
+                                                           previews: long, videoURL: video, phase: .editing))))
+                // A release build before metal-pt.com is live: export only.
+                list.append(Shot(name: "runs-submit-export-only", size: nil, width: 560,
+                                 view: AnyView(SubmitSheet(entry: ready, store: withRuns.runs,
+                                                           exportsFolder: URL(fileURLWithPath: "/tmp/exports"),
+                                                           previews: long, phase: .editing, publishing: false))))
             }
         }
         // A run of an emulator, named after the game: list row, header and the edit sheet's Game field.

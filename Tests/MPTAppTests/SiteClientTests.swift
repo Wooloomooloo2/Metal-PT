@@ -123,6 +123,56 @@ final class StubTransport: HTTPTransport, @unchecked Sendable {
                                        alreadyPublished: true))
     }
 
+    @Test(arguments: [
+        (#"{"code":"already_published_hidden","message":"This run was already published and has been hidden by a moderator."}"#,
+         "already_published_hidden", "This run was already published and has been hidden by a moderator."),
+        (#"{"code":"already_published_elsewhere","message":"This exact run was already published from another Mac."}"#,
+         "already_published_elsewhere", "This exact run was already published from another Mac."),
+    ])
+    func conflictWithoutAURLIsTheSitesMessage(body: String, code: String, message: String) async throws {
+        let stub = StubTransport(.http(409, body))
+        await #expect(throws: SiteError(message: message, code: code, status: 409)) {
+            _ = try await Self.client(stub, signer: SoftwareSigner()).publish(try Self.payload())
+        }
+    }
+
+    // MARK: - isLive gating (final review 1)
+
+    @Test func notLiveYet() {
+        #expect(SiteClient.isLive == false)
+    }
+
+    @Test func appGate() {
+        #expect(SiteClient.appPublishingAvailable(isLive: false, build: .debug))
+        #expect(!SiteClient.appPublishingAvailable(isLive: false, build: .release))
+        #expect(SiteClient.appPublishingAvailable(isLive: true, build: .release))
+        #expect(SiteClient.appPublishingAvailable(isLive: true, build: .debug))
+        // The app ignores MPT_SITE_URL in release builds, so it never opens the gate there.
+        #expect(!SiteClient.publishingAvailable(isLive: false, build: .release, siteOverride: false))
+    }
+
+    @Test func cliGate() {
+        let none: [String: String] = [:]
+        let env = ["MPT_SITE_URL": "https://staging.example.workers.dev"]
+        #expect(!SiteClient.cliPublishingAvailable(site: nil, env: none, isLive: false, build: .release))
+        #expect(SiteClient.cliPublishingAvailable(site: "http://localhost:5173", env: none, isLive: false, build: .release))
+        #expect(SiteClient.cliPublishingAvailable(site: nil, env: env, isLive: false, build: .release))
+        // Not a usable URL: not a named site.
+        #expect(!SiteClient.cliPublishingAvailable(site: nil, env: ["MPT_SITE_URL": "nope"], isLive: false, build: .release))
+        #expect(SiteClient.cliPublishingAvailable(site: nil, env: none, isLive: false, build: .debug))
+        #expect(SiteClient.cliPublishingAvailable(site: nil, env: none, isLive: true, build: .release))
+    }
+
+    @Test func thisBuildsGateFollowsItsKind() {
+        #if DEBUG
+        #expect(SiteClient.currentBuild == .debug)
+        #expect(SiteClient.appPublishingAvailable())
+        #else
+        #expect(SiteClient.currentBuild == .release)
+        #expect(SiteClient.appPublishingAvailable() == SiteClient.isLive)
+        #endif
+    }
+
     @Test func refusalShowsTheSiteMessageAsIs() async throws {
         let stub = StubTransport(.http(422, #"{"code":"missing_graphics","message":"Set the graphics preset before publishing."}"#))
         await #expect(throws: SiteError(message: "Set the graphics preset before publishing.", code: "missing_graphics",

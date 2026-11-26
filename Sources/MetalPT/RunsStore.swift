@@ -20,6 +20,10 @@ final class RunsStore: ObservableObject {
     /// The website client (set by `AppModel`; nil in snapshots and tests that do not publish). Called on the first
     /// publish, remove or link change: it may create this Mac's publishing key.
     var makeSiteClient: (@Sendable () throws -> SiteClient)?
+    /// Whether the app offers anything that talks to the website (`SiteClient.appPublishingAvailable`: debug builds,
+    /// or once `SiteClient.isLive`). False: Publish, Remove, "Open on metal-pt.com" and the video sync are hidden;
+    /// "Export file…" stays.
+    var publishingAvailable = SiteClient.appPublishingAvailable()
     /// The site the client talks to (the Publish button's tooltip).
     var siteHost = SiteClient.defaultBase.host ?? "metal-pt.com"
     /// `SiteKey.lostKeyNote` once the key was found replaced (shown in the Submit sheet).

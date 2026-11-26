@@ -134,11 +134,17 @@ private struct SettingsContent: View {
         SettingsSection("Recording feedback") {
             SettingsToggle("Play a sound when recording starts and stops", isOn: $soundOnRecord)
             notificationRow
-            SettingsToggle("Offer to publish after each run", isOn: $offerPublish)
-            SettingsNote("While recording, the menu bar shows a red ● with the elapsed time. Metal-PT asks for "
-                         + "notification permission at the first recording; \"Run saved\" notifications open the run. "
-                         + "With \"Offer to publish\", they also have Publish…, which opens the run's Submit sheet; "
-                         + "nothing is sent until you press Publish there.")
+            if model.runs.publishingAvailable {
+                SettingsToggle("Offer to publish after each run", isOn: $offerPublish)
+                SettingsNote("While recording, the menu bar shows a red ● with the elapsed time. Metal-PT asks for "
+                             + "notification permission at the first recording; \"Run saved\" notifications open the "
+                             + "run. With \"Offer to publish\", they also have Publish…, which opens the run's Submit "
+                             + "sheet; nothing is sent until you press Publish there.")
+            } else {
+                SettingsNote("While recording, the menu bar shows a red ● with the elapsed time. Metal-PT asks for "
+                             + "notification permission at the first recording; \"Run saved\" notifications open the "
+                             + "run.")
+            }
         }
     }
 

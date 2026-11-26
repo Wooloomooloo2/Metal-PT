@@ -183,7 +183,7 @@ final class AppModel: ObservableObject {
         self.frameCheck = frameCheck ?? FrameReportingCheck()
         self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
         self.notifier?.onPublishRun = { [weak self] url in self?.openSubmit(url) }
-        if live && (usesAppKit ?? live) {
+        if live && (usesAppKit ?? live) && runs.publishingAvailable {
             runs.makeSiteClient = siteClientFactory()
             runs.siteHost = SiteClient.appBase(env: env).host ?? "metal-pt.com"
         }
@@ -248,8 +248,8 @@ final class AppModel: ObservableObject {
         defaults.object(forKey: SettingsKey.soundOnRecord) as? Bool ?? true
     }
 
-    /// Settings → "Offer to publish after each run" (default off).
-    var offerPublish: Bool { defaults.bool(forKey: SettingsKey.offerPublish) }
+    /// Settings → "Offer to publish after each run" (default off; never while publishing is unavailable).
+    var offerPublish: Bool { runs.publishingAvailable && defaults.bool(forKey: SettingsKey.offerPublish) }
 
     /// This Mac's publishing key, loaded (or made) on the first publish, remove or link change, off the main actor.
     private let siteKeys = SiteKeyStore(folder: { try AppFolders.support() })
@@ -265,6 +265,8 @@ final class AppModel: ObservableObject {
             let loaded: (key: SiteKey, replaced: Bool)
             do {
                 loaded = try keys.key()
+            } catch let e as SiteKeyUnavailable {
+                throw SiteError(message: e.localizedDescription)
             } catch {
                 throw SiteError(message: "Could not set up this Mac's publishing key: \(error.localizedDescription)")
             }

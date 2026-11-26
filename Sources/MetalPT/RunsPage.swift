@@ -136,9 +136,9 @@ struct RunsPage: View {
         .contextMenu {
             Button("Edit Settings and Notes…") { editing = entry }
                 .disabled(entry.inProgress)
-            Button("Submit…") { submitting = entry }
+            Button(store.publishingAvailable ? "Submit…" : "Export…") { submitting = entry }
                 .disabled(entry.inProgress)
-            if let url = entry.publishedURL {
+            if store.publishingAvailable, let url = entry.publishedURL {
                 Divider()
                 Button("Open on metal-pt.com") { NSWorkspace.shared.open(url) }
                 Button("Remove from metal-pt.com…") { unpublishing = entry }

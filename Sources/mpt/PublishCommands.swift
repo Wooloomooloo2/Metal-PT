@@ -10,8 +10,10 @@ enum PublishCommands {
         publish RUN [--notes] [--force] [--runs DIR] [--site URL]
                                        publish RUN to metal-pt.com (or --site URL, else $MPT_SITE_URL) and print
                                        its page; notes are left out unless --notes; the graphics settings must be
-                                       set (Edit Settings/Notes… in the app); refuses runs with no end time unless
-                                       --force; RUN as for export
+                                       set (Edit Settings/Notes… in the app); refuses runs with no end time, and
+                                       runs already published from this Mac (site.json), unless --force; refuses
+                                       runs longer than 90 steady minutes; RUN as for export. Until metal-pt.com is
+                                       live, release builds need --site or $MPT_SITE_URL
         unpublish RUN|ID [--runs DIR] [--site URL]
                                        remove a run this Mac published (by its folder, or the site's run id)
         """
@@ -41,7 +43,12 @@ enum PublishCommands {
             i += 1
         }
         guard let run else { throw UsageError("publish needs a run") }
+        try requireSite(site)
         let url = try RecordCommands.locateRun(run, out: runs)
+        if let record = SiteRecord.read(url), !force {
+            throw BenchError("this run is already published from this Mac (\(record.url.absoluteString)); "
+                             + "pass --force to publish it again")
+        }
         let bundle = try RunBundle.load(url, frames: true)
         if bundle.info.end == nil && !force {
             throw BenchError("this run has no end time: it may still be recording (or was cut off); "
@@ -50,8 +57,9 @@ enum PublishCommands {
         if bundle.info.graphics?.isComplete != true {
             printError("note: the graphics settings are incomplete; metal-pt.com will refuse the run")
         }
-        let client = try client(site: site, keyDir: keyDir)
+        // The site's limits (90 steady minutes, samples.csv and upload sizes) before the key is touched.
         let payload = try PublishPayload.make(bundle, includeNotes: notes)
+        let client = try client(site: site, keyDir: keyDir)
         let published = try await client.publish(payload)
         try SiteRecord(id: published.id, url: published.url).write(to: url)
         if published.alreadyPublished { print("already published (\(published.id)):") }
@@ -81,6 +89,7 @@ enum PublishCommands {
             i += 1
         }
         guard let target else { throw UsageError("unpublish needs a run or a run id") }
+        try requireSite(site)
         // A run folder with a site.json, else the site's id itself.
         let folder = try? RecordCommands.locateRun(target, out: runs)
         let record = folder.flatMap(SiteRecord.read)
@@ -95,6 +104,14 @@ enum PublishCommands {
         }
         if let folder { try SiteRecord.remove(from: folder) }
         print("removed \(id)")
+    }
+
+    /// Until `SiteClient.isLive`, a release `mpt` only talks to a site named with `--site` or `MPT_SITE_URL`.
+    private static func requireSite(_ site: String?) throws {
+        guard SiteClient.cliPublishingAvailable(site: site, env: ProcessInfo.processInfo.environment) else {
+            throw BenchError("metal-pt.com is not live yet: pass --site URL (or set MPT_SITE_URL) to publish to "
+                             + "another site")
+        }
     }
 
     private static func client(site: String?, keyDir: String?) throws -> SiteClient {
