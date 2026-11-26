@@ -68,14 +68,14 @@ again to allow notifications (System Settings → Notifications → Metal-PT), a
   old run is easy to find; right-click it and choose "Add as baseline" (or tick one run and "Make it the
   baseline"). The Baseline menu shows each run's date.
 - **Export**: on a run, "Submit…" shows exactly what would be sent, then "Export file…" writes one
-  `<run>.mptrun.zip` to the `exports` folder. The website that will take these files does not exist yet.
+  `<run>.mptrun.zip` to the `exports` folder. Publishing the same file to metal-pt.com is described below.
 - Files live in `~/Documents/Metal-PT/` (`runs/`, `projects/`, `exports/`); Settings can move the data folder.
 - Metal-PT can open at login (Settings). This needs Metal-PT.app in your **Applications** folder. Opened at login
   it starts in the menu bar only; opened yourself it shows its window.
 
 ## Privacy
 
-Nothing leaves your Mac unless you send it; there is no network code and no analytics. An export contains the run's
+Nothing leaves your Mac unless you press Publish (or export a file yourself); there is no analytics. An export contains the run's
 `run.json` (game executable and title, the stack, your Mac's model, chip, memory and macOS version, power mode,
 display, the run's settings and label, warnings), `samples.csv` (one row per second of telemetry), `frames.csv` when
 per-frame times were recorded, and a `manifest.json` listing those files with their sizes and checksums. Your notes
@@ -83,6 +83,33 @@ are left out unless you tick "Also send my notes". Before export Metal-PT scrubs
 (`/Users/<name>`, Wine's `C:\Users\<name>` and `drive_c/users/<name>`) become `~`, and this Mac's names (its
 computer name and host name) become `<host>`. The summary page is not exported. No user name, home folder, computer
 name or serial number is included.
+
+## Publishing to metal-pt.com
+
+Publish sends one finished run to the Metal-PT website, where it gets a public page with its numbers, a chart and a
+download link, and counts towards the typical figure for that game on that Mac. It is always your choice: nothing is
+sent until you press Publish on a run ("Submit..." on the run, then "Publish this run"). The website is not live
+yet; until it is, Publish says it can't reach metal-pt.com.
+
+- **Four graphics settings are required**: preset, resolution, upscaler and frame generation. Publish stays off,
+  with the missing ones outlined, until all four are set.
+- **A YouTube link is optional.** Only an https link to youtube.com (watch, shorts or live) or youtu.be counts. The
+  site keeps the video's ID, title and channel, not the text you typed, and the page links out to YouTube; nothing
+  from YouTube is loaded into the page.
+- **Public**: your Mac's model, chip, GPU cores, memory and macOS version; the setup (native, or the Wine runtime
+  with its graphics layers); the game's title and settings; the per-second numbers; your run label and settings
+  text; your notes only if you tick the box; the YouTube link's ID, title and channel. The run page also offers the
+  same `.mptrun.zip` that was uploaded.
+- **Never public**: the key that signs your runs (made on your Mac, used so only you can change or remove your
+  runs and so each Mac counts once); your user name, Mac name and home folder paths (removed before sending and
+  checked again by the site). The site stores no IP addresses, user agents or cookies, and runs no analytics. The
+  site's /privacy page says the same.
+- **Removing a run**: right-click it in Runs and choose "Remove from metal-pt.com...". The page, the file and its
+  part in every typical figure are deleted (pages can take a minute to catch up). Only the Mac that published a run
+  can remove it; if that key was lost, Metal-PT offers "Forget on this Mac".
+- **Offer to publish after each run** (Settings, Recording feedback, off by default): the "Run saved" notification
+  then has a "Publish..." button that opens that run's Publish sheet. Nothing is sent without pressing Publish.
+- From the terminal: `mpt publish RUN` and `mpt unpublish RUN`, using the same key.
 
 ## Build from source
 

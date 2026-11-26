@@ -45,6 +45,7 @@ Plans: `docs/superpowers/plans/`. Measured hardware facts: `docs/hardware-baseli
 - Never call `ProcessInfo.hostName` / `Host.current()` in the app: in the bundled app NSHost waits on mDNS / Local
   Network privacy and stalled a recording start and quit for over a minute. `Privacy.localHostNames()` reads locally.
 - `VERSION` and `MetalPTVersion.current` must match (make-app.sh and `MetalPTVersionTests` check it).
+- The Cache API does nothing on *.workers.dev — staging shows no page caching.
 - Tests use `MemoryDefaults`, never `UserDefaults(suiteName:)` (suites leave plists in ~/Library/Preferences).
 
 ## Current state
@@ -69,12 +70,27 @@ Metal-PT website part 1 (`docs/superpowers/plans/2026-11-25-metal-pt-website-app
 link, Steam ID, `summary.json`, publish payload, signing key, golden fixtures in `Tests/Fixtures/site/` ->
 `web/test/fixtures/`) done; part 2 (the Worker in `web/`, then the app's Publish UI) is next.
 Decision record: `docs/adr/0003-metal-pt-rename-and-split.md`.
+Metal-PT website (plan `docs/superpowers/plans/2026-11-25-metal-pt-website-site.md`, notes in `web/README.md`): part 1 (app prep:
+bundle, signing, Submit) and part 2 (Worker in `web/`: publish API, pages, reports, admin, and the app's Publish/Remove,
+`mpt publish`) are built and tested locally. Staging is NOT deployed yet: R2 must be enabled in the Cloudflare dashboard
+first. `SiteClient.defaultBase` is still `https://metal-pt.com` (a TODO(staging) marks it).
 
 ## Resume here
 
-Manual check: title a real ARMSX2 run, then check the Runs row, run header, Compare and Submit.
-Manual check: Secure Enclave key under the signed, bundled app (first Publish).
-User's manual checks of the rebuilt app: a heavy GPU-bound game recording (verify the GPU clock mapping and record it
-`[M]` in hardware-baseline), the red menu-bar label and sounds, the not-reporting warning, notifications. Then a first
-GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the Metal-PT Helper plan (battery charge limit and
-fans via a root helper; `make-app.sh helper` is reserved).
+Website, in order (production only when the user says so):
+1. Enable R2 in the Cloudflare dashboard (R2 Object Storage, Free plan).
+2. Staging: create bucket `metal-pt-runs-staging` with cf (dry-run first); `cd web && npm run migrate:staging`;
+   `npm run deploy:staging`; note the workers.dev URL and set `SiteClient.defaultBase` to it (then rebuild the app).
+3. Access (admin) and Turnstile (report form): follow "Setup the user must do" in
+   `.superpowers/sdd/2026-11-25-metal-pt-website-site/task-5-report.md` (team domain + AUD to `ACCESS_TEAM_DOMAIN` /
+   `ACCESS_AUD`, Turnstile site key to `TURNSTILE_SITE_KEY`, secret `TURNSTILE_SECRET`; redeploy staging).
+4. Manual checks: first Publish from the bundled app (Secure Enclave key under the signed app); app and `mpt` sharing
+   the key (publish in one, remove in the other); a real game run published and viewed on a phone; the notification
+   "Publish..." action.
+5. Going live: production D1 `metal-pt` and R2 `metal-pt-runs`, a production mode in `web/cloudflare.config.ts`, custom
+   domain metal-pt.com, flip `SiteClient.defaultBase` to it.
+
+Also: manual check, title a real ARMSX2 run (Runs row, header, Compare, Submit). A heavy GPU-bound game recording
+(verify the GPU clock mapping, record it `[M]` in hardware-baseline), the red menu-bar label and sounds, the
+not-reporting warning. Then a first GitHub Release (upload `build/Metal-PT-<version>.zip`). Next: write the
+Metal-PT Helper plan (battery charge limit and fans via a root helper; `make-app.sh helper` is reserved).
