@@ -1,7 +1,7 @@
 // Admin writes (spec §4.H): hide/unhide a run, remove (and lock) its video link, ban a key, resolve reports,
 // rename games, set or clear a game's Steam ID, edit aliases, merge games. Each write recomputes the groups it
 // touches and ends with `afterWrite` (cache purge), like the API's writes.
-import { afterWrite, isoSeconds, recomputeGroup, type Affected, type PurgeTarget } from "../db.ts";
+import { afterWrite, isoSeconds, recomputeGroups, type Affected, type PurgeTarget } from "../db.ts";
 import { purge } from "../cache.ts";
 import type { Env } from "../index.ts";
 import { normalizeTitle } from "../lib/games.ts";
@@ -46,10 +46,9 @@ function affectedBy(runs: RunRef[], extraGames: number[] = []): Affected {
   };
 }
 
-/** Recompute every group in `groupKeys`, then purge what `affected` names. */
+/** Recompute every group in `groupKeys` (bulk: a few D1 calls whatever the count), then purge what `affected` names. */
 async function finish(ctx: WriteContext, groupKeys: string[], affected: Affected): Promise<void> {
-  const now = isoSeconds(ctx.now);
-  for (const g of new Set(groupKeys)) await recomputeGroup(ctx.env, g, now);
+  if (groupKeys.length > 0) await recomputeGroups(ctx.env, groupKeys, isoSeconds(ctx.now));
   await afterWrite(ctx.env, affected, ctx.target);
 }
 
@@ -189,9 +188,10 @@ export async function renameGame(ctx: WriteContext, id: number, title: string, s
     stmts.push(ctx.env.DB.prepare("INSERT OR IGNORE INTO game_aliases (alias_norm, game_id) VALUES (?, ?)").bind(norm, id));
   }
   await ctx.env.DB.batch(stmts);
+  // Statistics don't depend on the title: purge only (the game's run pages show the title).
   const runs = await runsOfGame(ctx.env, id);
   if (newSlug !== g.slug) await purge(ctx.target.cache, ctx.target.origin, [`/game/${g.slug}`]);
-  await finish(ctx, runs.map((r) => r.group_key), affectedBy(runs, [id]));
+  await finish(ctx, [], affectedBy(runs, [id]));
 }
 
 /** Sets (digits only) or clears (empty) the game's Steam ID; one game per Steam ID. */
@@ -208,8 +208,8 @@ export async function setSteamID(ctx: WriteContext, id: number, steam: string): 
     }
   }
   await ctx.env.DB.prepare("UPDATE games SET steam_id = ? WHERE id = ?").bind(s === "" ? null : s, id).run();
-  const runs = await runsOfGame(ctx.env, id);
-  await finish(ctx, runs.map((r) => r.group_key), affectedBy(runs, [id]));
+  // Only the game page shows the Steam ID: nothing to recompute.
+  await finish(ctx, [], affectedBy([], [id]));
 }
 
 export async function addAlias(ctx: WriteContext, id: number, text: string): Promise<string> {
@@ -276,4 +276,62 @@ export async function mergeGames(ctx: WriteContext, sourceId: number, targetId: 
   // The moved runs' new groups (some shared with the target's own runs) get recomputed; the source's are gone.
   await finish(ctx, movedNow.map((r) => r.group_key), affectedBy(movedNow, [targetId]));
   return { runs: before.length, aliases: aliases?.n ?? 0, droppedSteamID: src.steam_id !== null && !moveSteam ? src.steam_id : null };
+}
+
+// MARK: - Recompute statistics (the repair path)
+
+/** Groups recomputed per request by "Recompute statistics"; the page offers "run again" while any are left. */
+export const RECOMPUTE_CHUNK = 200;
+
+export type RecomputeScope = { kind: "all" } | { kind: "game"; id: number } | { kind: "key"; keyId: string };
+
+export interface RecomputeResult {
+  done: number;
+  left: number;
+  /** The last group key done: the next request continues after it. Null when none was done. */
+  last: string | null;
+}
+
+/** Every group key in scope: from the runs, plus `groups` rows (a stale row whose runs are gone is deleted). */
+function scopeKeys(scope: RecomputeScope): { sql: string; params: (string | number)[] } {
+  switch (scope.kind) {
+    case "all":
+      return { sql: `SELECT group_key FROM runs UNION SELECT group_key FROM "groups"`, params: [] };
+    case "game":
+      return {
+        sql: `SELECT group_key FROM runs WHERE game_id = ?1 UNION SELECT group_key FROM "groups" WHERE game_id = ?1`,
+        params: [scope.id],
+      };
+    case "key":
+      return { sql: "SELECT DISTINCT group_key FROM runs WHERE key_id = ?1", params: [scope.keyId] };
+  }
+}
+
+/**
+ * Recomputes up to RECOMPUTE_CHUNK groups in scope, in group-key order after `after`. Idempotent: running it again
+ * (or from the start) only rewrites the same rows. Purges the scope's pages.
+ */
+export async function recomputeStatistics(ctx: WriteContext, scope: RecomputeScope, after: string): Promise<RecomputeResult> {
+  if (scope.kind === "game") await game(ctx.env, scope.id);
+  if (scope.kind === "key") await requireKey(ctx.env, scope.keyId);
+  const { sql, params } = scopeKeys(scope);
+  const n = params.length;
+  const { results } = await ctx.env.DB.prepare(
+    `SELECT group_key FROM (${sql}) WHERE group_key > ?${n + 1} ORDER BY group_key LIMIT ?${n + 2}`,
+  )
+    .bind(...params, after, RECOMPUTE_CHUNK)
+    .all<{ group_key: string }>();
+  const keys = results.map((r) => r.group_key);
+  const last = keys.length > 0 ? keys[keys.length - 1] : null;
+  const left = await ctx.env.DB.prepare(`SELECT count(*) AS n FROM (${sql}) WHERE group_key > ?${n + 1}`)
+    .bind(...params, last ?? after)
+    .first<{ n: number }>();
+  const affected: Affected =
+    scope.kind === "game"
+      ? affectedBy([], [scope.id])
+      : scope.kind === "key"
+        ? affectedBy((await runsOfKey(ctx.env, scope.keyId)).slice(0, MAX_PURGED_RUNS))
+        : affectedBy([]);
+  await finish(ctx, keys, affected);
+  return { done: keys.length, left: left?.n ?? 0, last };
 }

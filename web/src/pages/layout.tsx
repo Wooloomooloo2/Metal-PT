@@ -18,6 +18,8 @@ export interface PageMeta {
   head?: Child;
   /** Keep the page out of search engines (report and admin pages). */
   noindex?: boolean;
+  /** Load the Google Fonts typefaces (default true; the admin pages use system fonts: no third-party request). */
+  fonts?: boolean;
 }
 
 const FONTS =
@@ -45,8 +47,12 @@ export function Layout(props: PageMeta & { children?: Child }) {
             <link rel="canonical" href={props.og.url} />
           </>
         ) : null}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="stylesheet" href={FONTS} />
+        {props.fonts === false ? null : (
+          <>
+            <link rel="preconnect" href="https://fonts.googleapis.com" />
+            <link rel="stylesheet" href={FONTS} />
+          </>
+        )}
         <link rel="stylesheet" href={`/static/site.css?v=${STATIC_VERSION}`} />
         <script src={`/static/site.js?v=${STATIC_VERSION}`} defer></script>
         {props.head ?? null}

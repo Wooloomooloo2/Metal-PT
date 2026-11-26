@@ -144,61 +144,95 @@ export function statRun(r: GroupRunRow): StatRun {
   };
 }
 
-/**
- * Recomputes one group's cached statistics from its runs (one read), marks its outliers, and upserts the `groups`
- * row — or deletes it when no run is counted any more (so a game page never shows a stale typical).
- */
+/** D1 allows 100 bound parameters per statement; group keys and run ids are bound in chunks below that. */
+export const MAX_BOUND = 90;
+
+function chunks<T>(xs: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}
+
+const GROUP_RUN_COLS = `id, key_id, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode, frame_gen,
+            median_fps, fps_per_watt, power_source, on_ac, power_mode, limiter_primary, hidden, group_key`;
+
+/** Recomputes one group (see `recomputeGroups`). */
 export async function recomputeGroup(env: Env, groupKey: string, now: string): Promise<void> {
-  const { results } = await env.DB.prepare(
-    `SELECT id, key_id, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode, frame_gen,
-            median_fps, fps_per_watt, power_source, on_ac, power_mode, limiter_primary, hidden
-       FROM runs WHERE group_key = ?`,
-  )
-    .bind(groupKey)
-    .all<GroupRunRow>();
-  const s = groupStats(results.map(statRun));
-  const out = s.outlierIds;
-  const mark =
-    out.length === 0
-      ? env.DB.prepare("UPDATE runs SET outlier = 0 WHERE group_key = ? AND outlier <> 0").bind(groupKey)
-      : env.DB.prepare(
-          `UPDATE runs SET outlier = CASE WHEN id IN (${out.map(() => "?").join(", ")}) THEN 1 ELSE 0 END WHERE group_key = ?`,
-        ).bind(...out, groupKey);
-  if (s.counted === 0) {
-    await env.DB.batch([mark, env.DB.prepare(`DELETE FROM "groups" WHERE group_key = ?`).bind(groupKey)]);
-    return;
+  await recomputeGroups(env, [groupKey], now);
+}
+
+/**
+ * Recomputes the cached statistics of every group in `groupKeys`: marks outliers on their runs and upserts each
+ * `groups` row, or deletes it when no run is counted any more (so a game page never shows a stale typical).
+ * Cost is bounded whatever the number of groups: per chunk of 90 groups, one read of their runs and one batch of
+ * writes (D1's per-request query limit on the Free plan makes a per-group loop unsafe for bans and merges).
+ */
+export async function recomputeGroups(env: Env, groupKeys: string[], now: string): Promise<void> {
+  const keys = [...new Set(groupKeys)];
+  for (const part of chunks(keys, MAX_BOUND)) {
+    const { results } = await env.DB.prepare(
+      `SELECT ${GROUP_RUN_COLS} FROM runs WHERE group_key IN (${part.map(() => "?").join(", ")})`,
+    )
+      .bind(...part)
+      .all<GroupRunRow & { group_key: string }>();
+    const byGroup = new Map<string, GroupRunRow[]>(part.map((k) => [k, []]));
+    for (const r of results) byGroup.get(r.group_key)?.push(r);
+
+    const stmts: D1PreparedStatement[] = [
+      env.DB.prepare(`UPDATE runs SET outlier = 0 WHERE outlier <> 0 AND group_key IN (${part.map(() => "?").join(", ")})`).bind(
+        ...part,
+      ),
+    ];
+    const outliers: string[] = [];
+    const gone: string[] = [];
+    for (const [groupKey, runs] of byGroup) {
+      const s = groupStats(runs.map(statRun));
+      outliers.push(...s.outlierIds);
+      if (s.counted === 0) {
+        gone.push(groupKey);
+        continue;
+      }
+      const g = runs[0];
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO "groups" (group_key, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode,
+                                 frame_gen, runs, macs, typical_fps, p25_fps, p75_fps, typical_fpw, outliers, capped_at, updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (group_key) DO UPDATE SET
+             game_id = excluded.game_id, runs = excluded.runs, macs = excluded.macs, typical_fps = excluded.typical_fps,
+             p25_fps = excluded.p25_fps, p75_fps = excluded.p75_fps, typical_fpw = excluded.typical_fpw,
+             outliers = excluded.outliers, capped_at = excluded.capped_at, updated = excluded.updated`,
+        ).bind(
+          groupKey,
+          g.game_id,
+          g.mac_key,
+          g.setup_key,
+          g.preset,
+          g.width,
+          g.height,
+          g.upscaler,
+          g.upscaler_mode,
+          g.frame_gen,
+          s.counted,
+          s.macs,
+          s.typical,
+          s.p25,
+          s.p75,
+          s.typicalFPW,
+          s.outlierIds.length,
+          s.cappedAt,
+          now,
+        ),
+      );
+    }
+    for (const ids of chunks(outliers, MAX_BOUND)) {
+      stmts.push(env.DB.prepare(`UPDATE runs SET outlier = 1 WHERE id IN (${ids.map(() => "?").join(", ")})`).bind(...ids));
+    }
+    for (const ks of chunks(gone, MAX_BOUND)) {
+      stmts.push(env.DB.prepare(`DELETE FROM "groups" WHERE group_key IN (${ks.map(() => "?").join(", ")})`).bind(...ks));
+    }
+    await env.DB.batch(stmts);
   }
-  const g = results[0];
-  const upsert = env.DB.prepare(
-    `INSERT INTO "groups" (group_key, game_id, mac_key, setup_key, preset, width, height, upscaler, upscaler_mode,
-                           frame_gen, runs, macs, typical_fps, p25_fps, p75_fps, typical_fpw, outliers, capped_at, updated)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (group_key) DO UPDATE SET
-       runs = excluded.runs, macs = excluded.macs, typical_fps = excluded.typical_fps, p25_fps = excluded.p25_fps,
-       p75_fps = excluded.p75_fps, typical_fpw = excluded.typical_fpw, outliers = excluded.outliers,
-       capped_at = excluded.capped_at, updated = excluded.updated`,
-  ).bind(
-    groupKey,
-    g.game_id,
-    g.mac_key,
-    g.setup_key,
-    g.preset,
-    g.width,
-    g.height,
-    g.upscaler,
-    g.upscaler_mode,
-    g.frame_gen,
-    s.counted,
-    s.macs,
-    s.typical,
-    s.p25,
-    s.p75,
-    s.typicalFPW,
-    out.length,
-    s.cappedAt,
-    now,
-  );
-  await env.DB.batch([mark, upsert]);
 }
 
 // MARK: - After every write

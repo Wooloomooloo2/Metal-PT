@@ -154,7 +154,7 @@ describe("Turnstile", () => {
     const res = await call(
       post("repaaaa1", { reason: "wrong_game", "cf-turnstile-response": "tok-123" }, { "CF-Connecting-IP": "203.0.113.9" }),
       ON,
-      siteverifyStub({ success: true, action: "report" }, calls),
+      siteverifyStub({ success: true, action: "report", hostname: "metal-pt.test" }, calls),
     );
     expect(res.status).toBe(200);
     expect(calls).toEqual([
@@ -169,8 +169,12 @@ describe("Turnstile", () => {
   it("a failing, missing or wrong-action token, or siteverify down: refused, nothing stored", async () => {
     const cases: [Record<string, string>, Fetch][] = [
       [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: false, "error-codes": ["invalid-input-response"] })],
-      [{}, siteverifyStub({ success: true })],
-      [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: true, action: "login" })],
+      [{}, siteverifyStub({ success: true, action: "report", hostname: "metal-pt.test" })],
+      [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: true, action: "login", hostname: "metal-pt.test" })],
+      // A real secret: an empty action, or another site's hostname, doesn't pass.
+      [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: true, action: "", hostname: "metal-pt.test" })],
+      [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: true, action: "report", hostname: "evil.example" })],
+      [{ "cf-turnstile-response": "tok" }, siteverifyStub({ success: true, action: "report" })],
       [{ "cf-turnstile-response": "tok" }, siteverifyStub("throw")],
     ];
     for (const [fields, fetch] of cases) {
@@ -190,7 +194,18 @@ describe("Turnstile", () => {
 
   it("verifyTurnstile times out to false", async () => {
     const never: Fetch = () => new Promise(() => {});
-    expect(await verifyTurnstile("tok", "secret", never, 20)).toBe(false);
+    expect(await verifyTurnstile("tok", "secret", "metal-pt.test", never, 20)).toBe(false);
+  });
+
+  it("Cloudflare's test secret: an empty action and the example.com hostname pass", async () => {
+    const test = { TURNSTILE_SITE_KEY: "1x00000000000000000000AA", TURNSTILE_SECRET: "1x0000000000000000000000000000000AA" };
+    const res = await call(
+      post("repaaaa1", { reason: "wrong_game", "cf-turnstile-response": "XXXX.DUMMY.TOKEN.XXXX" }),
+      test,
+      siteverifyStub({ success: true, action: "", hostname: "example.com" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await reports()).toHaveLength(1);
   });
 });
 

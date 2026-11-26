@@ -180,7 +180,7 @@ export async function submitReport(req: Request, env: Env, deps: Deps, id: strin
 
   if (mode.kind === "on") {
     const token = String(form.get("cf-turnstile-response") ?? "");
-    if (!(await verifyTurnstile(token, mode.secret, deps.fetch))) {
+    if (!(await verifyTurnstile(token, mode.secret, new URL(req.url).hostname, deps.fetch))) {
       return again({ ...state, error: "The check that you're a person didn't pass. Please try again." });
     }
   }

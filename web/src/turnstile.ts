@@ -25,12 +25,23 @@ export function turnstileMode(env: TurnstileEnv): TurnstileMode {
 }
 
 /**
- * True when siteverify accepts `token` for this form. Network errors and timeouts are false. (The hostname isn't
- * compared: the site key is limited to the site's hostnames in the Turnstile settings.)
+ * Cloudflare's documented test secrets (always pass / always fail / token already spent). Their replies carry an
+ * empty action and the hostname "example.com", so only for them are those two checks relaxed.
+ */
+const TEST_SECRETS = new Set([
+  "1x0000000000000000000000000000000AA",
+  "2x0000000000000000000000000000000AA",
+  "3x0000000000000000000000000000000AA",
+]);
+
+/**
+ * True when siteverify accepts `token` for this form on `hostname` (the request's host). Network errors and timeouts
+ * are false.
  */
 export async function verifyTurnstile(
   token: string,
   secret: string,
+  hostname: string,
   fetchFn: Fetch,
   timeoutMs = 5000,
 ): Promise<boolean> {
@@ -51,11 +62,10 @@ export async function verifyTurnstile(
       }),
     ]);
     if (!res.ok) return false;
-    const r = (await res.json()) as { success?: unknown; action?: unknown };
+    const r = (await res.json()) as { success?: unknown; action?: unknown; hostname?: unknown };
     if (r.success !== true) return false;
-    // Cloudflare's test keys answer with an empty action; a real token carries the widget's.
-    if (typeof r.action === "string" && r.action !== "" && r.action !== REPORT_ACTION) return false;
-    return true;
+    if (TEST_SECRETS.has(secret)) return r.action === undefined || r.action === "" || r.action === REPORT_ACTION;
+    return r.action === REPORT_ACTION && r.hostname === hostname;
   } catch {
     return false;
   } finally {

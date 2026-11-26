@@ -10,7 +10,7 @@ import { reasonLabel } from "../pages/report.tsx";
 
 export function AdminLayout(props: { title: string; who: string | null; notice?: string | null; error?: string | null; children?: Child }) {
   return (
-    <Layout title={`Admin · ${props.title}`} noindex>
+    <Layout title={`Admin · ${props.title}`} noindex fonts={false}>
       <section class="stack" style="gap:18px">
         <nav class="admin-actions small" aria-label="Admin">
           <strong>Admin</strong>
@@ -254,6 +254,7 @@ export function AdminRunPage(props: { d: RunData; who: string | null; notice?: s
         )}
         {r.video_id ? <Action action={`/admin/run/${r.id}/remove-video`} label="Remove video link" back={back} /> : null}
         {r.video_locked ? <Action action={`/admin/run/${r.id}/unlock-video`} label="Let the owner add a video again" back={back} /> : null}
+        <Action action="/admin/recompute" label="Recompute this key's statistics" back={back} fields={{ scope: "key", key_id: r.key_id }} />
         {props.d.reports.some((x) => !x.resolved) ? (
           <Action action={`/admin/run/${r.id}/resolve-reports`} label="Resolve all its reports" back={back} />
         ) : null}
@@ -331,6 +332,9 @@ export function GamesPage(props: { games: GameListRow[]; q: string; who: string 
   return (
     <AdminLayout title="Games" who={props.who}>
       <h1>Games</h1>
+      <div class="admin-actions">
+        <Action action="/admin/recompute" label="Recompute all statistics" back="/admin/games" fields={{ scope: "all" }} />
+      </div>
       <form method="get" action="/admin/games" class="admin-actions">
         <label class="sr" for="gq">Find a game</label>
         <input id="gq" type="text" name="q" value={props.q} placeholder="Title, alias, slug or Steam ID" />
@@ -402,6 +406,9 @@ export function AdminGamePage(props: { d: GameData; who: string | null; notice?:
         <a href={`/game/${g.slug}`}>/game/{g.slug}</a> · {props.d.runs} runs ({props.d.hidden} hidden) · {props.d.groups}{" "}
         counted groups · id {g.id}
       </p>
+      <div class="admin-actions">
+        <Action action="/admin/recompute" label="Recompute statistics" back={back} fields={{ scope: "game", id: String(g.id) }} />
+      </div>
 
       <div class="card pad form">
         <h3>Rename</h3>
@@ -467,6 +474,33 @@ export function AdminGamePage(props: { d: GameData; who: string | null; notice?:
 export function AdminErrorPage(props: { message: string; back: string; who: string | null }) {
   return (
     <AdminLayout title="Not done" who={props.who} error={props.message}>
+      <p>
+        <a href={props.back}>Back</a>
+      </p>
+    </AdminLayout>
+  );
+}
+
+export function RecomputePage(props: {
+  who: string | null;
+  done: number;
+  left: number;
+  last: string | null;
+  fields: Record<string, string>;
+  back: string;
+}) {
+  return (
+    <AdminLayout title="Recompute statistics" who={props.who}>
+      <h1>Recompute statistics</h1>
+      <p class="notice" role="status">
+        {props.done} group{props.done === 1 ? "" : "s"} recomputed.
+        {props.left > 0 ? ` ${props.left} group${props.left === 1 ? "" : "s"} left — run again.` : " All done."}
+      </p>
+      {props.left > 0 && props.last !== null ? (
+        <div class="admin-actions">
+          <Action action="/admin/recompute" label="Run again" back={props.back} fields={{ ...props.fields, after: props.last }} />
+        </div>
+      ) : null}
       <p>
         <a href={props.back}>Back</a>
       </p>

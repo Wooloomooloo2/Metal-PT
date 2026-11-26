@@ -13,6 +13,8 @@ import {
   banKey,
   findGame,
   mergeGames,
+  recomputeStatistics,
+  type RecomputeScope,
   removeAlias,
   removeVideo,
   renameGame,
@@ -34,6 +36,7 @@ import {
   loadGames,
   loadQueue,
   QueuePage,
+  RecomputePage,
 } from "./pages.tsx";
 
 type AdminEnv = { Bindings: Env; Variables: { admin: AccessIdentity } };
@@ -222,6 +225,33 @@ export function registerAdmin(app: Hono<{ Bindings: Env }>, d: Deps, notFound: (
       if (target === null) throw new AdminError("No game matches that id, address or URL.");
       await mergeGames(ctx(c), id, target.id);
       return c.redirect(withDone(`/admin/game/${target.id}`, "merged"), 303);
+    } catch (e) {
+      if (e instanceof AdminError) return page(<AdminErrorPage message={e.message} back={back} who={who(c)} />, 400);
+      throw e;
+    }
+  });
+
+  // MARK: - Recompute statistics (repair path; idempotent, ≤ 200 groups per request)
+
+  admin.post("/admin/recompute", async (c) => {
+    const form = (await c.req.parseBody()) as Record<string, unknown>;
+    const back = backTo(form.back, "/admin/games");
+    const kind = str(form.scope);
+    let scope: RecomputeScope | null = null;
+    const fields: Record<string, string> = { scope: kind };
+    if (kind === "all") scope = { kind: "all" };
+    if (kind === "game" && /^\d{1,12}$/.test(str(form.id))) {
+      scope = { kind: "game", id: Number(form.id) };
+      fields.id = str(form.id);
+    }
+    if (kind === "key" && str(form.key_id) !== "") {
+      scope = { kind: "key", keyId: str(form.key_id) };
+      fields.key_id = str(form.key_id);
+    }
+    try {
+      if (scope === null) throw new AdminError("Choose what to recompute.");
+      const r = await recomputeStatistics(ctx(c), scope, str(form.after));
+      return page(<RecomputePage who={who(c)} done={r.done} left={r.left} last={r.last} fields={fields} back={back} />);
     } catch (e) {
       if (e instanceof AdminError) return page(<AdminErrorPage message={e.message} back={back} who={who(c)} />, 400);
       throw e;

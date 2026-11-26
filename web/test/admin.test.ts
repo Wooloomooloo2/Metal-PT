@@ -97,12 +97,50 @@ interface SiteOptions {
   vars?: Record<string, string>;
   cache?: Cache | null;
   fetch?: Fetch;
+  db?: D1Database;
+}
+
+/** env.DB wrapped to count D1 calls: each statement's first/all/run/raw and each batch counts one. */
+function countingDB(): { db: D1Database; calls: () => number } {
+  let n = 0;
+  const real = new WeakMap<object, D1PreparedStatement>();
+  const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => {
+    const p = new Proxy(stmt, {
+      get(t, k) {
+        if (k === "bind") return (...args: unknown[]) => wrap(t.bind(...args));
+        if (k === "first" || k === "all" || k === "run" || k === "raw") {
+          return (...args: unknown[]) => {
+            n += 1;
+            return (t as any)[k](...args);
+          };
+        }
+        const v = (t as any)[k];
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    real.set(p, stmt);
+    return p;
+  };
+  const db = new Proxy(env.DB, {
+    get(t, k) {
+      if (k === "prepare") return (sql: string) => wrap(t.prepare(sql));
+      if (k === "batch") {
+        return (stmts: D1PreparedStatement[]) => {
+          n += 1;
+          return t.batch(stmts.map((s) => real.get(s) ?? s));
+        };
+      }
+      const v = (t as any)[k];
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+  return { db, calls: () => n };
 }
 
 async function call(req: Request, o: SiteOptions = {}): Promise<Response> {
   const app = createApp({ now: () => NOW, fetch: o.fetch ?? stubFetch(), cache: () => o.cache ?? null });
   const ctx = createExecutionContext();
-  const res = await app.fetch(req, { ...env, ...(o.vars ?? ACCESS) }, ctx);
+  const res = await app.fetch(req, { ...env, ...(o.db ? { DB: o.db } : {}), ...(o.vars ?? ACCESS) }, ctx);
   await waitOnExecutionContext(ctx);
   return res;
 }
@@ -517,5 +555,119 @@ describe("games", () => {
     expect((await adminPost("/admin/game/1/merge", { target: "no-such-game", confirm: "1" })).status).toBe(400);
     expect((await adminPost("/admin/game/1/merge", { target: "2" })).status).toBe(400);
     expect(await env.DB.prepare("SELECT count(*) AS n FROM games").first()).toEqual({ n: 2 });
+  });
+});
+
+// MARK: - Fix round 1: bounded D1 calls, the repair path
+
+/** `n` groups (one per resolution), each with a run from `key` and one from "kother". */
+async function seedGroups(n: number, key = "kban"): Promise<string[]> {
+  await seedGame(1, "cyberpunk-2077", "Cyberpunk 2077");
+  const gks: string[] = [];
+  for (let i = 0; i < n; i++) {
+    gks.push(await seedRun({ id: `ban${String(i).padStart(4, "0")}a`, game: 1, key, fps: 60, fpw: 0.5, width: 1000 + i }));
+    await seedRun({ id: `ban${String(i).padStart(4, "0")}b`, game: 1, key: "kother", fps: 70, fpw: 0.6, width: 1000 + i });
+  }
+  await recomputeAll();
+  return gks;
+}
+
+describe("bounded D1 calls", () => {
+  it("a ban touching 60 groups costs a few D1 calls and leaves correct group rows", async () => {
+    const gks = await seedGroups(60);
+    expect((await group(gks[0]))!.runs).toBe(2);
+    const { db, calls } = countingDB();
+    const res = await adminPost("/admin/key/ban", { key_id: "kban" }, { db });
+    expect(res.status).toBe(303);
+    expect(calls()).toBeLessThanOrEqual(8);
+    for (const gk of gks) {
+      const g = (await group(gk))!;
+      // One run from one Mac: counted, but not enough for a typical.
+      expect([g.runs, g.macs, g.typical_fps, g.updated]).toEqual([1, 1, null, "2026-11-25T12:03:00Z"]);
+    }
+    // Unban and show: the same bounded cost, groups back to 2 runs.
+    const again = countingDB();
+    await adminPost("/admin/key/unban", { key_id: "kban", unhide: "1" }, { db: again.db });
+    expect(again.calls()).toBeLessThanOrEqual(8);
+    for (const gk of gks) expect((await group(gk))!.runs).toBe(2);
+  });
+
+  it("a merge of a game with 60 groups costs a few D1 calls", async () => {
+    await seedGroups(60);
+    await seedGame(2, "other-game", "Other Game");
+    const { db, calls } = countingDB();
+    const res = await adminPost("/admin/game/1/merge", { target: "2", confirm: "1" }, { db });
+    expect(res.status).toBe(303);
+    expect(calls()).toBeLessThanOrEqual(12);
+    const n = await env.DB.prepare(`SELECT count(*) AS n, sum(runs) AS runs FROM "groups" WHERE game_id = 2`).first();
+    expect(n).toEqual({ n: 60, runs: 120 });
+  });
+
+  it("rename, Steam ID and alias writes don't recompute groups", async () => {
+    const { gk } = await seedBasic();
+    for (const [path, fields] of [
+      ["/admin/game/1/rename", { title: "Cyberpunk 2077 Remix", slug: "" }],
+      ["/admin/game/1/steam", { steam_id: "" }],
+      ["/admin/game/1/alias/add", { alias: "CP77" }],
+    ] as const) {
+      const { db, calls } = countingDB();
+      expect((await adminPost(path, fields, { db })).status).toBe(303);
+      expect(calls()).toBeLessThanOrEqual(6);
+    }
+    expect((await group(gk))!.updated).toBe("2026-11-25T12:00:00Z");
+  });
+});
+
+describe("recompute statistics", () => {
+  it("per game repairs a wrong row and a missing row, and is idempotent", async () => {
+    const { gk } = await seedBasic();
+    const before = (await group(gk))!;
+    await env.DB.prepare(`UPDATE "groups" SET typical_fps = 999, runs = 9 WHERE group_key = ?`).bind(gk).run();
+    for (let i = 0; i < 2; i++) {
+      const res = await adminPost("/admin/recompute", { scope: "game", id: "1", back: "/admin/game/1" });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("All done.");
+      const g = (await group(gk))!;
+      expect([g.typical_fps, g.runs]).toEqual([before.typical_fps, before.runs]);
+      await env.DB.prepare(`DELETE FROM "groups" WHERE group_key = ?`).bind(gk).run();
+    }
+    await adminPost("/admin/recompute", { scope: "game", id: "1" });
+    expect((await group(gk))!.runs).toBe(before.runs);
+  });
+
+  it("a stale group row with no runs left is deleted", async () => {
+    const { gk } = await seedBasic();
+    await env.DB.prepare("DELETE FROM runs").run();
+    await adminPost("/admin/recompute", { scope: "game", id: "1" });
+    expect(await group(gk)).toBeNull();
+  });
+
+  it("per key", async () => {
+    const { gk } = await seedBasic();
+    await env.DB.prepare(`UPDATE "groups" SET typical_fps = 999 WHERE group_key = ?`).bind(gk).run();
+    const res = await adminPost("/admin/recompute", { scope: "key", key_id: "k2" });
+    expect(res.status).toBe(200);
+    expect((await group(gk))!.typical_fps).not.toBe(999);
+    expect((await adminPost("/admin/recompute", { scope: "key", key_id: "nope" })).status).toBe(400);
+    expect((await adminPost("/admin/recompute", { scope: "bogus" })).status).toBe(400);
+  });
+
+  it("all: 200 groups per request, then \"N left — run again\" until done", async () => {
+    const gks = await seedGroups(205);
+    await env.DB.prepare(`UPDATE "groups" SET typical_fps = 999`).run();
+    const first = await adminPost("/admin/recompute", { scope: "all" });
+    const html = await first.text();
+    expect(html).toContain("200 groups recomputed. 5 groups left — run again.");
+    const after = /name="after" value="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
+    expect((await env.DB.prepare(`SELECT count(*) AS n FROM "groups" WHERE typical_fps = 999`).first())).toEqual({ n: 5 });
+    const second = await (await adminPost("/admin/recompute", { scope: "all", after })).text();
+    expect(second).toContain("5 groups recomputed. All done.");
+    expect((await env.DB.prepare(`SELECT count(*) AS n FROM "groups" WHERE typical_fps = 999`).first())).toEqual({ n: 0 });
+    expect(gks).toHaveLength(205);
+  });
+
+  it("admin pages load no Google Fonts", async () => {
+    const html = await (await adminGet("/admin")).text();
+    expect(html).not.toContain("fonts.googleapis.com");
   });
 });
