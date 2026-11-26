@@ -21,6 +21,11 @@ export async function patchRun(req: Request, env: Env, deps: Deps, id: string): 
   if (body.length > MAX_PATCH_BYTES) throw new ApiError(413, "too_large", "The change is larger than metal-pt.com accepts.");
   await requireSignature(h, patchMessage({ id, bodySHA256: await sha256Hex(body), timestamp: h.timestamp }));
   const run = await ownedRun(env, id, h);
+  // A banned key may still remove its runs (DELETE) but not change them.
+  if (run.banned) throw new ApiError(403, "banned", "Runs from this Mac are no longer accepted on metal-pt.com.");
+  if (run.videoLocked) {
+    throw new ApiError(403, "video_locked", "The video link on this run was removed by a moderator.");
+  }
 
   let parsed: unknown;
   try {

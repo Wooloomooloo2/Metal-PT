@@ -27,6 +27,7 @@ export type ErrorCode =
   | "not_yours"
   | "bad_video_link"
   | "video_unavailable"
+  | "video_locked"
   | "storage_unavailable"
   | "server_error";
 

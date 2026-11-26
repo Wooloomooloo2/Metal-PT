@@ -12,6 +12,7 @@ import { HomePage, loadHome } from "./home.tsx";
 import { loadMac, loadMacs, MacPage, MacsPage } from "./mac.tsx";
 import { NotFoundPage } from "./notfound.tsx";
 import { PrivacyPage } from "./privacy.tsx";
+import { reportForm, submitReport } from "./report.tsx";
 import { loadRun, RunPage } from "./run.tsx";
 import { loadSearch, SearchPage } from "./search.tsx";
 import { loadSetup, loadSetups, SetupPage, SetupsPage } from "./setup.tsx";
@@ -95,11 +96,18 @@ export function registerPages(app: Hono<{ Bindings: Env }>, d: Deps) {
         "Content-Length": String(obj.size),
         // Slug and id are [a-z0-9-] only, so the filename needs no quoting rules beyond the quotes.
         "Content-Disposition": `attachment; filename="${row.slug}-${id}.mptrun.zip"`,
-        "Cache-Control": "public, max-age=3600",
+        // Not cached anywhere shared: a run removed by its owner or a moderator must stop downloading at once.
+        "Cache-Control": "private, no-cache",
         "X-Content-Type-Options": "nosniff",
       },
     });
   });
+
+  // Report a problem (never cached; Turnstile on the form).
+  app.get("/run/:id/report", (c) => reportForm(c.env, c.req.param("id"), () => notFound("No run has this address.")));
+  app.post("/run/:id/report", (c) =>
+    submitReport(c.req.raw, c.env, d, c.req.param("id"), () => notFound("No run has this address.")),
+  );
 
   app.get("/compare", (c) =>
     cached(c, async () => {

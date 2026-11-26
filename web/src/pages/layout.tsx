@@ -14,6 +14,10 @@ export interface PageMeta {
   section?: Section;
   /** The header search box's current text (search page). */
   query?: string;
+  /** Extra <head> content (the report page's Turnstile script). */
+  head?: Child;
+  /** Keep the page out of search engines (report and admin pages). */
+  noindex?: boolean;
 }
 
 const FONTS =
@@ -29,6 +33,7 @@ export function Layout(props: PageMeta & { children?: Child }) {
         <title>{props.title === "" ? "Metal-PT" : `${props.title} · Metal-PT`}</title>
         {props.description ? <meta name="description" content={props.description} /> : null}
         <meta name="referrer" content="strict-origin-when-cross-origin" />
+        {props.noindex ? <meta name="robots" content="noindex, nofollow" /> : null}
         {props.og ? (
           <>
             <meta property="og:type" content="website" />
@@ -44,6 +49,7 @@ export function Layout(props: PageMeta & { children?: Child }) {
         <link rel="stylesheet" href={FONTS} />
         <link rel="stylesheet" href={`/static/site.css?v=${STATIC_VERSION}`} />
         <script src={`/static/site.js?v=${STATIC_VERSION}`} defer></script>
+        {props.head ?? null}
       </head>
       <body>
         <header class="site-head">

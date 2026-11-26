@@ -3,7 +3,7 @@
 // Inter / Space Grotesk / JetBrains Mono. Works at 360 px: rows wrap, wide tables scroll inside their own box.
 
 /** Bump when either file changes (the URLs carry it, so long browser caching is safe). */
-export const STATIC_VERSION = "1";
+export const STATIC_VERSION = "2";
 
 export const SITE_CSS = `
 *,*::before,*::after{box-sizing:border-box}
@@ -161,6 +161,18 @@ details summary{cursor:pointer;color:#2457D6}
 .list li .t{font-weight:600;overflow-wrap:anywhere}
 .privacy{max-width:760px;display:flex;flex-direction:column;gap:18px}
 .privacy ul{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
+
+.form{max-width:640px;display:flex;flex-direction:column;gap:18px}
+.form .choices{display:flex;flex-direction:column;gap:8px}
+.form .choices label{display:flex;gap:10px;align-items:center;cursor:pointer}
+textarea,input[type=text]{width:100%;border:1px solid #D0D5DD;border-radius:8px;padding:10px 12px;font:inherit;background:#FFFFFF;color:#14161A}
+textarea{min-height:140px;resize:vertical}
+.notice{border-radius:8px;padding:12px 16px;background:#EAF0FD;color:#14161A}
+.notice.bad{background:#FDECEA;color:#8A1C0A}
+.admin-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.admin-actions form{display:inline-flex;gap:8px;align-items:center;margin:0}
+.admin-actions input[type=text]{width:auto;min-width:0;height:40px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
 
 @media (max-width:600px){
   .wrap{padding-left:16px;padding-right:16px}

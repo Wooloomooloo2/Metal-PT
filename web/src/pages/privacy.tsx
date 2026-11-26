@@ -41,10 +41,19 @@ export function PrivacyPage() {
           <li>Never stored: IP addresses, user agents or cookies.</li>
           <li>No analytics or tracking scripts on any page.</li>
           <li>
-            The pages load nothing from other sites except the typefaces from Google Fonts. Video links open YouTube
-            in a new tab; no YouTube player is put in the page.
+            The pages load nothing from other sites except the typefaces from Google Fonts, and, on the "Report a
+            problem" form only, Cloudflare Turnstile (from challenges.cloudflare.com), which checks that a person is
+            sending the report. Video links open YouTube in a new tab; no YouTube player is put in the page.
           </li>
         </ul>
+
+        <h2>Reporting a problem with a run</h2>
+        <p>
+          Each run page has a "Report a problem" link. A report keeps the run, the reason you picked, your words (with
+          names and folder paths removed) and the time: nothing about who sent it. Turnstile runs in your browser and
+          talks to Cloudflare directly; the site passes Cloudflare only the check's answer, never your address.
+          Reports are read by hand; a run can be hidden and a video link removed.
+        </p>
 
         <h2>Removing a run</h2>
         <p>
