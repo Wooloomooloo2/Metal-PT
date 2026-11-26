@@ -34,6 +34,10 @@ export default defineConfig(({ mode }) => {
       env: {
         DB: bindings.d1({ id: "3c0451a9-1b96-446d-94f8-005aa3f606db", name: "metal-pt-staging" }),
         RUNS: bindings.r2({ name: "metal-pt-runs-staging" }),
+        // Turnstile widget "Metal-PT reports" (hostnames: this workers.dev host and metal-pt.com). The site key is
+        // public; the secret is uploaded with `cf deploy --secrets-file` / the dashboard, never committed.
+        TURNSTILE_SITE_KEY: bindings.text("0x4AAAAAAGT9bUnCW06efxOQ"),
+        TURNSTILE_SECRET: bindings.secret(),
       },
     },
   };
