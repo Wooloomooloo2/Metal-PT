@@ -95,4 +95,15 @@ import MPTCore
         #expect(stub.last?.httpMethod == "PATCH")
         #expect(stub.last?.url?.path == "/api/v1/runs/r1")
     }
+
+    @Test func forgetClearsTheRecordWithoutARequest() async throws {
+        let (root, dir) = try runsRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stub = StubTransport()
+        let p = publisher(root, stub)
+        try p.index.setPublished(dir: dir, record: SiteRecord(id: "r1", url: URL(string: "https://site.test/run/r1")!))
+        try p.forget(dir: dir)
+        #expect(p.index.published(dir: dir) == nil)
+        #expect(stub.requests.isEmpty)
+    }
 }

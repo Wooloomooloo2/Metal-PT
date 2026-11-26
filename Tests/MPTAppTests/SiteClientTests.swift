@@ -231,6 +231,13 @@ final class StubTransport: HTTPTransport, @unchecked Sendable {
         #expect(SiteClient.defaultBase.absoluteString == "https://metal-pt.com")
     }
 
+    @Test func defaultTransportKeepsNoCookiesOrCache() {
+        let c = SiteClient.defaultSession.configuration
+        #expect(c.httpCookieStorage == nil)
+        #expect(!c.httpShouldSetCookies)
+        #expect(c.urlCache == nil)
+    }
+
     @Test func baseWithAPathKeepsIt() async throws {
         let stub = StubTransport(.http(200, "{}"))
         let client = SiteClient(base: URL(string: "https://site.test/staging")!, signer: SoftwareSigner(), session: stub)

@@ -184,10 +184,8 @@ final class AppModel: ObservableObject {
         self.notifier?.onOpenRun = { [weak self] url in self?.openRun(url) }
         self.notifier?.onPublishRun = { [weak self] url in self?.openSubmit(url) }
         if live && (usesAppKit ?? live) {
-            runs.makeSiteClient = { [weak self] in
-                guard let self else { throw SiteError(message: "Publishing is not available here.") }
-                return try self.siteClient()
-            }
+            runs.makeSiteClient = siteClientFactory()
+            runs.siteHost = SiteClient.appBase(env: env).host ?? "metal-pt.com"
         }
         hub.objectWillChange
             .sink { [weak self] _ in
@@ -253,25 +251,26 @@ final class AppModel: ObservableObject {
     /// Settings → "Offer to publish after each run" (default off).
     var offerPublish: Bool { defaults.bool(forKey: SettingsKey.offerPublish) }
 
-    /// This Mac's publishing key, loaded (or made) on the first publish, remove or link change.
-    private var siteKey: SiteKey?
+    /// This Mac's publishing key, loaded (or made) on the first publish, remove or link change, off the main actor.
+    private let siteKeys = SiteKeyStore(folder: { try AppFolders.support() })
 
-    /// The website client: `MPT_SITE_URL` in debug builds, else `SiteClient.defaultBase`; the key from
-    /// `~/Library/Application Support/Metal-PT/site-key` (shared with `mpt publish`).
-    func siteClient() throws -> SiteClient {
-        let key: SiteKey
-        if let siteKey {
-            key = siteKey
-        } else {
+    /// Makes website clients (called off the main actor): `MPT_SITE_URL` in debug builds, else
+    /// `SiteClient.defaultBase`; the key from `~/Library/Application Support/Metal-PT/site-key` (shared with
+    /// `mpt publish`).
+    func siteClientFactory() -> @Sendable () throws -> SiteClient {
+        let keys = siteKeys
+        let base = SiteClient.appBase(env: env)
+        let runs = runs
+        return {
+            let loaded: (key: SiteKey, replaced: Bool)
             do {
-                key = try SiteKey.loadOrCreate(in: try AppFolders.support())
+                loaded = try keys.key()
             } catch {
                 throw SiteError(message: "Could not set up this Mac's publishing key: \(error.localizedDescription)")
             }
-            siteKey = key
-            if key.wasReplaced { runs.noteKeyReplaced() }
+            if loaded.replaced { Task { @MainActor in runs.noteKeyReplaced() } }
+            return SiteClient(base: base, signer: loaded.key)
         }
-        return SiteClient(base: SiteClient.appBase(env: env), signer: key)
     }
 
     /// Settings' notification row: asks macOS again (on Settings appear and app activation).

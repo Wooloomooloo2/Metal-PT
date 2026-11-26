@@ -18,8 +18,9 @@ struct EditNotesSheet: View {
     @State private var notes: String
     @State private var graphics: GraphicsDraft
     @State private var video: String
-    /// The stored video link when the sheet opened (a published run's link goes to the site only when changed).
-    @State private var savedVideo: String
+    /// The video link metal-pt.com has (the stored one when the sheet opened): a published run's link goes to the
+    /// site only when it differs. A refused change leaves it as it was, so saving again retries.
+    @State private var syncedVideo: String
     /// Notes are read from run.json when the sheet opens (the index does not hold them).
     @State private var loaded: Bool
     @State private var saving = false
@@ -36,7 +37,7 @@ struct EditNotesSheet: View {
         _notes = State(initialValue: fields?.notes ?? "")
         _graphics = State(initialValue: GraphicsDraft(entry.graphics))
         _video = State(initialValue: fields?.videoURL ?? "")
-        _savedVideo = State(initialValue: fields?.videoURL ?? "")
+        _syncedVideo = State(initialValue: fields?.videoURL ?? "")
         _loaded = State(initialValue: fields != nil)
     }
 
@@ -111,7 +112,7 @@ struct EditNotesSheet: View {
                 label = f.label
                 notes = f.notes
                 video = f.videoURL ?? ""
-                savedVideo = video
+                syncedVideo = video
                 loaded = true
             } catch {
                 problem = "Could not read this run: \(error.localizedDescription)"
@@ -172,13 +173,12 @@ struct EditNotesSheet: View {
                 return
             }
             // Saved here; a published run's changed link also goes to the site (the site checks it again).
-            if entry.isPublished, v != savedVideo.trimmingCharacters(in: .whitespacesAndNewlines) {
+            if VideoLinkSync.needsSend(published: entry.isPublished, link: v, synced: syncedVideo) {
                 do {
                     try await store.setSiteVideo(entry.id, url: v.isEmpty ? nil : v)
+                    syncedVideo = v
                 } catch {
-                    savedVideo = v
-                    problem = "Saved on this Mac, but metal-pt.com did not take the video link: "
-                        + error.localizedDescription
+                    problem = VideoLinkSync.refusedMessage(error)
                     saving = false
                     return
                 }
@@ -220,5 +220,26 @@ private struct SuggestionsMenu: View {
         }
         .foregroundStyle(Color.accentColor)
         .fixedSize()
+    }
+}
+
+/// A published run's video link edits: when to send one to metal-pt.com, and what to say when it is refused.
+enum VideoLinkSync {
+    /// The run is published and the link differs from the one the site has (links compared by video, so another
+    /// spelling of the same video is not sent again).
+    static func needsSend(published: Bool, link: String, synced: String) -> Bool {
+        guard published else { return false }
+        return normalized(link) != normalized(synced)
+    }
+
+    static func refusedMessage(_ error: Error) -> String {
+        var message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        while message.hasSuffix(".") { message.removeLast() }
+        return "The link was saved on this Mac but not on metal-pt.com: \(message). Save again to retry."
+    }
+
+    private static func normalized(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return YouTubeLink.videoID(from: t).map { YouTubeLink.canonicalURL(id: $0) } ?? t
     }
 }

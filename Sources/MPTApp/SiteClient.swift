@@ -34,6 +34,9 @@ public struct SiteError: Error, LocalizedError, CustomStringConvertible, Equatab
 
     /// The run is not on the site (404): already removed, or never there.
     public var isNotFound: Bool { status == 404 }
+
+    /// The site refused because another key published the run (403 `not_yours`): this Mac's key was replaced.
+    public var isNotYours: Bool { code == "not_yours" }
 }
 
 /// The website's signed API (spec §4.B): publish a run, change its video link, remove it. Every request carries
@@ -80,7 +83,17 @@ public struct SiteClient: Sendable {
     private let now: @Sendable () -> Date
     private let boundary: @Sendable () -> String
 
-    public init(base: URL, signer: RunSigner, session: HTTPTransport = URLSession.shared,
+    /// The default transport: ephemeral (no cookies, no cache, nothing written to disk).
+    public static let defaultSession: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.httpCookieStorage = nil
+        c.httpShouldSetCookies = false
+        c.urlCache = nil
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }()
+
+    public init(base: URL, signer: RunSigner, session: HTTPTransport = SiteClient.defaultSession,
                 now: @escaping @Sendable () -> Date = Date.init,
                 boundary: @escaping @Sendable () -> String = { "metal-pt-\(UUID().uuidString)" }) {
         self.base = base; self.signer = signer; self.session = session; self.now = now; self.boundary = boundary

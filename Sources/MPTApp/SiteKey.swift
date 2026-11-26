@@ -43,6 +43,29 @@ public struct SecureEnclaveKeyBackend: SiteKeyBackend {
     }
 }
 
+/// The publishing key, loaded (or made) once, on first use, from any thread. `key()` reports `replaced` only the
+/// first time (so the note is raised once).
+public final class SiteKeyStore: @unchecked Sendable {
+    private let folder: @Sendable () throws -> URL
+    private let backend: any SiteKeyBackend
+    private let lock = NSLock()
+    private var loaded: SiteKey?
+
+    public init(folder: @escaping @Sendable () throws -> URL, backend: any SiteKeyBackend = SiteKey.automaticBackend) {
+        self.folder = folder
+        self.backend = backend
+    }
+
+    public func key() throws -> (key: SiteKey, replaced: Bool) {
+        try lock.withLock {
+            if let loaded { return (loaded, false) }
+            let k = try SiteKey.loadOrCreate(in: try folder(), backend: backend)
+            loaded = k
+            return (k, k.wasReplaced)
+        }
+    }
+}
+
 /// This Mac's publishing key: Secure Enclave where available, else a software key stored the same way in
 /// `<folder>/site-key` (0600). A missing, corrupt or unusable file makes a new key (never a crash); if a file
 /// existed, `wasReplaced` is true and the UI shows `lostKeyNote`.

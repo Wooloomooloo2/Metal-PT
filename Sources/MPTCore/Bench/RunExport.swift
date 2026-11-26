@@ -264,10 +264,10 @@ public enum RunExport {
         return StagedFiles(files: files, folderName: folderName(bundle.info, hosts: hosts))
     }
 
-    /// Writes the staged files and manifest.json into a temporary folder and zips it with ditto to `out`.
     /// The modification time of every entry in an upload zip (2026-01-01 00:00 UTC).
     static let zipDate = Date(timeIntervalSince1970: 1_767_225_600)
 
+    /// Writes the staged files and manifest.json into a temporary folder and zips it with ditto to `out`.
     static func zip(_ staged: StagedFiles, includeNotes: Bool, appVersion: String, to out: URL) throws {
         let fm = FileManager.default
         let stagingRoot = fm.temporaryDirectory.appendingPathComponent("mpt-export-\(UUID().uuidString)")

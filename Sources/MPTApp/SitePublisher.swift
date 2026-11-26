@@ -42,6 +42,12 @@ public struct SitePublisher: Sendable {
         try index.clearPublished(dir: dir)
     }
 
+    /// Forgets the run's website record on this Mac only (nothing is sent): for a run this Mac can no longer remove
+    /// (its key was replaced, so the site answers `not_yours`).
+    public func forget(dir: String) throws {
+        try index.clearPublished(dir: dir)
+    }
+
     /// Sends the run's video link (nil or empty clears it) to the website, for a published run.
     public func setVideo(dir: String, url: String?) async throws {
         guard let record = index.published(dir: dir) else { throw RunIndexError.notPublished }

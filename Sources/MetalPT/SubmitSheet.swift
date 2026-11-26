@@ -113,7 +113,7 @@ struct SubmitSheet: View {
                         .keyboardShortcut(.defaultAction)
                         .disabled(preview == nil || tooLarge || phase == .publishing || videoProblem != nil
                                   || graphics.customProblem)
-                        .help("Send this run to metal-pt.com (\(SiteClient.defaultBase.host ?? "metal-pt.com"))")
+                        .help("Send this run to \(store.siteHost)")
                 }
             }
         }

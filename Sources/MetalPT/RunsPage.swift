@@ -16,7 +16,14 @@ struct RunsPage: View {
     @State private var editing: RunEntry?
     @State private var submitting: RunEntry?
     @State private var deleting: RunEntry?
-    @State private var unpublishing: RunEntry?
+    @State fileprivate var unpublishing: RunEntry?
+    /// A removal the site refused as `not_yours` (this Mac's key was replaced): offer to forget it here.
+    @State fileprivate var notYours: NotYours?
+
+    struct NotYours {
+        let entry: RunEntry
+        let message: String
+    }
     @State private var problem: String?
 
     init(model: AppModel, ticked: Set<String> = [], filter: String = "") {
@@ -46,6 +53,7 @@ struct RunsPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(SiteDialogs(page: self))
         .onAppear {
             refresh()
             selectRequestedRun()
@@ -71,14 +79,6 @@ struct RunsPage: View {
         } message: { entry in
             Text("\(entry.game), \(RunFormat.date(entry.start)). The folder \(entry.id) goes to the Trash; "
                  + "you can put it back from there.")
-        }
-        .confirmationDialog("Remove this run from metal-pt.com?", isPresented: Binding(
-            get: { unpublishing != nil }, set: { if !$0 { unpublishing = nil } }), presenting: unpublishing) { entry in
-            Button("Remove from metal-pt.com", role: .destructive) { unpublish(entry) }
-            Button("Cancel", role: .cancel) {}
-        } message: { entry in
-            Text("\(entry.game), \(RunFormat.date(entry.start)). Its page and its place in the statistics go; "
-                 + "the run stays on this Mac.")
         }
         .alert("Runs", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK") {}
@@ -218,12 +218,30 @@ struct RunsPage: View {
         submitting = entry
     }
 
-    private func unpublish(_ entry: RunEntry) {
+    fileprivate func unpublish(_ entry: RunEntry) {
         Task {
             do {
                 try await store.removeFromSite(entry.id)
+            } catch let e as SiteError where e.isNotYours {
+                notYours = NotYours(entry: entry, message: RunsPage.notYoursMessage(e))
             } catch {
                 problem = "Could not remove the run from metal-pt.com: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// The `not_yours` refusal, with what "Forget on this Mac" does.
+    static func notYoursMessage(_ e: SiteError) -> String {
+        "\(e.message) This Mac's publishing key was replaced, so the run can no longer be removed from here. "
+            + "Forget on this Mac clears its published mark; the run stays on metal-pt.com."
+    }
+
+    fileprivate func forget(_ entry: RunEntry) {
+        Task {
+            do {
+                try await store.forgetPublished(entry.id)
+            } catch {
+                problem = "Could not forget the published run: \(error.localizedDescription)"
             }
         }
     }
@@ -247,6 +265,33 @@ struct RunsPage: View {
                 problem = "Could not move the run to the Trash: \(error.localizedDescription)"
             }
         }
+    }
+}
+
+/// The website dialogs of the Runs page: confirm a removal, and offer "Forget on this Mac" when the site says the run
+/// is another key's.
+private struct SiteDialogs: ViewModifier {
+    let page: RunsPage
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog("Remove this run from metal-pt.com?", isPresented: Binding(
+                get: { page.unpublishing != nil }, set: { if !$0 { page.unpublishing = nil } }),
+                presenting: page.unpublishing) { entry in
+                Button("Remove from metal-pt.com", role: .destructive) { page.unpublish(entry) }
+                Button("Cancel", role: .cancel) {}
+            } message: { entry in
+                Text("\(entry.game), \(RunFormat.date(entry.start)). Its page and its place in the statistics go; "
+                     + "the run stays on this Mac.")
+            }
+            .alert("metal-pt.com did not remove this run", isPresented: Binding(
+                get: { page.notYours != nil }, set: { if !$0 { page.notYours = nil } }),
+                presenting: page.notYours) { item in
+                Button("Forget on this Mac") { page.forget(item.entry) }
+                Button("Cancel", role: .cancel) {}
+            } message: { item in
+                Text(item.message)
+            }
     }
 }
 

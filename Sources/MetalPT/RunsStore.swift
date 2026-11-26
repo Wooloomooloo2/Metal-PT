@@ -19,7 +19,9 @@ final class RunsStore: ObservableObject {
 
     /// The website client (set by `AppModel`; nil in snapshots and tests that do not publish). Called on the first
     /// publish, remove or link change: it may create this Mac's publishing key.
-    var makeSiteClient: (@MainActor () throws -> SiteClient)?
+    var makeSiteClient: (@Sendable () throws -> SiteClient)?
+    /// The site the client talks to (the Publish button's tooltip).
+    var siteHost = SiteClient.defaultBase.host ?? "metal-pt.com"
     /// `SiteKey.lostKeyNote` once the key was found replaced (shown in the Submit sheet).
     @Published private(set) var siteKeyNote: String?
     /// Set when the key was replaced (`AppModel`).
@@ -118,18 +120,19 @@ final class RunsStore: ObservableObject {
 
     // MARK: - Website
 
-    private func publisher() throws -> SitePublisher {
+    /// Makes the publisher off the main actor (the first call may load or create the key in the Secure Enclave).
+    private func publisher() throws -> @Sendable () throws -> SitePublisher {
         guard let index else { throw CocoaError(.fileNoSuchFile) }
         guard let make = makeSiteClient else { throw SiteError(message: "Publishing is not available here.") }
-        return SitePublisher(client: try make(), index: index)
+        return { SitePublisher(client: try make(), index: index) }
     }
 
     /// Saves the graphics and video link into run.json when they changed (the upload carries them), then publishes
     /// the run and records its page. Refused while recording.
     func publish(_ id: String, includeNotes: Bool, graphics: RunInfo.Graphics?, videoURL: String?) async throws
         -> SiteClient.Published {
-        let p = try publisher()
-        let index = p.index
+        let makePublisher = try publisher()
+        guard let index else { throw CocoaError(.fileNoSuchFile) }
         let video = videoURL.flatMap { $0.isEmpty ? nil : $0 }
         let list = try await Task.detached { () throws -> (SiteClient.Published, [RunEntry]) in
             let user = try index.userFields(dir: id)
@@ -139,7 +142,7 @@ final class RunsStore: ObservableObject {
                 try index.update(dir: id, settings: nil, notes: nil, label: nil, graphics: .some(graphics),
                                  videoURL: .some(video))
             }
-            let published = try await p.publish(dir: id, includeNotes: includeNotes)
+            let published = try await makePublisher().publish(dir: id, includeNotes: includeNotes)
             return (published, index.entries())
         }.value
         entries = list.1
@@ -149,18 +152,29 @@ final class RunsStore: ObservableObject {
 
     /// Removes the run from the website (signed DELETE) and forgets its page.
     func removeFromSite(_ id: String) async throws {
-        let p = try publisher()
+        let makePublisher = try publisher()
         let list = try await Task.detached {
+            let p = try makePublisher()
             try await p.remove(dir: id)
             return p.index.entries()
         }.value
         entries = list
     }
 
+    /// Forgets on this Mac that the run is on the website (nothing is sent): for a run this Mac's key can no longer
+    /// remove (`SiteError.isNotYours`).
+    func forgetPublished(_ id: String) async throws {
+        guard let index else { throw CocoaError(.fileNoSuchFile) }
+        entries = try await Task.detached {
+            try index.clearPublished(dir: id)
+            return index.entries()
+        }.value
+    }
+
     /// Sends a published run's new video link (nil clears it) to the website.
     func setSiteVideo(_ id: String, url: String?) async throws {
-        let p = try publisher()
-        try await Task.detached { try await p.setVideo(dir: id, url: url) }.value
+        let makePublisher = try publisher()
+        try await Task.detached { try await makePublisher().setVideo(dir: id, url: url) }.value
     }
 
     /// Snapshots: index `root` synchronously.
