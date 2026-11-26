@@ -87,7 +87,8 @@ Windows/Linux data; pulling game names or art from Steam.
 - `POST /api/v1/runs` — `multipart/form-data`, total ≤ 25 MB, built so the Worker never unzips anything (fits the
   Free plan's 10 ms CPU per request, §J): parts `bundle` (the existing `.mptrun.zip`, streamed to R2 unopened with
   R2's own SHA-256 check), and `run.json`, `samples.csv`, `summary.json` (copies of the zip's files, parsed by the
-  Worker). Headers: `MPT-Key` (public key), `MPT-Timestamp` (ISO-8601, ±10 min of server time), `MPT-Signature`
+  Worker). Headers: `MPT-Key` (public key), `MPT-Bundle-SHA256` (lowercase hex SHA-256 of the bundle part — the value signed
+  below and enforced by R2 on write), `MPT-Timestamp` (ISO-8601, ±10 min of server time), `MPT-Signature`
   (base64url of the raw 64-byte r‖s ECDSA P-256 signature — the form WebCrypto verifies — ECDSA-SHA256 over the UTF-8 message `"metal-pt-run\n" + sha256(bundle) + "\n" + sha256(run.json) + "\n" +
   sha256(samples.csv) + "\n" + sha256(summary.json) + "\n" + timestamp`). The Worker hashes the three small parts
   itself; the bundle's hash is enforced by R2 on write. That the small parts equal the zip's copies is vouched for by
@@ -99,7 +100,8 @@ Windows/Linux data; pulling game names or art from Steam.
   that published it. Removes the run from pages and stats; the stored zip is deleted.
 - Unknown keys are registered on first valid upload (no separate step). Same bundle (by its SHA-256) twice → `409` with
   the existing run's URL.
-- Rate limit (Workers rate-limiting binding) keyed on the key id only: 30 uploads/hour. **No IP address is used, logged
+- Rate limit keyed on the key id only: 30 uploads/hour, counted in D1 (the Workers rate-limiting binding only offers
+  10 s / 60 s windows). **No IP address is used, logged
   or stored** anywhere in the site (user: "I'd rather be able to say honestly this is no kind of spyware"); Worker
   logs must not record request headers. Minimum app version accepted: the first version that signs (config value).
 
@@ -118,7 +120,9 @@ Windows/Linux data; pulling game names or art from Steam.
    (`[A-Za-z0-9_-]{11}`) is extracted and **only the ID is stored** — the user's URL is never echoed. The site asks
    YouTube's oEmbed endpoint whether the video exists and is public; if not, the upload is still accepted without the
    link and the reply says why. The video's title and channel name from oEmbed are stored for display.
-5. Privacy re-scrub on the server (home paths, `/Users/<name>`, host-name patterns) of every text field; notes only if
+5. Notes: the server never opens the zip, so it can't read `includesNotes`; it stores `notes` when non-empty — the
+   app empties them unless the box is ticked.
+7. Privacy re-scrub on the server (home paths, `/Users/<name>`, host-name patterns) of every text field; notes only if
    `includesNotes`.
 
 ### D. Storage
